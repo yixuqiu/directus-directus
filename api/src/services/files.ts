@@ -86,7 +86,7 @@ export class FilesService extends ItemsService {
 			path.extname(payload.filename_download!) || (payload.type && '.' + extension(payload.type)) || '';
 
 		// The filename_disk is the FINAL filename on disk
-		payload.filename_disk = primaryKey + (fileExtension || '');
+		payload.filename_disk ||= primaryKey + (fileExtension || '');
 
 		// Temp filename is used for replacements
 		const tempFilenameDisk = 'temp_' + payload.filename_disk;
@@ -407,14 +407,6 @@ export class FilesService extends ItemsService {
 		}
 
 		const key = await super.createOne(data, opts);
-		return key;
-	}
-
-	/**
-	 * Delete a file
-	 */
-	override async deleteOne(key: PrimaryKey): Promise<PrimaryKey> {
-		await this.deleteMany([key]);
 		return key;
 	}
 
