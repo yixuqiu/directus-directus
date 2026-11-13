@@ -1,19 +1,23 @@
 <script setup lang="ts">
 import { computed, toRefs } from 'vue';
-import { useI18n } from 'vue-i18n';
 import useDisplayItems from './use-display-items';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VNotice from '@/components/v-notice.vue';
+import VRemove from '@/components/v-remove.vue';
+import VSkeletonLoader from '@/components/v-skeleton-loader.vue';
+import RenderTemplate from '@/views/private/components/render-template.vue';
 
 interface Props {
 	value: (string | number)[];
 	collection: string;
 	template: string;
 	filter: Record<string, any>;
-	limit: number;
+	limit?: number;
 }
 const props = withDefaults(defineProps<Props>(), { limit: 5 });
 const emit = defineEmits(['input', 'select']);
 
-const { t } = useI18n();
 const { collection, template, value } = toRefs(props);
 
 const { displayItems, displayTemplate, loading, primaryKey } = useDisplayItems(collection, template, value);
@@ -32,68 +36,56 @@ function deleteItem(elem: Record<string, any>) {
 <template>
 	<div class="one-to-many">
 		<template v-if="loading">
-			<v-skeleton-loader v-for="n in limit" :key="n" type="block-list-item-dense" />
+			<VSkeletonLoader v-for="n in limit" :key="n" type="block-list-item-dense" />
 		</template>
 
-		<v-notice v-else-if="displayItems.length === 0">
-			{{ t('no_items') }}
-		</v-notice>
+		<VNotice v-else-if="displayItems.length === 0">
+			{{ $t('no_items') }}
+		</VNotice>
 
-		<v-list v-else>
-			<v-list-item v-for="element in displayItems" :key="element[primaryKey]" block :dense="displayItems.length > 4">
-				<render-template :collection="collection" :item="element" :template="displayTemplate" />
+		<VList v-else>
+			<VListItem v-for="element in displayItems" :key="element[primaryKey]" block :dense="displayItems.length > 4">
+				<RenderTemplate :collection="collection" :item="element" :template="displayTemplate" />
+
 				<div class="spacer" />
-				<v-icon v-tooltip="t('remove_item')" class="deselect" name="delete" @click.stop="deleteItem(element)" />
-			</v-list-item>
-		</v-list>
 
-		<div class="actions list">
+				<div class="item-actions">
+					<VRemove deselect @action="deleteItem(element)" />
+				</div>
+			</VListItem>
+		</VList>
+
+		<div class="actions">
 			<button v-if="totalItemCount < limit" @click="$emit('select')">
-				{{ t('add_existing') }}
+				{{ $t('add_existing') }}
 			</button>
 			<button v-if="totalItemCount > 0" @click="$emit('input', undefined)">
-				{{ t('clear_items') }}
+				{{ $t('clear_items') }}
 			</button>
 		</div>
 	</div>
 </template>
 
 <style lang="scss" scoped>
+@use '@/styles/mixins';
+
 .one-to-many {
-	height: 100%;
+	block-size: 100%;
 	display: flex;
 	flex-direction: column;
+	justify-content: space-between;
 }
+
 .v-list {
-	margin-top: 8px;
-	flex-grow: 1;
-	--v-list-padding: 0 0 4px;
-
-	.v-list-item.deleted {
-		--v-list-item-border-color: var(--danger-25);
-		--v-list-item-border-color-hover: var(--danger-50);
-		--v-list-item-background-color: var(--danger-10);
-		--v-list-item-background-color-hover: var(--danger-25);
-
-		::v-deep(.v-icon) {
-			color: var(--danger-75);
-		}
-	}
-}
-
-.v-skeleton-loader,
-.v-notice {
-	margin-top: 8px;
+	@include mixins.list-interface;
 }
 
 .actions {
-	display: flex;
-	align-items: center;
-	gap: 8px;
+	@include mixins.list-interface-actions;
 
 	button {
 		color: var(--theme--primary);
-		padding: 0 4px;
+		padding: 0 0.25rem;
 
 		&:hover {
 			color: var(--theme--primary-accent);
@@ -101,13 +93,7 @@ function deleteItem(elem: Record<string, any>) {
 	}
 }
 
-.deselect {
-	--v-icon-color: var(--theme--foreground-subdued);
-	transition: color var(--fast) var(--transition);
-	margin: 0 4px;
-
-	&:hover {
-		--v-icon-color: var(--theme--danger);
-	}
+.item-actions {
+	@include mixins.list-interface-item-actions;
 }
 </style>

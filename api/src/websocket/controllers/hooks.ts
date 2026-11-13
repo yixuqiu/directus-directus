@@ -1,3 +1,4 @@
+import { systemCollectionNames } from '@directus/system-data';
 import { useBus } from '../../bus/index.js';
 import emitter from '../../emitter.js';
 import type { WebSocketEvent } from '../messages.js';
@@ -10,22 +11,20 @@ export function registerWebSocketEvents() {
 
 	registerActionHooks([
 		'items',
-		'activity',
-		'collections',
-		'dashboards',
-		'folders',
-		'notifications',
-		'operations',
-		'panels',
-		'permissions',
-		'presets',
-		'revisions',
-		'roles',
-		'settings',
-		'shares',
-		'users',
-		'versions',
-		'webhooks',
+		...systemCollectionNames
+			.filter(
+				(collection) =>
+					![
+						'directus_migrations',
+						// manually registered below
+						'directus_fields',
+						'directus_relations',
+						'directus_files',
+						// excluded for security reasons
+						'directus_sessions',
+					].includes(collection),
+			)
+			.map((collection) => collection.replace('directus_', '')),
 	]);
 
 	registerFieldsHooks();

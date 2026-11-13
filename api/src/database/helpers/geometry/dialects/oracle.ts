@@ -13,15 +13,16 @@ export class GeometryHelperOracle extends GeometryHelper {
 	}
 
 	override createColumn(table: Knex.CreateTableBuilder, field: RawField | Field) {
-		if (field.type.split('.')[1]) {
+		if (this.geometrySubtype(field)) {
 			field.meta!.special = [field.type];
 		}
 
 		return table.specificType(field.field, 'sdo_geometry');
 	}
 
-	override asText(table: string, column: string): Knex.Raw {
-		return this.knex.raw('sdo_util.to_wktgeometry(??.??) as ??', [table, column, column]);
+	override asText(table: string, column: string, alias: string | false): Knex.Raw {
+		if (alias) return this.knex.raw('sdo_util.to_wktgeometry(??.??) as ??', [table, column, alias]);
+		return this.knex.raw('sdo_util.to_wktgeometry(??.??)', [table, column]);
 	}
 
 	asGeoJSON(table: string, column: string): Knex.Raw {
@@ -43,6 +44,6 @@ export class GeometryHelperOracle extends GeometryHelper {
 	}
 
 	override collect(table: string, column: string): Knex.Raw {
-		return this.knex.raw(`concat('geometrycollection(', listagg(?, ', '), ')'`, this.asText(table, column));
+		return this.knex.raw(`concat('geometrycollection(', listagg(?, ', '), ')'`, this.asText(table, column, column));
 	}
 }

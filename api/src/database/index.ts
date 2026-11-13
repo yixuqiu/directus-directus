@@ -1,25 +1,31 @@
-import { useEnv } from '@directus/env';
-import type { SchemaInspector } from '@directus/schema';
-import { createInspector } from '@directus/schema';
-import fse from 'fs-extra';
-import type { Knex } from 'knex';
-import knex from 'knex';
-import { merge } from 'lodash-es';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import path from 'path';
 import { performance } from 'perf_hooks';
-import { promisify } from 'util';
+import { useEnv, validateDbEnv } from '@directus/env';
+import type { SchemaInspector } from '@directus/schema';
+import { createInspector } from '@directus/schema';
+import type { DatabaseClient } from '@directus/types';
+import { isObject } from '@directus/utils';
+import fse from 'fs-extra';
+import type { Knex } from 'knex';
+import knex from 'knex';
+import { isArray, merge } from 'lodash-es';
 import { getExtensionsPath } from '../extensions/lib/get-extensions-path.js';
-import { useLogger } from '../logger.js';
-import type { DatabaseClient } from '../types/index.js';
+import { useLogger } from '../logger/index.js';
+import { useMetrics } from '../metrics/index.js';
 import { getConfigFromEnv } from '../utils/get-config-from-env.js';
-import { validateEnv } from '../utils/validate-env.js';
 import { getHelpers } from './helpers/index.js';
+
+type QueryInfo = Partial<Knex.Sql> & {
+	sql: Knex.Sql['sql'];
+	__knexUid: string;
+	__knexTxId: string;
+	[key: string | number | symbol]: any;
+};
 
 let database: Knex | null = null;
 let inspector: SchemaInspector | null = null;
-let databaseVersion: string | null = null;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -31,7 +37,11 @@ export function getDatabase(): Knex {
 	}
 
 	const env = useEnv();
+
+	validateDbEnv(env);
+
 	const logger = useLogger();
+	const metrics = useMetrics();
 
 	const {
 		client,
@@ -40,52 +50,7 @@ export function getDatabase(): Knex {
 		connectionString,
 		pool: poolConfig = {},
 		...connectionConfig
-	} = getConfigFromEnv('DB_', ['DB_EXCLUDE_TABLES']);
-
-	const requiredEnvVars = ['DB_CLIENT'];
-
-	switch (client) {
-		case 'sqlite3':
-			requiredEnvVars.push('DB_FILENAME');
-			break;
-
-		case 'oracledb':
-			if (!env['DB_CONNECT_STRING']) {
-				requiredEnvVars.push('DB_HOST', 'DB_PORT', 'DB_DATABASE', 'DB_USER', 'DB_PASSWORD');
-			} else {
-				requiredEnvVars.push('DB_USER', 'DB_PASSWORD', 'DB_CONNECT_STRING');
-			}
-
-			break;
-
-		case 'cockroachdb':
-		case 'pg':
-			if (!connectionString) {
-				requiredEnvVars.push('DB_HOST', 'DB_PORT', 'DB_DATABASE', 'DB_USER');
-			} else {
-				requiredEnvVars.push('DB_CONNECTION_STRING');
-			}
-
-			break;
-		case 'mysql':
-			if (!env['DB_SOCKET_PATH']) {
-				requiredEnvVars.push('DB_HOST', 'DB_PORT', 'DB_DATABASE', 'DB_USER', 'DB_PASSWORD');
-			} else {
-				requiredEnvVars.push('DB_DATABASE', 'DB_USER', 'DB_PASSWORD', 'DB_SOCKET_PATH');
-			}
-
-			break;
-		case 'mssql':
-			if (!env['DB_TYPE'] || env['DB_TYPE'] === 'default') {
-				requiredEnvVars.push('DB_HOST', 'DB_PORT', 'DB_DATABASE', 'DB_USER', 'DB_PASSWORD');
-			}
-
-			break;
-		default:
-			requiredEnvVars.push('DB_HOST', 'DB_PORT', 'DB_DATABASE', 'DB_USER', 'DB_PASSWORD');
-	}
-
-	validateEnv(requiredEnvVars);
+	} = getConfigFromEnv('DB_', { omitPrefix: 'DB_EXCLUDE_TABLES' });
 
 	const knexConfig: Knex.Config = {
 		client,
@@ -113,38 +78,45 @@ export function getDatabase(): Knex {
 	if (client === 'sqlite3') {
 		knexConfig.useNullAsDefault = true;
 
-		poolConfig.afterCreate = async (conn: any, callback: any) => {
+		poolConfig.afterCreate = (conn: any, callback: any) => {
 			logger.trace('Enabling SQLite Foreign Keys support...');
 
-			const run = promisify(conn.run.bind(conn));
-			await run('PRAGMA foreign_keys = ON');
+			conn.run('PRAGMA foreign_keys = ON');
 
 			callback(null, conn);
 		};
 	}
 
 	if (client === 'cockroachdb') {
-		poolConfig.afterCreate = async (conn: any, callback: any) => {
+		poolConfig.afterCreate = (conn: any, callback: any) => {
 			logger.trace('Setting CRDB serial_normalization and default_int_size');
-			const run = promisify(conn.query.bind(conn));
 
-			await run('SET serial_normalization = "sql_sequence"');
-			await run('SET default_int_size = 4');
+			conn.query('SET serial_normalization = "sql_sequence"');
+			conn.query('SET default_int_size = 4');
+
+			callback(null, conn);
+		};
+	}
+
+	if (client === 'oracledb') {
+		poolConfig.afterCreate = (conn: any, callback: any) => {
+			logger.trace('Setting OracleDB NLS_DATE_FORMAT and NLS_TIMESTAMP_FORMAT');
+
+			// enforce proper ISO standard 2024-12-10T10:54:00.123Z for datetime/timestamp
+			conn.execute('ALTER SESSION SET NLS_TIMESTAMP_FORMAT = \'YYYY-MM-DD"T"HH24:MI:SS.FF3"Z"\'');
+
+			// enforce 2024-12-10 date formet
+			conn.execute("ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'");
 
 			callback(null, conn);
 		};
 	}
 
 	if (client === 'mysql') {
-		poolConfig.afterCreate = async (conn: any, callback: any) => {
-			logger.trace('Retrieving database version');
-			const run = promisify(conn.query.bind(conn));
+		// Remove the conflicting `filename` option, defined by default in the Docker Image
+		if (isObject(knexConfig.connection)) delete knexConfig.connection['filename'];
 
-			const version = await run('SELECT @@version;');
-			databaseVersion = version[0]['@@version'];
-
-			callback(null, conn);
-		};
+		Object.assign(knexConfig, { client: 'mysql2' });
 	}
 
 	if (client === 'mssql') {
@@ -157,40 +129,49 @@ export function getDatabase(): Knex {
 	database = knex.default(knexConfig);
 	validateDatabaseCharset(database);
 
-	const times: Record<string, number> = {};
+	const times = new Map<string, number>();
 
 	database
-		.on('query', (queryInfo) => {
-			times[queryInfo.__knexUid] = performance.now();
+		.on('query', ({ __knexUid }: QueryInfo) => {
+			times.set(__knexUid, performance.now());
 		})
-		.on('query-response', (_response, queryInfo) => {
-			const delta = performance.now() - times[queryInfo.__knexUid]!;
-			logger.trace(`[${delta.toFixed(3)}ms] ${queryInfo.sql} [${queryInfo.bindings.join(', ')}]`);
-			delete times[queryInfo.__knexUid];
+		.on('query-response', (_response, queryInfo: QueryInfo) => {
+			const time = times.get(queryInfo.__knexUid);
+			let delta;
+
+			if (time) {
+				delta = performance.now() - time;
+				times.delete(queryInfo.__knexUid);
+
+				metrics?.getDatabaseResponseMetric()?.observe(delta);
+			}
+
+			// eslint-disable-next-line no-nested-ternary
+			const bindings = queryInfo.bindings
+				? isArray(queryInfo.bindings)
+					? queryInfo.bindings
+					: Object.values(queryInfo.bindings)
+				: [];
+
+			logger.trace(`[${delta ? delta.toFixed(3) : '?'}ms] ${queryInfo.sql} [${bindings.join(', ')}]`);
+		})
+		.on('query-error', (_, queryInfo: QueryInfo) => {
+			times.delete(queryInfo.__knexUid);
 		});
 
 	return database;
 }
 
-export function getSchemaInspector(): SchemaInspector {
+export function getSchemaInspector(database?: Knex): SchemaInspector {
 	if (inspector) {
 		return inspector;
 	}
 
-	const database = getDatabase();
+	database ??= getDatabase();
 
 	inspector = createInspector(database);
 
 	return inspector;
-}
-
-/**
- * Get database version. Value currently exists for MySQL only.
- *
- * @returns Cached database version
- */
-export function getDatabaseVersion(): string | null {
-	return databaseVersion;
 }
 
 export async function hasDatabaseConnection(database?: Knex): Promise<boolean> {
@@ -230,7 +211,7 @@ export function getDatabaseClient(database?: Knex): DatabaseClient {
 	database = database ?? getDatabase();
 
 	switch (database.client.constructor.name) {
-		case 'Client_MySQL':
+		case 'Client_MySQL2':
 			return 'mysql';
 		case 'Client_PG':
 			return 'postgres';
@@ -297,11 +278,11 @@ export async function validateMigrations(): Promise<boolean> {
  * These database extensions should be optional, so we don't throw or return any problem states when they don't
  */
 export async function validateDatabaseExtensions(): Promise<void> {
+	const logger = useLogger();
 	const database = getDatabase();
 	const client = getDatabaseClient(database);
 	const helpers = getHelpers(database);
 	const geometrySupport = await helpers.st.supported();
-	const logger = useLogger();
 
 	if (!geometrySupport) {
 		switch (client) {
@@ -313,12 +294,13 @@ export async function validateDatabaseExtensions(): Promise<void> {
 				break;
 			default:
 				logger.warn(`Geometry type not supported on ${client}`);
+				break;
 		}
 	}
 }
 
 async function validateDatabaseCharset(database?: Knex): Promise<void> {
-	const env = useEnv();
+	const { DB_DATABASE, DB_EXCLUDE_TABLES } = useEnv();
 	database = database ?? getDatabase();
 	const logger = useLogger();
 
@@ -327,16 +309,18 @@ async function validateDatabaseCharset(database?: Knex): Promise<void> {
 
 		const tables = await database('information_schema.tables')
 			.select({ name: 'TABLE_NAME', collation: 'TABLE_COLLATION' })
-			.where({ TABLE_SCHEMA: env['DB_DATABASE'] });
+			.where({ TABLE_SCHEMA: DB_DATABASE });
 
 		const columns = await database('information_schema.columns')
 			.select({ table_name: 'TABLE_NAME', name: 'COLUMN_NAME', collation: 'COLLATION_NAME' })
-			.where({ TABLE_SCHEMA: env['DB_DATABASE'] })
+			.where({ TABLE_SCHEMA: DB_DATABASE })
 			.whereNot({ COLLATION_NAME: collation });
 
 		let inconsistencies = '';
 
 		for (const table of tables) {
+			if (DB_EXCLUDE_TABLES.includes(table.name)) continue;
+
 			const tableColumns = columns.filter((column) => column.table_name === table.name);
 			const tableHasInvalidCollation = table.collation !== collation;
 

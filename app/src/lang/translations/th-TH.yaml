@@ -1,4 +1,7 @@
 ---
+continue: ดำเนินการต่อ
+first_name: ชื่อ
+last_name: นามสกุล
 identifier: ตัวบ่งชี้
 avatar: ภาพประจำตัว
 application: แอพลิเคชัน
@@ -64,7 +67,6 @@ create_panel: สร้างแผงควบคุม
 create_role: สร้างบทบาท
 create_user: สร้างผู้ใช้งาน
 message: ข้อความ
-create_webhook: สร้างเว็บฮุก
 invite_users: เชิญชวนผู้ใช้งาน
 invite: เชิญชวน
 email_already_invited: อีเมล "{email}" ได้รับเชิญแล้ว
@@ -79,7 +81,6 @@ rename_folder: เปลี่ยนชื่อโฟลเดอร์
 delete_folder: ลบโฟลเดอร์
 prefix: คำนำหน้า
 suffix: คำต่อท้าย
-promote_version_preview: ดูตัวอย่าง
 reset_bookmark: รีเซ็ตบุ๊คมาร์ค
 update_bookmark: ปรับปรุงบุ๊คมาร์ค
 delete_bookmark: ลบ​บุ๊ค​มา​ร์ค
@@ -143,10 +144,12 @@ field_permissions: สิทธิ์การเข้าถึงฟิลด�
 field_validation: การตรวจสอบฟิลด์
 field_presets: ฟิลด์ที่กำหนดไว้ล่วงหน้า
 permissions_for_role: 'ไอเท็มที่บทบาท {role} สามารถ {action}'
+permissions_for_policy: 'รายการที่นโยบาย {policy} อนุญาตให้ {action}'
 fields_for_role: 'ฟิลด์ที่บทบาท {role} สามารถ {action}'
 validation_for_role: 'ฟิลด์ {action} ถูกกำหนดสิทธิ์ให้บทบาท {role}'
 presets_for_role: 'ค่าตั้งต้นของฟิลด์สำหรับบทบาท {role}'
 presentation_and_aliases: การแสดงผลและนาวแผง
+revision_post_create: รายการนี้มีลักษณะดังนี้ตอนที่สร้างขึ้น
 revision_post_update: สิ่งที่ไอเท็มจะเป็นหลังจากอัพเดทแล้ว
 changes_made: การดปลี่ยนแปลงที่เกิดขึ้นในการแก้ไขนี้
 no_relational_data: จำไว้ว่าข้อมูลสัมพันธ์ไม่ถูกรวมอยู่ในนี้
@@ -174,7 +177,6 @@ field_in_collection: '{field} ({collection})'
 reset_page_preferences: รีเซ็ตการตั้งค่าเพจ
 hidden_field: ซ่อนฟิลด์
 hidden_on_detail: ซ่อนเมื่อแสดงรายละเอียด
-disabled_editing_value: ปิดไม่ให้แก้ไขค่า
 key: คีย์
 alias: นามแฝง
 bigInteger: Big Integer
@@ -264,6 +266,7 @@ confirm_revert_body: นี่จะเป็นการย้อนกลั�
 display: การแสดงผล
 settings_update_success: ปรับปรุงการตั้งค่าเรียบร้อยแล้ว
 title: ตำแหน่ง
+subtitle: คำบรรยาย
 revision_delta_created: สร้างแล้ว
 revision_delta_created_externally: ถูกสร้างจากภายนอก
 revision_delta_updated: 'อัพเดทแล้ว 1 ฟิลด์ | อัพเดทแล้ว {count} ฟิลด์'
@@ -285,6 +288,7 @@ related_collection: คอลเลกชันที่เกี่ยวข้
 related_collections: คอลเลกชันที่เกี่ยวข้อง
 translations_collection: การแปลตาราง
 languages_collection: คอลเลกชันภาษา
+translations_preview_collections: คอลเลกชัน
 import_data_input_placeholder: CSV หรือ JSON
 import_data_button: เริ่มการนำเข้า
 import_data_indeterminate: กำลังนำเข้าข้อมูล...
@@ -321,6 +325,7 @@ functions:
   minute: นาที
   second: วินาที
   count: นับจำนวน
+  json: JSON
 date-fns_date: PPP
 date-fns_time: 'h:mm:ss a'
 date-fns_time_no_seconds: 'h:mm a'
@@ -399,6 +404,7 @@ comments: ความคิดเห็น
 no_comments: ยังไม่มีความเห็น
 select_item: เลือกรายการ
 no_items: ไม่มีรายการ
+search_items: ค้นหารายการ...
 disabled: ปิดใช้งาน
 information: ข้อมูล
 report_bug: รายงานข้อบกพร่อง
@@ -414,8 +420,6 @@ file_count: 'ไม่มีไฟล์ | 1 ไฟล์ | {count} ไฟล์
 no_files_copy: ไม่มีไฟล์ที่นี่
 user_count: 'ไม่มีผู้ใช้ | ผู้ใช้ 1 คน | ผู้ใช้ {count} คน'
 no_users_copy: ยังไม่มีผู้ใช้ในบทบาท
-webhooks_count: 'ไม่มี webhook | มี 1 webhook | มี {count} webhook'
-no_webhooks_copy: ยังไม่มีการกำหนดค่าเว็บฮุค เริ่มต้นด้วยการสร้างด้านล่าง
 no_notifications: ไม่มีการแจ้งเตือน
 activity_log: รายงานกิจกรรม
 all_items: รายการทั้งหมด
@@ -425,7 +429,6 @@ no_collections: ไม่มีคอลเลกชัน
 create_collection: สร้างคอลเลกชัน
 no_collections_copy_admin: ยังไม่มีคอลเลกชันใดๆ คลิ๊กที่ปุ่มด้านล่างเพื่อสร้าง
 no_collections_copy: ยังไม่มีคอลเลกชันใดๆ กรุณาติดต่อผู้ดูแลระบบ
-relationship_not_setup: ความสัมพันธ์ยังไม่ถูกตั้งค่าให้ถูกต้อง
 display_template_not_setup: การตั้งค่าของการแสดงผลไม่ถูกต้อง
 collection_field_not_setup: การตั้งค่าของฟิลด์ยังไม่ถูกต้อง
 select_a_collection: เลือกคอลเลกชัน
@@ -441,7 +444,6 @@ activity_item: ฟีดกิจกรรม
 action: ดำเนินการ
 ip_address: หมายเลขไอพี
 user_agent: ตัวแทนของผู้ใช้
-webhooks: Webhooks
 decimals: เลขฐานสิบ
 min_value: ค่าต่ำสุด
 max_value: ค่าสูงสุด
@@ -471,6 +473,7 @@ bookmark_doesnt_exist_copy: ไม่พบบุ๊กมาร์กที่�
 bookmark_doesnt_exist_cta: กลับไปยังคอลเลกชัน
 select_an_item: เลือก 1 รายการ
 edit: แก้ไข
+edit_item: แก้ไขรายการ
 enabled: เปิดใช้งาน
 disable_tfa: ปิดใช้งาน 2FA
 tfa_scan_code: สแกนโค้ดในแอป Autuehticator เพื่อตั้งค่า 2FA ให้เสร็จ
@@ -498,14 +501,12 @@ errors:
   UNKNOWN: พบข้อผิดพลาดบางอย่างที่ไม่คาดคิด
   USER_SUSPENDED: ผู้ใช้ถูกระงับ
 security: ความปลอดภัย
-value_hashed: ข้อมูลถูกเข้ารหัสไว้อย่างปลอดภัย
 bookmark_name: ชื่อบุ๊กมาร์ก...
 create_bookmark: สร้างบุ๊กมาร์ก
 edit_bookmark: แก้ไขบุ๊กมาร์ก
 bookmarks: บุ๊กมาร์ก
 presets: ที่ตั้งไว้ล่วงหน้า
 unexpected_error: พบข้อผิดพลาดบางอย่างที่ไม่คาดคิด
-unexpected_error_copy: เกิดข้อผิดพลาดที่ไม่คาดคิด กรุณาลองใหม่อีกครั้งในภายหลัง
 copy_details: คัดลอกรายละเอียด
 no_app_access: ไม่สามารถเข้าถึงแอป
 no_app_access_copy: ผู้ใช้นี้ไม่ได้รับอนุญาตให้เข้าถึงส่วนแอดมิน
@@ -525,10 +526,9 @@ update_collection_success: แก้ไขคอลเลกชัน
 delete_collection_success: คอลเลกชันถูกลบแล้ว
 make_collection_visible: แสดงคอลเลคชั่น
 make_collection_hidden: ซ่อนคอลเลคชั่น
-start_end_of_count_items: '{start}-{end} ของ {count} ไอเท็ม'
-start_end_of_count_filtered_items: '{start}-{end} ของ {count} ไอเท็มที่ถูกกรอง'
-one_item: '1 รายการ'
-one_filtered_item: 'มี 1 ไอเท็มที่ถูกกรอง'
+count_of_total_items: '{count} รายการจากทั้งหมด {total} รายการ'
+start_end_of_count_items: '{start}-{end} ของ {count} รายการ'
+start_end_of_count_filtered_items: '{start}-{end} ของ {count} รายการที่ถูกกรอง'
 collections_shown: แสดงคอลเลกชัน
 visible_collections: คอลเลกชันที่มองเห็นได้
 hidden_collections: คอลเลกชันที่ซ่อนอยู่
@@ -582,6 +582,7 @@ operators:
   nintersects: ไม่ตัดกัน
   intersects_bbox: ตัดขอบกล่อง
   nintersects_bbox: ไม่ตัดขอบกล่อง
+  json: JSON
 loading: กำลังโหลด...
 drop_to_upload: วางเพื่ออัพโหลด
 item: รายการ
@@ -605,7 +606,6 @@ create_item: สร้างไอเท็ม
 display_template: แม่แบบการแสดงผล
 language_display_template: แม่แบบการแสดงภาษา
 translations_display_template: แม่แบบการแปลภาษา
-n_items_selected: 'ไม่มีรายการที่เลือก | เลือกแล้ว 1 รายการ | เลือกแล้ว {n} รายการ'
 per_page: ต่อหน้า
 all_files: ทุกไฟล์
 my_files: ไฟล์ของฉัน
@@ -644,6 +644,14 @@ flow_name: ชื่อ
 flow_tracking_activity: ติดตามกิจกรรมเท่านั้น
 flow_tracking_null: อย่าติดตามอะไรเลย
 code: โค้ด
+deployment:
+  provider:
+    settings:
+      delete_confirm: การกระทำนี้ถาวร และไม่สามรถย้อนกลับได้ คุณยังต้องการจะทำต่อหรือไม่?
+    run:
+      cancel_confirm: การกระทำนี้ถาวร และไม่สามรถย้อนกลับได้ คุณยังต้องการจะทำต่อหรือไม่?
+  target_value:
+    preview: ดูตัวอย่าง
 dashboard: แดชบอร์ด
 panel: แพแนล
 panel_options: ตัวเลือกแพแนล
@@ -679,8 +687,6 @@ tooltip: คำแนะนำ
 tooltip_placeholder: ใส่คำแนะนำ
 unlimited: ไม่จำกัด
 open_link_in: เปิดลิงก์
-new_tab: แท็บใหม่
-current_tab: แท็บปัจจุบัน
 wysiwyg_options:
   aligncenter: จัดตำแหน่งกึ่งกลาง
   alignjustify: จัดตำแหน่งชิดขอบซ้ายและขวา
@@ -700,12 +706,15 @@ wysiwyg_options:
   bullist: รายการแบบไม่มีลําดับ
   numlist: รายการแบบมีลำดับ
   hr: เส้นคั่นแนวนอน
+  insertdatetime_date: วันที่
+  insertdatetime_time: เวลา
   link: เพิ่ม/แก้ไข ลิงค์
   unlink: ลบลิงค์
   media: เพิ่ม/แก้ไข สื่อ
   image: เพิ่ม/แก้ไขภาพ
   copy: คัดลอก
   cut: ตัด
+  default: ค่าเริ่มต้น
   paste: วาง
   heading: หัวข้อ
   h1: หัวข้อที่ 1
@@ -728,6 +737,8 @@ wysiwyg_options:
   source_code: แก้ไข Source Code
   fullscreen: เต็มจอ
   directionality: อย่างมีทิศทาง
+  ltr: ซ้ายไปขวา
+  rtl: ขวาไปซ้าย
 dropdown: ตัวเลือกแบบดรอปดาวน์
 choices: ตัวเลือกแบบช้อยส์
 choices_option_configured_incorrectly: ตั้งค่าตัวเลือกแบบช้อยส์ไม่ถูกต้อง
@@ -744,7 +755,14 @@ editing_in_batch: 'กำลังแก้ไข {count} ไอเท็ม'
 no_options_available: ไม่มีตัวเลือกให้ใช้
 settings_data_model: รูปแบบข้อมูล
 settings_project: การตั้งค่า
-settings_webhooks: Webhooks
+licensing:
+  unlimited: ไม่จำกัด
+  addon_update: แก้ไข
+  resolve_continue: ดำเนินการต่อ
+  resolve_show_n_more: 'แสดงเพิ่มอีก {count}'
+  resolve_sso_admin_password: รหัสผ่าน
+  entitlements:
+    collections: คอลเลกชัน
 settings_presets: บุ๊กมาร์ก
 settings_translations: การแปลภาษา
 one_or_more_options_are_missing: ไม่พบตัวเลือกรายการ
@@ -765,33 +783,6 @@ discard_changes: ยกเลิกการเปลี่ยนแปลง
 discard_all_changes: ยกเลิกการเปลี่ยนแปลงทั้งหมด
 discard_changes_copy: แน่ใจไหมว่าต้องการละทิ้งการเปลี่ยนแปลงทั้งหมด?
 keep_editing: แก้ไขต่อไป
-page_help_collections_collection: >-
-  **รายการที่เรียกดู** — รายการของ {collection} ที่คุณเรียกดู สามารถปรับแต่งเค้าโครง, การกรอง, และการเรียงเพื่อปรับแต่งมุมมองในแบบที่ต้องการ, และสามารถสร้างเป็นบุ๊คมาร์กเพื่อเข้าถึงการตั้งค่าเหล่านี้ได้อย่างรวดเร็ว
-page_help_collections_item: >-
-  **รายละเอียดรายการ** — คือรูปแบบของการมองเห็นและจัดการรายการนี้ พื้นที่ด้านข้างนี้จะแสดงทั้งประวัติการแก้ไขและความเห็นทั้งหมด
-page_help_activity_collection: >-
-  **เรียกดูกิจกรรม** — รายการกิจกรรมทั้งหมดของผู้ใช้และเนื้อหาต่างๆ ในระบบ
-page_help_docs_global: >-
-  **ภาพรวมเอกสาร** — เอกสารที่ถูกสร้างขึ้นสำหรับเวอร์ชั่นและสคีมาของโครงการโดยเฉพาะ
-page_help_files_collection: >-
-  **ไฟล์ไลบรารี** — แสดงทุกไฟล์ที่ถูกอัพโหลดมาที่โปรเจ็คนี้ สามารถแก้ไขเค้าโครง, การกรอง, และการเรียงลำดับให้สอดคล้องกับมุมมองที่ต้องการ และบันทึกเป็นบุ๊คมาร์กของการตั้งค่าแต่ละแบบเพื่อความรวดเร็วในการเข้าถึงได้
-page_help_files_item: >-
-  **รายละเอียดไฟล์** — ฟอร์มสำหรับการจัดการ metadata ของไฟล์, แก้ไขไฟล์ต้นแบบ และปรับปรุงการตั้งค่าการเข้าถึง
-page_help_settings_datamodel_collections: >-
-  **คอลเลกชัน** — แสดงทุกคอลเลกชัน รวมถึงคอลเลกชันที่ซ่อน คอลเลกชันของระบบ และตารางในฐานข้อมูลที่ถูกเพิ่มเข้ามาภายหลัง
-page_help_settings_datamodel_fields: >-
-  **คอลเลกชัน** — ฟอร์มสำหรับการจัดการคอลเลกชันและฟิลด์ต่างๆ
-page_help_settings_roles_collection: '**เรียกดูบทบาท** — แสดงแอดมิน, บทบาทเมื่อเข้าถึงแบบสาธารณะ และบทบาทของผู้ใช้'
-page_help_settings_roles_item: "**รายละเอียดบทบาท** — จัดการบทบาทของสิทธิ์และการตั้งค่าต่างๆ"
-page_help_settings_presets_collection: >-
-  **เรียกดูการตั้งค่าล่วงหน้า** — แสดงการตั้งค่าล่วงหน้าทั้งหมดในโปรเจ็ค รวมถึงการตั้งค่าล่วงหน้าของผู้ใช้ บทบาท บุ๊คมาร์ก และรูปแบบการมองเห็น
-page_help_settings_presets_item: >-
-  **รายละเอียดการตั้งค่าล่วงหน้า** — ฟอร์มสำหรับการจัดการบุ๊๕มาร์ก และการตั้งค่าล่วงหน้าของคอลเลกชัน
-page_help_settings_webhooks_collection: '**เรียกดู Webhooks** — รายการของ webhook ในโปรเจ็ค'
-page_help_settings_webhooks_item: '**รายละเอียดของ webhook** — ฟอร์มสำหรับสร้างและจัดการ webhook'
-page_help_users_collection: '**ข้อมูลผู้ใช้** — แสดงผู้ใช้ในระบบทั้งหมดของโปรเจ็ค'
-page_help_users_item: >-
-  **รายละเอียดผู้ใช้** — จัดการข้อมูลของผู้ใช้ หรือดูรายละเอียดของผู้ใช้คนอื่น
 activity_feed: ฟีดกิจกรรม
 add_new: เพิ่มใหม่
 create_new: สร้างใหม่
@@ -822,6 +813,7 @@ fields:
     collection: คอลเลกชัน
     icon: ไอคอน
     note: หมายเหตุ
+    status: สถานะ
     color: สี
     display_template: แม่แบบการแสดงผล
     hidden: ซ่อน
@@ -897,6 +889,7 @@ fields:
     storage_default_folder: โฟลเดอร์เริ่มต้น
     custom_css: CSS ที่กำหนดเอง
     module_bar: โมดูลบาร์
+    ai_header_name: เฮดเดอร์
   directus_shares:
     name: ชื่อ
     role: บทบาท
@@ -913,21 +906,9 @@ fields:
     name: ชื่อบทบาท
     icon: ไอคอนของบทบาท
     description: รายละเอียด
-    app_access: การเข้าถึงแอป
-    admin_access: ผู้ดูแลเท่านั้น
-    ip_access: IP ที่เข้าถึง
-    enforce_tfa: ต้องการ 2FA
     users: ผู้ใช้ในบทบาทนี้
-    module_list: รายการโมดูล
-  directus_webhooks:
-    name: ชื่อ
-    method: เมธอด
-    status: สถานะ
-    data: ข้อมูล
-    header: เฮดเดอร์
-    value: ค่า
-    headers: รีเควส เฮดเดอร์
-    collections: คอลเลกชัน
+  directus_policies:
+    description: รายละเอียด
 field_options:
   directus_settings:
     security_divider_title: ความปลอดภัย
@@ -964,16 +945,6 @@ field_options:
     status_dropdown_suspended: ระงับชั่วคราว
     status_dropdown_archived: เก็บถาวร
     token: ระบุโทเค็นความปลอดภัย
-  directus_webhooks:
-    status_options_active: เปิดใช้งาน
-    status_options_inactive: ไม่ใช้งาน
-    actions_create: สร้าง
-    actions_update: แก้ไข
-    actions_delete: ลบ
-    actions_login: เข้าสู่ระบบ
-    headers:
-      header: เฮดเดอร์
-      value: ค่า
 no_fields_in_collection: 'ยังไม่มีฟิลด์ใน {collection}'
 no_value: ไม่มีค่า
 do_nothing: ไม่ต้องทำอะไร
@@ -987,6 +958,22 @@ inline: แบบอินไลน์
 comment: ความคิดเห็น
 live_preview:
   new_window: เปิดในหน้าต่างใหม่
+ai:
+  input: Input
+  items: รายการ
+  content: เนื้อหา
+  settings: การตั้งค่า
+  tool_approval:
+    disabled: ปิดใช้งาน
+  ask_user_submit: ส่งข้อมูล
+  ask_user_next: ถัดไป
+ai_tools:
+  items: รายการ
+  files: ไฟล์
+  schema: เค้าโครง
+  collections: คอลเลกชัน
+mcp_prompts_collection_schema:
+  messages_role_user: ผู้ใช้
 relational_triggers: ทริกเกอร์เชิงสัมพันธ์
 referential_action_field_label_m2o: เมื่อลบ {collection}...
 referential_action_field_label_o2m: เมื่อยกเลิกการเลือก {collection}...
@@ -999,7 +986,6 @@ continue_label: ดำเนินการต่อ
 continue_as: >-
   บัญชี {name} ถูกยืนยันตัวตนแล้ว ถ้าเป็นบัญชีของคุณ คลิ๊กที่นี่เพื่อเข้าสู่ระบบ
 editing_role: 'บทบาท {role}'
-creating_webhook: สร้าง webhook
 default_label: ค่าเริ่มต้น
 delete_label: ลบ
 delete_are_you_sure: >-
@@ -1058,7 +1044,6 @@ translation: แปลภาษา
 value: ค่า
 view_project: ดูโครงการ
 report_error: แจ้งข้อผิดพลาด
-start: เริ่มต้น
 table: ตาราง
 list: รายการ
 interfaces:
@@ -1070,10 +1055,10 @@ interfaces:
     and: และ
   group-accordion:
     start: เริ่มต้น
+  group-tabs:
+    fill_width: กว้างเติมเต็ม
   presentation-links:
-    presentation-links: ปุ่มลิงก์
-    links: ลิงค์
-    description: ปุ่มลิงค์ที่สามารถตั้งค่าได้เพื่อเปิด URLs
+    presentation-links: ปุ่ม
     style: สไตล์
     primary: หลัก
     link: ลิงค์
@@ -1182,6 +1167,8 @@ interfaces:
     description: กรอกและดู Markdown ล่วงหน้าก่อน
     edit: แก้ไข
     preview: ดูตัวอย่าง
+    default_view: มุมมองเริ่มต้น
+    default_view_preview: ดูตัวอย่าง
     customSyntax: บล็อกที่ออกแบบเอง
     customSyntax_label: เพิ่ม syntax ที่ออกแบบเอง
     customSyntax_add: เพิ่ม syntax ที่ออกแบบเอง
@@ -1213,6 +1200,7 @@ interfaces:
     sort: เรียง
     field_note_placeholder: กรอกโน้ตให้ฟิลด์
     interface_group: ตัวเลือกอินเทอร์เฟส
+    edit_mode_inline: แบบอินไลน์
   slider:
     slider: แถบเลื่อน
     description: เลือกตัวเลขโดยใช้แถบเลื่อน
@@ -1275,7 +1263,6 @@ interfaces:
     description: เขียนข้อความที่สามารถตกแต่งได้ด้วย HTML
     toolbar: แถบเครื่องมือ
     custom_formats: รูปแบบที่กำหนดเอง
-    options_override: ตัวเลือกแทนที่
   input-block-editor:
     tools: แถบเครื่องมือ
     tools_options:
@@ -1295,6 +1282,9 @@ interfaces:
     rate: ' ให้คะแนน'
   system-token:
     system-token: โทเค็น
+  header:
+    header: เฮดเดอร์
+    links: ลิงค์
 displays:
   translations:
     translations: การแปลภาษา
@@ -1440,6 +1430,7 @@ layouts:
     add_group: เพิ่มกลุ่ม
 horizontal: แนวนอน
 both: ทั้งคู่
+start: เริ่มต้น
 panels:
   metric:
     field: ฟิลด์
@@ -1483,3 +1474,4 @@ fonts:
   bold: ตัวหนา
   italic: ตัวเอียง
   auto: อัตโนมัติ
+set_to_now: ตั้งค่าเป็นตอนนี้

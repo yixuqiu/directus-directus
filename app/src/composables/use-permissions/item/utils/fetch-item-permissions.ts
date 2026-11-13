@@ -1,9 +1,9 @@
-import api from '@/api';
-import { unexpectedError } from '@/utils/unexpected-error';
 import { ItemPermissions } from '@directus/types';
 import { computedAsync } from '@vueuse/core';
 import { ref, unref } from 'vue';
 import { Collection, PrimaryKey } from '../../types';
+import api from '@/api';
+import { unexpectedError } from '@/utils/unexpected-error';
 
 const defaultPermissions: ItemPermissions = {
 	update: {
@@ -23,13 +23,15 @@ export const fetchItemPermissions = (collection: Collection, primaryKey: Primary
 
 	const fetchedItemPermissions = computedAsync(
 		async () => {
-			refreshKey.value;
+			void refreshKey.value;
 
 			const primaryKeyValue = unref(primaryKey);
 
 			try {
 				const response = await api.get<{ data: ItemPermissions }>(
-					`/permissions/me/${unref(collection)}${primaryKeyValue !== null ? `/${primaryKeyValue}` : ''}`,
+					`/permissions/me/${unref(collection)}${
+						primaryKeyValue !== null ? `/${encodeURIComponent(primaryKeyValue)}` : ''
+					}`,
 				);
 
 				return response.data.data;

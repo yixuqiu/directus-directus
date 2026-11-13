@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { useSettingsStore } from '@/stores/settings';
-import { getBasemapSources, getStyleFromBasemapSource } from '@/utils/geometry/basemap';
 import { GEOMETRY_TYPES } from '@directus/constants';
 import { useAppStore } from '@directus/stores';
 import { Field, GeometryOptions, GeometryType } from '@directus/types';
 import { CameraOptions, Map } from 'maplibre-gl';
 import type { Ref } from 'vue';
 import { computed, onMounted, onUnmounted, ref, toRefs, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
+import VSelect from '@/components/v-select/v-select.vue';
+import { useSettingsStore } from '@/stores/settings';
+import { getBasemapSources, getStyleFromBasemapSource } from '@/utils/geometry/basemap';
+import { getMapboxRequestTransformer } from '@/utils/geometry/mapbox';
+
+import '@/utils/geometry/maplibre-worker';
 
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -18,8 +21,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits(['input']);
-
-const { t } = useI18n();
 
 const nativeGeometryType = computed(() => (props.field?.type.split('.')[1] as GeometryType) ?? 'Point');
 const geometryType = ref<GeometryType>(nativeGeometryType.value ?? props.value?.geometryType ?? 'Point');
@@ -65,7 +66,7 @@ onMounted(() => {
 		container: mapContainer.value!,
 		style: style.value,
 		...(defaultView.value || {}),
-		...(mapboxKey ? { accessToken: mapboxKey } : {}),
+		...(mapboxKey ? { transformRequest: getMapboxRequestTransformer(mapboxKey) } : {}),
 	});
 
 	map.on('moveend', () => {
@@ -86,30 +87,30 @@ onUnmounted(() => {
 <template>
 	<div class="form-grid">
 		<div v-if="!nativeGeometryType && field?.type !== 'csv'" class="field half-left">
-			<div class="type-label">{{ t('interfaces.map.geometry_type') }}</div>
-			<v-select
+			<div class="type-label">{{ $t('interfaces.map.geometry_type') }}</div>
+			<VSelect
 				v-model="geometryType"
-				:placeholder="t('any')"
+				:placeholder="$t('any')"
 				show-deselect
 				:items="GEOMETRY_TYPES.map((value) => ({ value, text: value }))"
 			/>
 		</div>
 		<div class="field">
-			<div class="type-label">{{ t('interfaces.map.default_view') }}</div>
+			<div class="type-label">{{ $t('interfaces.map.default_view') }}</div>
 			<div ref="mapContainer" class="map"></div>
 		</div>
 	</div>
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
 
 .form-grid {
-	@include form-grid;
+	@include mixins.form-grid;
 }
 
 .map {
-	height: 400px;
+	block-size: 22.5rem;
 	overflow: hidden;
 	border: var(--theme--border-width) solid var(--theme--form--field--input--border-color);
 	border-radius: var(--theme--border-radius);

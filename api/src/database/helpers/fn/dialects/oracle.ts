@@ -1,4 +1,6 @@
+import { InvalidQueryError } from '@directus/errors';
 import type { Knex } from 'knex';
+import { convertToJsonPath } from '../json/convert-json-path.js';
 import type { FnHelperOptions } from '../types.js';
 import { FnHelper } from '../types.js';
 
@@ -12,35 +14,35 @@ const parseLocaltime = (columnType?: string) => {
 
 export class FnHelperOracle extends FnHelper {
 	year(table: string, column: string, options: FnHelperOptions): Knex.Raw {
-		return this.knex.raw(`TO_CHAR(??.??${parseLocaltime(options?.type)}, 'IYYY')`, [table, column]);
+		return this.knex.raw(`TO_NUMBER(TO_CHAR(??.??${parseLocaltime(options?.type)}, 'YYYY'))`, [table, column]);
 	}
 
 	month(table: string, column: string, options: FnHelperOptions): Knex.Raw {
-		return this.knex.raw(`TO_CHAR(??.??${parseLocaltime(options?.type)}, 'MM')`, [table, column]);
+		return this.knex.raw(`TO_NUMBER(TO_CHAR(??.??${parseLocaltime(options?.type)}, 'MM'))`, [table, column]);
 	}
 
 	week(table: string, column: string, options: FnHelperOptions): Knex.Raw {
-		return this.knex.raw(`TO_CHAR(??.??${parseLocaltime(options?.type)}, 'IW')`, [table, column]);
+		return this.knex.raw(`TO_NUMBER(TO_CHAR(??.??${parseLocaltime(options?.type)}, 'IW'))`, [table, column]);
 	}
 
 	day(table: string, column: string, options: FnHelperOptions): Knex.Raw {
-		return this.knex.raw(`TO_CHAR(??.??${parseLocaltime(options?.type)}, 'DD')`, [table, column]);
+		return this.knex.raw(`TO_NUMBER(TO_CHAR(??.??${parseLocaltime(options?.type)}, 'DD'))`, [table, column]);
 	}
 
 	weekday(table: string, column: string, options: FnHelperOptions): Knex.Raw {
-		return this.knex.raw(`TO_CHAR(??.??${parseLocaltime(options?.type)}, 'D')`, [table, column]);
+		return this.knex.raw(`TO_NUMBER(TO_CHAR(??.??${parseLocaltime(options?.type)}, 'D'))`, [table, column]);
 	}
 
 	hour(table: string, column: string, options: FnHelperOptions): Knex.Raw {
-		return this.knex.raw(`TO_CHAR(??.??${parseLocaltime(options?.type)}, 'HH24')`, [table, column]);
+		return this.knex.raw(`TO_NUMBER(TO_CHAR(??.??${parseLocaltime(options?.type)}, 'HH24'))`, [table, column]);
 	}
 
 	minute(table: string, column: string, options: FnHelperOptions): Knex.Raw {
-		return this.knex.raw(`TO_CHAR(??.??${parseLocaltime(options?.type)}, 'MI')`, [table, column]);
+		return this.knex.raw(`TO_NUMBER(TO_CHAR(??.??${parseLocaltime(options?.type)}, 'MI'))`, [table, column]);
 	}
 
 	second(table: string, column: string, options: FnHelperOptions): Knex.Raw {
-		return this.knex.raw(`TO_CHAR(??.??${parseLocaltime(options?.type)}, 'SS')`, [table, column]);
+		return this.knex.raw(`TO_NUMBER(TO_CHAR(??.??${parseLocaltime(options?.type)}, 'SS'))`, [table, column]);
 	}
 
 	count(table: string, column: string, options?: FnHelperOptions): Knex.Raw<any> {
@@ -56,5 +58,38 @@ export class FnHelperOracle extends FnHelper {
 		}
 
 		throw new Error(`Couldn't extract type from ${table}.${column}`);
+	}
+
+	json(table: string, column: string, options?: FnHelperOptions): Knex.Raw {
+		const collectionName = options?.originalCollectionName || table;
+		const fieldSchema = this.schema.collections?.[collectionName]?.fields?.[column];
+
+		if (!fieldSchema || fieldSchema.type !== 'json' || !options?.jsonPath) {
+			throw new InvalidQueryError({ reason: `${collectionName}.${column} is not a JSON field` });
+		}
+
+		// ".items[0].name" → "$.items[0].name"
+		// Oracle's JSON_VALUE and JSON_QUERY require the path argument to be a string
+		// literal — the OracleDB driver does not support bind parameters in that position.
+		// Inlining is safe because parseJsonPath enforces a strict allowlist: only word
+		// characters ([A-Za-z0-9_]), dots, and square brackets are accepted, blocking all
+		// SQL-dangerous characters (quotes, parentheses, operators, etc.).
+		// See: api/src/database/helpers/fn/json/parse-function.ts
+		const jsonPath = convertToJsonPath(options.jsonPath);
+
+		if (options?.jsonReturnType === 'numeric') {
+			// JSON_VALUE with RETURNING NUMBER gives correct numeric comparison semantics.
+			return this.knex.raw(`JSON_VALUE(??.??, '${jsonPath}' RETURNING NUMBER)`, [table, column]);
+		}
+
+		// JSON_VALUE returns scalar values (returns NULL for objects/arrays)
+		// JSON_QUERY returns objects/arrays
+		// COALESCE handles both cases with scalar values taking precedence
+		return this.knex.raw(`COALESCE(JSON_VALUE(??.??, '${jsonPath}'), JSON_QUERY(??.??, '${jsonPath}'))`, [
+			table,
+			column,
+			table,
+			column,
+		]);
 	}
 }

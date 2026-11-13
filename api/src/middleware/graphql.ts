@@ -1,10 +1,11 @@
+import { useEnv } from '@directus/env';
+import { InvalidPayloadError, InvalidQueryError, MethodNotAllowedError } from '@directus/errors';
+import type { GraphQLParams } from '@directus/types';
 import { parseJSON } from '@directus/utils';
 import type { RequestHandler } from 'express';
 import type { DocumentNode } from 'graphql';
 import { getOperationAST, parse, Source } from 'graphql';
-import { InvalidPayloadError, InvalidQueryError, MethodNotAllowedError } from '@directus/errors';
 import { GraphQLValidationError } from '../services/graphql/errors/validation.js';
-import type { GraphQLParams } from '../types/index.js';
 import asyncHandler from '../utils/async-handler.js';
 
 export const parseGraphQL: RequestHandler = asyncHandler(async (req, res, next) => {
@@ -12,9 +13,9 @@ export const parseGraphQL: RequestHandler = asyncHandler(async (req, res, next) 
 		throw new MethodNotAllowedError({ allowed: ['GET', 'POST'], current: req.method });
 	}
 
-	let query: string | null = null;
-	let variables: Record<string, unknown> | null = null;
-	let operationName: string | null = null;
+	let query: string | null;
+	let variables: Record<string, unknown> | null;
+	let operationName: string | null;
 	let document: DocumentNode;
 
 	if (req.method === 'GET') {
@@ -42,7 +43,11 @@ export const parseGraphQL: RequestHandler = asyncHandler(async (req, res, next) 
 	}
 
 	try {
-		document = parse(new Source(query));
+		const { GRAPHQL_QUERY_TOKEN_LIMIT } = useEnv();
+
+		document = parse(new Source(query), {
+			maxTokens: GRAPHQL_QUERY_TOKEN_LIMIT,
+		});
 	} catch (err: any) {
 		throw new GraphQLValidationError({
 			errors: [err],
@@ -69,7 +74,8 @@ export const parseGraphQL: RequestHandler = asyncHandler(async (req, res, next) 
 		query,
 		variables,
 		operationName,
-		contextValue: { req, res },
+		// context is scoped per request
+		contextValue: { req, res, cache: new Map() },
 	} as GraphQLParams;
 
 	return next();

@@ -15,6 +15,18 @@ export type ReadItemPermissionsOutput = {
 	share: { access: boolean };
 };
 
+export type ReadUserPermissionsOutput = Record<
+	string,
+	Record<
+		'create' | 'update' | 'delete' | 'read' | 'share',
+		{
+			access: 'none' | 'partial' | 'full';
+			fields?: string[];
+			presets?: Record<string, any>;
+		}
+	>
+>;
+
 /**
  * List all Permissions that exist in Directus.
  * @param query The query parameters
@@ -43,7 +55,7 @@ export const readPermission =
 		query?: TQuery,
 	): RestCommand<ReadPermissionOutput<Schema, TQuery>, Schema> =>
 	() => {
-		throwIfEmpty(String(key), 'Key cannot be empty');
+		throwIfEmpty(key, 'Key cannot be empty');
 
 		return {
 			path: `/permissions/${key}`,
@@ -64,7 +76,7 @@ export const readItemPermissions =
 		key?: string | number,
 	): RestCommand<ReadItemPermissionsOutput, Schema> =>
 	() => {
-		throwIfEmpty(String(collection), 'Collection cannot be empty');
+		throwIfEmpty(collection as string, 'Collection cannot be empty');
 
 		const item = key ? `${collection as string}/${key}` : `${collection as string}`;
 
@@ -73,3 +85,13 @@ export const readItemPermissions =
 			method: 'GET',
 		};
 	};
+
+/**
+ * Check the current user's permissions.
+ */
+export const readUserPermissions =
+	<Schema>(): RestCommand<ReadUserPermissionsOutput, Schema> =>
+	() => ({
+		path: `/permissions/me`,
+		method: 'GET',
+	});

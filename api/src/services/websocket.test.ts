@@ -1,6 +1,6 @@
 import type { Accountability } from '@directus/types';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { WebSocketController, getWebSocketController } from '../websocket/controllers/index.js';
+import { getWebSocketController, WebSocketController } from '../websocket/controllers/index.js';
 import type { WebSocketClient } from '../websocket/types.js';
 import { WebSocketService } from './websocket.js';
 
@@ -9,14 +9,13 @@ vi.mock('../websocket/controllers/index');
 
 // This is required because logger uses global env which is imported before the tests run. Can be
 // reduce to just mock the file when logger is also using useLogger everywhere @TODO
-vi.mock('@directus/env', () => ({
-	useEnv: vi.fn().mockReturnValue({
+vi.mock('@directus/env', async () => {
+	const { mockUseEnv } = await import('../test-utils/env.js');
+	return mockUseEnv({
 		WEBSOCKETS_ENABLED: true,
 		WEBSOCKETS_REST_ENABLED: true,
-		EXTENSIONS_PATH: './extensions',
-		EMAIL_TEMPLATES_PATH: './templates',
-	}),
-}));
+	});
+});
 
 afterEach(() => {
 	vi.clearAllMocks();
@@ -57,7 +56,11 @@ describe('WebSocketService', () => {
 	});
 
 	test('broadcast with role filter', () => {
-		const clients = [mockClient({ user: 'test', role: 'test' }), mockClient({ user: 'test2', role: 'test2' })];
+		const clients = [
+			mockClient({ user: 'test', role: 'test' } as Accountability),
+			mockClient({ user: 'test2', role: 'test2' } as Accountability),
+		];
+
 		const message = 'test 123';
 
 		vi.mocked(getWebSocketController).mockReturnValue({ clients: new Set(clients) } as unknown as WebSocketController);
@@ -70,7 +73,11 @@ describe('WebSocketService', () => {
 	});
 
 	test('broadcast with user filter', () => {
-		const clients = [mockClient({ user: 'test', role: 'test' }), mockClient({ user: 'test2', role: 'test2' })];
+		const clients = [
+			mockClient({ user: 'test', role: 'test' } as Accountability),
+			mockClient({ user: 'test2', role: 'test2' } as Accountability),
+		];
+
 		const message = 'test 123';
 
 		vi.mocked(getWebSocketController).mockReturnValue({ clients: new Set(clients) } as unknown as WebSocketController);

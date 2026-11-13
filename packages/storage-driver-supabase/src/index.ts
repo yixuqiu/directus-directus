@@ -1,8 +1,11 @@
-import type { Driver, Range } from '@directus/storage';
+import { basename, join } from 'node:path';
+import { Readable } from 'node:stream';
+import { DEFAULT_CHUNK_SIZE } from '@directus/constants';
+import type { TusDriver } from '@directus/storage';
+import type { ChunkedUploadContext, ReadOptions } from '@directus/types';
 import { normalizePath } from '@directus/utils';
 import { StorageClient } from '@supabase/storage-js';
-import { join } from 'node:path';
-import { Readable } from 'node:stream';
+import * as tus from 'tus-js-client';
 import type { RequestInit } from 'undici';
 import { fetch } from 'undici';
 
@@ -13,18 +16,26 @@ export type DriverSupabaseConfig = {
 	/** Allows a custom Supabase endpoint for self-hosting */
 	endpoint?: string;
 	root?: string;
+	tus?: {
+		chunkSize?: number;
+	};
 };
 
-export class DriverSupabase implements Driver {
+export class DriverSupabase implements TusDriver {
 	private config: DriverSupabaseConfig & { root: string };
 	private client: StorageClient;
 	private bucket: ReturnType<StorageClient['from']>;
+
+	// TUS specific members
+	private readonly preferredChunkSize: number;
 
 	constructor(config: DriverSupabaseConfig) {
 		this.config = {
 			...config,
 			root: normalizePath(config.root ?? '', { removeLeading: true }),
 		};
+
+		this.preferredChunkSize = this.config.tus?.chunkSize ?? DEFAULT_CHUNK_SIZE;
 
 		this.client = this.getClient();
 		this.bucket = this.getBucket();
@@ -68,7 +79,13 @@ export class DriverSupabase implements Driver {
 		return `${this.endpoint}/${join('object/authenticated', this.config.bucket, this.fullPath(filepath))}`;
 	}
 
-	async read(filepath: string, range?: Range) {
+	private getResumableUrl() {
+		return `${this.endpoint}/upload/resumable`;
+	}
+
+	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
+		const { range } = options || {};
+
 		const requestInit: RequestInit = { method: 'GET' };
 
 		requestInit.headers = {
@@ -82,55 +99,75 @@ export class DriverSupabase implements Driver {
 		const response = await fetch(this.getAuthenticatedUrl(filepath), requestInit);
 
 		if (response.status >= 400 || !response.body) {
+			// An unread body holds its connection open
+			await response.body?.cancel();
+
 			throw new Error(`No stream returned for file "${filepath}"`);
 		}
 
 		return Readable.fromWeb(response.body);
 	}
 
-	async stat(filepath: string) {
-		const { data, error } = await this.bucket.list(this.config.root, {
-			search: filepath,
+	private async find(filepath: string) {
+		let rootPath = join(this.config.root, dirname(filepath));
+		// Supabase expects an empty string for current directory
+		if (rootPath === '.') rootPath = '';
+
+		const rootFolder = normalizePath(rootPath);
+
+		const { data, error } = await this.bucket.list(rootFolder, {
+			search: basename(filepath),
 			limit: 1,
 		});
 
-		if (error || data.length === 0) {
+		if (error) throw error;
+
+		return data[0];
+	}
+
+	async stat(filepath: string): Promise<{
+		size: any;
+		modified: Date;
+	}> {
+		const file = await this.find(filepath);
+
+		if (!file) {
 			throw new Error('File not found');
 		}
 
+		// metadata is null for folders
 		return {
-			size: data[0]?.metadata['contentLength'] ?? 0,
-			modified: new Date(data[0]?.metadata['lastModified'] || null),
+			size: file.metadata?.['contentLength'] ?? 0,
+			modified: new Date(file.metadata?.['lastModified'] || 0),
 		};
 	}
 
-	async exists(filepath: string) {
-		try {
-			await this.stat(filepath);
-			return true;
-		} catch {
-			return false;
-		}
+	async exists(filepath: string): Promise<boolean> {
+		return (await this.find(filepath)) !== undefined;
 	}
 
-	async move(src: string, dest: string) {
+	async move(src: string, dest: string): Promise<void> {
 		await this.bucket.move(this.fullPath(src), this.fullPath(dest));
 	}
 
-	async copy(src: string, dest: string) {
+	async copy(src: string, dest: string): Promise<void> {
 		await this.bucket.copy(this.fullPath(src), this.fullPath(dest));
 	}
 
-	async write(filepath: string, content: Readable, type?: string) {
-		await this.bucket.upload(this.fullPath(filepath), content, {
+	async write(filepath: string, content: Readable, type?: string): Promise<void> {
+		const { error } = await this.bucket.upload(this.fullPath(filepath), content, {
 			contentType: type ?? '',
 			cacheControl: '3600',
 			upsert: true,
 			duplex: 'half',
 		});
+
+		if (error) {
+			throw new Error(`Error uploading file "${filepath}"`, { cause: error });
+		}
 	}
 
-	async delete(filepath: string) {
+	async delete(filepath: string): Promise<void> {
 		await this.bucket.remove([this.fullPath(filepath)]);
 	}
 
@@ -142,7 +179,7 @@ export class DriverSupabase implements Driver {
 	async *listGenerator(prefix: string): AsyncIterable<string> {
 		const limit = 1000;
 		let offset = 0;
-		let itemCount = 0;
+		let itemCount;
 
 		/*
 		 *	The Supabase API only returns the directories and files directly within the queried location
@@ -169,7 +206,7 @@ export class DriverSupabase implements Driver {
 		 */
 		const isDirectory = prefix.endsWith('/');
 		const prefixDirectory = isDirectory ? prefix : dirname(prefix);
-		const search = isDirectory ? '' : prefix.split('/').pop() ?? '';
+		const search = isDirectory ? '' : (prefix.split('/').pop() ?? '');
 
 		do {
 			const { data, error } = await this.bucket.list(prefixDirectory, {
@@ -199,6 +236,81 @@ export class DriverSupabase implements Driver {
 			}
 		} while (itemCount === limit);
 	}
+
+	get tusExtensions(): string[] {
+		return ['creation', 'termination', 'expiration'];
+	}
+
+	async createChunkedUpload(_filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
+		return context;
+	}
+
+	async writeChunk(
+		filepath: string,
+		content: Readable,
+		offset: number,
+		context: ChunkedUploadContext,
+	): Promise<number> {
+		let bytesUploaded = offset || 0;
+
+		const metadata = {
+			bucketName: this.config.bucket,
+			objectName: this.fullPath(filepath),
+			contentType: context.metadata!['type'] ?? 'image/png',
+			cacheControl: '3600',
+		};
+
+		await new Promise((resolve, reject) => {
+			const upload = new tus.Upload(content, {
+				endpoint: this.getResumableUrl(),
+				// @ts-expect-error
+				fileReader: new FileReader(),
+				headers: {
+					Authorization: `Bearer ${this.config.serviceRole}`,
+					'x-upsert': 'true',
+				},
+				metadata,
+				chunkSize: this.preferredChunkSize,
+				uploadSize: context.size,
+				retryDelays: null,
+				onError(error) {
+					reject(error);
+				},
+				onChunkComplete: function (chunkSize) {
+					bytesUploaded += chunkSize;
+
+					resolve(null);
+				},
+				onSuccess() {
+					resolve(null);
+				},
+				onUploadUrlAvailable() {
+					if (!context.metadata!['upload-url']) {
+						context.metadata!['upload-url'] = upload.url;
+					}
+				},
+			});
+
+			if (context.metadata!['upload-url']) {
+				upload.resumeFromPreviousUpload({
+					size: context.size!,
+					creationTime: context.metadata!['creation_date'] as string,
+					metadata,
+					uploadUrl: context.metadata!['upload-url'],
+				} as any);
+			}
+
+			upload.start();
+		});
+
+		return bytesUploaded;
+	}
+
+	async finishChunkedUpload(_filepath: string, _context: ChunkedUploadContext): Promise<void> {}
+
+	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
+		await this.delete(filepath);
+	}
 }
 
 export default DriverSupabase;
@@ -208,4 +320,28 @@ export default DriverSupabase;
  */
 function dirname(path: string) {
 	return path.split('/').slice(0, -1).join('/');
+}
+
+// @ts-expect-error
+class StreamSource extends tus.StreamSource {
+	_streamEnded = false;
+
+	// @ts-expect-error
+	override async slice(start: number, end: number) {
+		if (this._streamEnded) return null;
+
+		// Act like the stream ended after it's been called once
+		this._streamEnded = true;
+
+		// Shift the start and end offsets to always start at 0, since the read stream is only a stream of one chunk with
+		// length of `chunkSize`
+		return super.slice(0, end - start);
+	}
+}
+
+class FileReader {
+	async openFile(input: Readable, _: number): Promise<StreamSource> {
+		// @ts-expect-error
+		return new StreamSource(input);
+	}
 }

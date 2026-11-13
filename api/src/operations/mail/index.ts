@@ -1,16 +1,22 @@
+import { useEnv } from '@directus/env';
 import { defineOperationApi } from '@directus/extensions';
+import { useLogger } from '../../logger/index.js';
 import type { EmailOptions } from '../../services/mail/index.js';
 import { MailService } from '../../services/mail/index.js';
 import { md } from '../../utils/md.js';
-import { useLogger } from '../../logger.js';
+import { useFlowsEmailRateLimiter } from './rate-limiter.js';
 
 export type Options = {
+	to: string;
+	fromName?: string;
+	type: 'wysiwyg' | 'markdown' | 'template';
+	subject: string;
 	body?: string;
 	template?: string;
 	data?: Record<string, any>;
-	to: string;
-	type: 'wysiwyg' | 'markdown' | 'template';
-	subject: string;
+	cc?: string;
+	bcc?: string;
+	replyTo?: string;
 };
 
 const logger = useLogger();
@@ -18,9 +24,24 @@ const logger = useLogger();
 export default defineOperationApi<Options>({
 	id: 'mail',
 
-	handler: async ({ body, template, data, to, type, subject }, { accountability, database, getSchema }) => {
+	handler: async (
+		{ body, template, data, to, fromName, type, subject, cc, bcc, replyTo },
+		{ accountability, database, getSchema, flow },
+	) => {
+		await useFlowsEmailRateLimiter(flow!.id);
+
+		const { EMAIL_FROM } = useEnv();
+
 		const mailService = new MailService({ schema: await getSchema({ database }), accountability, knex: database });
-		const mailObject: EmailOptions = { to, subject };
+		const mailObject: EmailOptions = { to, subject, cc, bcc, replyTo };
+
+		const trimmedFromName = typeof fromName === 'string' ? fromName.trim() : undefined;
+
+		// An incomplete `from` object is rejected by the mail service, so only set it when there's a name to use
+		if (trimmedFromName) {
+			mailObject.from = { name: trimmedFromName, address: EMAIL_FROM };
+		}
+
 		const safeBody = typeof body !== 'string' ? JSON.stringify(body) : body;
 
 		if (type === 'template') {

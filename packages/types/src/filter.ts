@@ -31,7 +31,8 @@ export type ClientFilterOperator =
 	| 'nends_with'
 	| 'iends_with'
 	| 'niends_with'
-	| 'regex';
+	| 'regex'
+	| 'json';
 
 export type Filter = LogicalFilter | FieldFilter;
 
@@ -44,8 +45,8 @@ export type FieldFilter = {
 };
 
 export type FieldFilterOperator = {
-	_eq?: string | number | boolean;
-	_neq?: string | number | boolean;
+	_eq?: string | number | boolean | null;
+	_neq?: string | number | boolean | null;
 	_lt?: string | number;
 	_lte?: string | number;
 	_gt?: string | number;
@@ -73,6 +74,7 @@ export type FieldFilterOperator = {
 	_nintersects?: string;
 	_intersects_bbox?: string;
 	_nintersects_bbox?: string;
+	_json?: Record<string, FieldFilterOperator>;
 };
 
 export type FieldValidationOperator = {

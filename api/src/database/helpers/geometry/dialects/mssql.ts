@@ -13,15 +13,16 @@ export class GeometryHelperMSSQL extends GeometryHelper {
 	}
 
 	override createColumn(table: Knex.CreateTableBuilder, field: RawField | Field) {
-		if (field.type.split('.')[1]) {
+		if (this.geometrySubtype(field)) {
 			field.meta!.special = [field.type];
 		}
 
 		return table.specificType(field.field, 'geometry');
 	}
 
-	override asText(table: string, column: string): Knex.Raw {
-		return this.knex.raw('??.??.STAsText() as ??', [table, column, column]);
+	override asText(table: string, column: string, alias: string | false): Knex.Raw {
+		if (alias) return this.knex.raw('??.??.STAsText() as ??', [table, column, alias]);
+		return this.knex.raw('??.??.STAsText()', [table, column]);
 	}
 
 	override fromText(text: string): Knex.Raw {

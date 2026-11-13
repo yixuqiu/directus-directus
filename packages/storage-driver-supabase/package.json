@@ -1,15 +1,15 @@
 {
 	"name": "@directus/storage-driver-supabase",
-	"version": "1.0.12",
+	"version": "5.0.5",
 	"description": "Supabase file storage abstraction for `@directus/storage`",
-	"homepage": "https://directus.io",
+	"homepage": "https://directus.com",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/directus/directus.git",
 		"directory": "packages/storage-driver-supabase"
 	},
 	"funding": "https://github.com/directus/directus?sponsor=1",
-	"license": "BUSL-1.1",
+	"license": "SEE LICENSE IN license",
 	"author": "Matthew Rollinson <matt@rolley.io>",
 	"type": "module",
 	"exports": {
@@ -21,22 +21,26 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "tsup src/index.ts --format=esm --dts",
-		"dev": "tsup src/index.ts --format=esm --dts --watch",
-		"test": "vitest --watch=false"
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
+		"@directus/constants": "workspace:*",
 		"@directus/storage": "workspace:*",
 		"@directus/utils": "workspace:*",
-		"@supabase/storage-js": "2.5.5",
-		"undici": "6.15.0"
+		"@supabase/storage-js": "catalog:",
+		"tus-js-client": "catalog:",
+		"undici": "catalog:"
 	},
 	"devDependencies": {
-		"@directus/tsconfig": "workspace:*",
-		"@ngneat/falso": "7.2.0",
-		"@vitest/coverage-v8": "1.5.3",
-		"tsup": "8.0.2",
-		"typescript": "5.4.5",
-		"vitest": "1.5.3"
+		"@directus/tsconfig": "catalog:",
+		"@directus/types": "workspace:*",
+		"@ngneat/falso": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }

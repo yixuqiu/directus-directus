@@ -1,30 +1,41 @@
 import { useEnv } from '@directus/env';
 import { InvalidQueryError } from '@directus/errors';
-import type { Accountability, Aggregate, Query } from '@directus/types';
+import type { Accountability, Aggregate, Query, SchemaOverview } from '@directus/types';
 import { parseFilter, parseJSON } from '@directus/utils';
-import { flatten, get, isPlainObject, merge, set } from 'lodash-es';
-import { useLogger } from '../logger.js';
+import { flatten, isPlainObject } from 'lodash-es';
+import getDatabase from '../database/index.js';
+import { useLogger } from '../logger/index.js';
+import { fetchPolicies } from '../permissions/lib/fetch-policies.js';
+import { contextHasDynamicVariables } from '../permissions/modules/process-ast/utils/context-has-dynamic-variables.js';
+import type { Context } from '../permissions/types.js';
+import { extractRequiredDynamicVariableContext } from '../permissions/utils/extract-required-dynamic-variable-context.js';
+import { fetchDynamicVariableData } from '../permissions/utils/fetch-dynamic-variable-data.js';
 import { Meta } from '../types/index.js';
+import { splitFields } from './split-fields.js';
 
-export function sanitizeQuery(rawQuery: Record<string, any>, accountability?: Accountability | null): Query {
+/**
+ * Sanitize the query parameters and parse them where necessary.
+ */
+export async function sanitizeQuery(
+	rawQuery: Record<string, any>,
+	schema: SchemaOverview,
+	accountability?: Accountability | null,
+): Promise<Query> {
 	const env = useEnv();
 
 	const query: Query = {};
 
-	const hasMaxLimit =
-		'QUERY_LIMIT_MAX' in env &&
-		Number(env['QUERY_LIMIT_MAX']) >= 0 &&
-		!Number.isNaN(Number(env['QUERY_LIMIT_MAX'])) &&
-		Number.isFinite(Number(env['QUERY_LIMIT_MAX']));
+	const maxLimit = env.QUERY_LIMIT_MAX;
+	const hasMaxLimit = maxLimit !== undefined && Number.isFinite(maxLimit) && maxLimit >= 0;
 
 	if (rawQuery['limit'] !== undefined) {
 		const limit = sanitizeLimit(rawQuery['limit']);
 
 		if (typeof limit === 'number') {
-			query.limit = limit === -1 && hasMaxLimit ? Number(env['QUERY_LIMIT_MAX']) : limit;
+			query.limit = limit === -1 && hasMaxLimit ? maxLimit : limit;
 		}
 	} else if (hasMaxLimit) {
-		query.limit = Math.min(Number(env['QUERY_LIMIT_DEFAULT']), Number(env['QUERY_LIMIT_MAX']));
+		query.limit = Math.min(env.QUERY_LIMIT_DEFAULT, maxLimit);
 	}
 
 	if (rawQuery['fields']) {
@@ -44,7 +55,7 @@ export function sanitizeQuery(rawQuery: Record<string, any>, accountability?: Ac
 	}
 
 	if (rawQuery['filter']) {
-		query.filter = sanitizeFilter(rawQuery['filter'], accountability || null);
+		query.filter = await sanitizeFilter(rawQuery['filter'], schema, accountability || null);
 	}
 
 	if (rawQuery['offset'] !== undefined) {
@@ -60,7 +71,9 @@ export function sanitizeQuery(rawQuery: Record<string, any>, accountability?: Ac
 	}
 
 	if (rawQuery['search'] && typeof rawQuery['search'] === 'string') {
-		query.search = rawQuery['search'];
+		const trimmed = rawQuery['search'].trim();
+		if (trimmed) query.search = trimmed;
+		else query.search = rawQuery['search'];
 	}
 
 	if (rawQuery['version']) {
@@ -79,11 +92,15 @@ export function sanitizeQuery(rawQuery: Record<string, any>, accountability?: Ac
 	if (rawQuery['deep'] as Record<string, any>) {
 		if (!query.deep) query.deep = {};
 
-		query.deep = sanitizeDeep(rawQuery['deep'], accountability);
+		query.deep = await sanitizeDeep(rawQuery['deep'], schema, accountability);
 	}
 
 	if (rawQuery['alias']) {
 		query.alias = sanitizeAlias(rawQuery['alias']);
+	}
+
+	if ('backlink' in rawQuery) {
+		query.backlink = sanitizeBacklink(rawQuery['backlink']);
 	}
 
 	return query;
@@ -92,13 +109,18 @@ export function sanitizeQuery(rawQuery: Record<string, any>, accountability?: Ac
 function sanitizeFields(rawFields: any) {
 	if (!rawFields) return null;
 
-	let fields: string[] = [];
+	let fields: string[];
 
-	if (typeof rawFields === 'string') fields = rawFields.split(',');
-	else if (Array.isArray(rawFields)) fields = rawFields as string[];
+	if (typeof rawFields === 'string') {
+		fields = splitFields(rawFields);
+	} else if (Array.isArray(rawFields)) {
+		fields = rawFields as string[];
+	} else {
+		throw new InvalidQueryError({ reason: '"fields" must be a string or array' });
+	}
 
 	// Case where array item includes CSV (fe fields[]=id,name):
-	fields = flatten(fields.map((field) => (field.includes(',') ? field.split(',') : field)));
+	fields = flatten(fields.map((field) => (field.includes(',') ? splitFields(field) : field)));
 
 	fields = fields.map((field) => field.trim());
 
@@ -108,7 +130,7 @@ function sanitizeFields(rawFields: any) {
 function sanitizeSort(rawSort: any) {
 	let fields: string[] = [];
 
-	if (typeof rawSort === 'string') fields = rawSort.split(',');
+	if (typeof rawSort === 'string') fields = splitFields(rawSort);
 	else if (Array.isArray(rawSort)) fields = rawSort as string[];
 
 	fields = fields.map((field) => field.trim());
@@ -125,7 +147,7 @@ function sanitizeAggregate(rawAggregate: any): Aggregate {
 		try {
 			aggregate = parseJSON(rawAggregate);
 		} catch {
-			logger.warn('Invalid value passed for filter query parameter.');
+			logger.warn('Invalid value passed for aggregate query parameter.');
 		}
 	}
 
@@ -137,7 +159,7 @@ function sanitizeAggregate(rawAggregate: any): Aggregate {
 	return aggregate as Aggregate;
 }
 
-function sanitizeFilter(rawFilter: any, accountability: Accountability | null) {
+async function sanitizeFilter(rawFilter: any, schema: SchemaOverview, accountability: Accountability | null) {
 	let filters = rawFilter;
 
 	if (typeof filters === 'string') {
@@ -149,7 +171,33 @@ function sanitizeFilter(rawFilter: any, accountability: Accountability | null) {
 	}
 
 	try {
-		return parseFilter(filters, accountability);
+		let filterContext;
+
+		if (accountability) {
+			const dynamicVariableContext = extractRequiredDynamicVariableContext(filters);
+
+			if (contextHasDynamicVariables(dynamicVariableContext)) {
+				const context: Context = {
+					schema,
+					knex: getDatabase(),
+				};
+
+				const policies = await fetchPolicies(accountability, context);
+
+				context.accountability = accountability;
+
+				filterContext = await fetchDynamicVariableData(
+					{
+						dynamicVariableContext,
+						accountability,
+						policies,
+					},
+					context,
+				);
+			}
+		}
+
+		return parseFilter(filters, accountability, filterContext);
 	} catch {
 		throw new InvalidQueryError({ reason: 'Invalid filter object' });
 	}
@@ -184,10 +232,12 @@ function sanitizeMeta(rawMeta: any) {
 	return [rawMeta];
 }
 
-function sanitizeDeep(deep: Record<string, any>, accountability?: Accountability | null) {
-	const logger = useLogger();
+function sanitizeBacklink(rawBacklink: unknown) {
+	return rawBacklink !== false && rawBacklink !== 'false';
+}
 
-	const result: Record<string, any> = {};
+async function sanitizeDeep(deep: Record<string, any>, schema: SchemaOverview, accountability?: Accountability | null) {
+	const logger = useLogger();
 
 	if (typeof deep === 'string') {
 		try {
@@ -197,13 +247,11 @@ function sanitizeDeep(deep: Record<string, any>, accountability?: Accountability
 		}
 	}
 
-	parse(deep);
+	return parse(deep);
 
-	return result;
-
-	function parse(level: Record<string, any>, path: string[] = []) {
+	async function parse(level: Record<string, any>, isRoot = true): Promise<Record<string, any>> {
+		const node: Record<string, any> = Object.create(null);
 		const subQuery: Record<string, any> = {};
-		const parsedLevel: Record<string, any> = {};
 
 		for (const [key, value] of Object.entries(level)) {
 			if (!key) break;
@@ -212,22 +260,26 @@ function sanitizeDeep(deep: Record<string, any>, accountability?: Accountability
 				// Collect all sub query parameters without the leading underscore
 				subQuery[key.substring(1)] = value;
 			} else if (isPlainObject(value)) {
-				parse(value, [...path, key]);
+				const child = await parse(value, false);
+
+				// Only attach relations that actually contributed something, matching the previous
+				// behavior where empty branches never appeared in the result.
+				if (Object.keys(child).length > 0) {
+					node[key] = child;
+				}
 			}
 		}
 
-		if (Object.keys(subQuery).length > 0) {
-			// Sanitize the entire sub query
-			const parsedSubQuery = sanitizeQuery(subQuery, accountability);
+		// Sub query parameters only apply to a nested relation, not to the top-level deep object.
+		if (!isRoot && Object.keys(subQuery).length > 0) {
+			const parsedSubQuery = await sanitizeQuery(subQuery, schema, accountability);
 
 			for (const [parsedKey, parsedValue] of Object.entries(parsedSubQuery)) {
-				parsedLevel[`_${parsedKey}`] = parsedValue;
+				node[`_${parsedKey}`] = parsedValue;
 			}
 		}
 
-		if (Object.keys(parsedLevel).length > 0) {
-			set(result, path, merge({}, get(result, path, {}), parsedLevel));
-		}
+		return node;
 	}
 }
 
@@ -239,7 +291,7 @@ function sanitizeAlias(rawAlias: any) {
 	if (typeof rawAlias === 'string') {
 		try {
 			alias = parseJSON(rawAlias);
-		} catch (err) {
+		} catch {
 			logger.warn('Invalid value passed for alias query parameter.');
 		}
 	}

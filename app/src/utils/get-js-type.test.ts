@@ -1,6 +1,7 @@
-import { test, expect } from 'vitest';
 import { Field } from '@directus/types';
+import { expect, test } from 'vitest';
 import { getJSType } from './get-js-type';
+import { APP_NUMERIC_STRING_TYPES, APP_NUMERIC_TYPES } from '@/constants';
 
 test('Returns object for relational fields', () => {
 	const relationTypes = ['m2o', 'o2m', 'm2m', 'm2a', 'files', 'translations'];
@@ -21,9 +22,7 @@ test('Returns object for relational fields', () => {
 });
 
 test('Returns number for numeric fields', () => {
-	const numericTypes = ['bigInteger', 'integer', 'float', 'decimal'];
-
-	for (const fieldType of numericTypes) {
+	for (const fieldType of APP_NUMERIC_TYPES) {
 		expect(
 			getJSType({
 				name: 'test',
@@ -36,7 +35,7 @@ test('Returns number for numeric fields', () => {
 });
 
 test('Returns string for string fields', () => {
-	const stringTypes = ['string', 'text', 'uuid', 'hash'];
+	const stringTypes = ['string', 'text', 'uuid', 'hash', ...APP_NUMERIC_STRING_TYPES];
 
 	for (const fieldType of stringTypes) {
 		expect(

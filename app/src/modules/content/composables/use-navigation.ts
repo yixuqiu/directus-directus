@@ -1,5 +1,5 @@
-import { useCollectionsStore } from '@/stores/collections';
 import { Ref, ref, watch } from 'vue';
+import { useCollectionsStore } from '@/stores/collections';
 
 let showHidden: Ref<boolean>;
 let activeGroups: Ref<string[]>;
@@ -9,7 +9,7 @@ export function useNavigation(currentCollection?: Ref<string | undefined>) {
 
 	if (!activeGroups) {
 		activeGroups = ref(
-			collectionsStore.collections
+			collectionsStore.sortedCollections
 				.filter((collection) => collection.meta?.collapse === 'open' || collection.meta?.collapse === 'locked')
 				.map(({ collection }) => collection),
 		);

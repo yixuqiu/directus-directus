@@ -1,10 +1,9 @@
+import { createRequire } from 'node:module';
 import { useEnv } from '@directus/env';
 import type { Transporter } from 'nodemailer';
 import nodemailer from 'nodemailer';
-import { useLogger } from './logger.js';
+import { useLogger } from './logger/index.js';
 import { getConfigFromEnv } from './utils/get-config-from-env.js';
-
-import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
@@ -16,31 +15,31 @@ export default function getMailer(): Transporter {
 	const env = useEnv();
 	const logger = useLogger();
 
-	const transportName = (env['EMAIL_TRANSPORT'] as string).toLowerCase();
+	const transportName = env.EMAIL_TRANSPORT.toLowerCase();
 
 	if (transportName === 'sendmail') {
 		transporter = nodemailer.createTransport({
 			sendmail: true,
-			newline: (env['EMAIL_SENDMAIL_NEW_LINE'] as string) || 'unix',
-			path: (env['EMAIL_SENDMAIL_PATH'] as string) || '/usr/sbin/sendmail',
+			newline: env.EMAIL_SENDMAIL_NEW_LINE,
+			path: env.EMAIL_SENDMAIL_PATH,
 		});
 	} else if (transportName === 'ses') {
-		const aws = require('@aws-sdk/client-ses');
+		const { SESv2Client, SendEmailCommand } = require('@aws-sdk/client-sesv2');
 
 		const sesOptions: Record<string, unknown> = getConfigFromEnv('EMAIL_SES_');
 
-		const ses = new aws.SES(sesOptions);
+		const sesClient = new SESv2Client(sesOptions);
 
 		transporter = nodemailer.createTransport({
-			SES: { ses, aws },
+			SES: { sesClient, SendEmailCommand },
 		} as Record<string, unknown>);
 	} else if (transportName === 'smtp') {
-		let auth: boolean | { user?: string; pass?: string } = false;
+		let auth: boolean | { user: string | undefined; pass: string | undefined } = false;
 
-		if (env['EMAIL_SMTP_USER'] || env['EMAIL_SMTP_PASSWORD']) {
+		if (env.EMAIL_SMTP_USER || env.EMAIL_SMTP_PASSWORD) {
 			auth = {
-				user: env['EMAIL_SMTP_USER'] as string,
-				pass: env['EMAIL_SMTP_PASSWORD'] as string,
+				user: env.EMAIL_SMTP_USER!,
+				pass: env.EMAIL_SMTP_PASSWORD!,
 			};
 		}
 
@@ -68,14 +67,17 @@ export default function getMailer(): Transporter {
 				host: env['EMAIL_MAILGUN_HOST'] || 'api.mailgun.net',
 			}) as any,
 		);
-	} else if (transportName === 'sendgrid') {
-		const sg = require('nodemailer-sendgrid');
+	} else if (transportName === 'mailtrap') {
+		const { MailtrapTransport } = require('mailtrap');
 
-		transporter = nodemailer.createTransport(
-			sg({
-				apiKey: env['EMAIL_SENDGRID_API_KEY'],
-			}) as any,
-		);
+		const mailtrapOptions: Record<string, unknown> = getConfigFromEnv('EMAIL_MAILTRAP_');
+
+		// mailtrap's transport has no verify(), so an absent token would only surface on the first send
+		if (!mailtrapOptions['token']) {
+			throw new Error('The EMAIL_MAILTRAP_TOKEN env var is required for the mailtrap transport');
+		}
+
+		transporter = nodemailer.createTransport(MailtrapTransport(mailtrapOptions));
 	} else {
 		logger.warn('Illegal transport given for email. Check the EMAIL_TRANSPORT env var.');
 	}

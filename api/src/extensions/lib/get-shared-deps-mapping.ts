@@ -1,17 +1,17 @@
-import { useEnv } from '@directus/env';
-import { resolvePackage } from '@directus/utils/node';
-import { escapeRegExp } from 'lodash-es';
 import { readdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import path from 'path';
-import { useLogger } from '../../logger.js';
+import { useEnv } from '@directus/env';
+import { resolvePackage } from '@directus/utils/node';
+import { escapeRegExp } from 'lodash-es';
+import { useLogger } from '../../logger/index.js';
 import { Url } from '../../utils/url.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export const getSharedDepsMapping = async (deps: string[]): Promise<Record<string, string>> => {
-	const env = useEnv();
+export const getSharedDepsMapping = async (deps: readonly string[]): Promise<Record<string, string>> => {
+	const { PUBLIC_URL } = useEnv();
 	const logger = useLogger();
 
 	const appDir = await readdir(path.join(resolvePackage('@directus/app', __dirname), 'dist', 'assets'));
@@ -22,7 +22,7 @@ export const getSharedDepsMapping = async (deps: string[]): Promise<Record<strin
 		const depName = appDir.find((file) => depRegex.test(file));
 
 		if (depName) {
-			const depUrl = new Url(env['PUBLIC_URL'] as string).addPath('admin', 'assets', depName);
+			const depUrl = new Url(PUBLIC_URL).addPath('admin', 'assets', depName);
 
 			depsMapping[dep] = depUrl.toString({ rootRelative: true });
 		} else {

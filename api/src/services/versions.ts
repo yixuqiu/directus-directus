@@ -1,49 +1,93 @@
-import { Action } from '@directus/constants';
-import { InvalidPayloadError, UnprocessableContentError } from '@directus/errors';
-import type { ContentVersion, Filter, Item, PrimaryKey, Query } from '@directus/types';
+import { Action, isPublishedVersionKey, VERSION_KEY_DRAFT } from '@directus/constants';
+import {
+	ForbiddenError,
+	InvalidPayloadError,
+	UnprocessableContentError,
+	VersionHashMismatchError,
+} from '@directus/errors';
+import {
+	type AbstractServiceOptions,
+	type ContentVersion,
+	type Item,
+	type MutationOptions,
+	type PrimaryKey,
+	type Query,
+	type QueryOptions,
+} from '@directus/types';
+import { deepMapWithSchema, getRelationInfo } from '@directus/utils';
 import Joi from 'joi';
-import { assign, pick } from 'lodash-es';
+import { assign, get, isEqual, isNil, isPlainObject, pick } from 'lodash-es';
 import objectHash from 'object-hash';
 import { getCache } from '../cache.js';
-import getDatabase from '../database/index.js';
+import { getHelpers } from '../database/helpers/index.js';
 import emitter from '../emitter.js';
-import type { AbstractServiceOptions, MutationOptions } from '../types/index.js';
+import { validateAccess } from '../permissions/modules/validate-access/validate-access.js';
+import { getCollectionFromSchema } from '../utils/schema/get-collection-from-schema.js';
 import { shouldClearCache } from '../utils/should-clear-cache.js';
+import { splitRecursive } from '../utils/versioning/split-recursive.js';
 import { ActivityService } from './activity.js';
-import { AuthorizationService } from './authorization.js';
 import { ItemsService } from './items.js';
 import { PayloadService } from './payload.js';
 import { RevisionsService } from './revisions.js';
 
-export class VersionsService extends ItemsService {
-	authorizationService: AuthorizationService;
+const ALTERATION_ACTIONS = ['create', 'update', 'delete'] as const;
 
+export class VersionsService extends ItemsService<ContentVersion> {
 	constructor(options: AbstractServiceOptions) {
 		super('directus_versions', options);
-
-		this.authorizationService = new AuthorizationService({
-			accountability: this.accountability,
-			knex: this.knex,
-			schema: this.schema,
-		});
 	}
 
 	private async validateCreateData(data: Partial<Item>): Promise<void> {
-		if (!data['key']) throw new InvalidPayloadError({ reason: `"key" is required` });
+		const versionCreateSchema = Joi.object({
+			key: Joi.string().required(),
+			name: Joi.string().allow(null),
+			collection: Joi.string().required(),
+			item: Joi.string().allow(null),
+		});
 
-		// Reserves the "main" version key for the version query parameter
-		if (data['key'] === 'main') throw new InvalidPayloadError({ reason: `"main" is a reserved version key` });
+		const itemLess = isNil(data['item']);
 
-		if (!data['collection']) {
-			throw new InvalidPayloadError({ reason: `"collection" is required` });
+		const { error } = versionCreateSchema.validate(data);
+		if (error) throw new InvalidPayloadError({ reason: error.message });
+
+		// Reserves the "published" version key for the version query parameter
+		if (isPublishedVersionKey(data['key']))
+			throw new InvalidPayloadError({ reason: `"${data['key']}" is a reserved version key` });
+
+		if (itemLess && data['key'] !== VERSION_KEY_DRAFT) {
+			throw new InvalidPayloadError({
+				reason: `"key" must be "${VERSION_KEY_DRAFT}" for versions not linked to an item`,
+			});
 		}
 
-		if (!data['item']) throw new InvalidPayloadError({ reason: `"item" is required` });
+		if (this.accountability) {
+			try {
+				await validateAccess(
+					itemLess
+						? {
+								accountability: this.accountability,
+								action: 'read',
+								collection: data['collection'],
+							}
+						: {
+								accountability: this.accountability,
+								action: 'read',
+								collection: data['collection'],
+								primaryKeys: [data['item']],
+							},
+					{
+						schema: this.schema,
+						knex: this.knex,
+					},
+				);
+			} catch {
+				throw new ForbiddenError();
+			}
+		}
 
 		const { CollectionsService } = await import('./collections.js');
 
 		const collectionsService = new CollectionsService({
-			accountability: null,
 			knex: this.knex,
 			schema: this.schema,
 		});
@@ -56,25 +100,42 @@ export class VersionsService extends ItemsService {
 			});
 		}
 
-		const existingVersions = await super.readByQuery({
-			aggregate: { count: ['*'] },
-			filter: { key: { _eq: data['key'] }, collection: { _eq: data['collection'] }, item: { _eq: data['item'] } },
-		});
+		const isSingleton = !!this.schema.collections[data['collection']]?.singleton;
 
-		if (existingVersions[0]!['count'] > 0) {
-			throw new UnprocessableContentError({
-				reason: `Version "${data['key']}" already exists for item "${data['item']}" in collection "${data['collection']}"`,
-			});
+		// singleton collections should only allow one item-less version,
+		// regular collections can have unlimited
+		if (itemLess) {
+			if (isSingleton) {
+				await this.assertSingletonEmpty(data['collection']);
+			} else {
+				return;
+			}
 		}
 
-		// will throw an error if the accountability does not have permission to read the item
-		await this.authorizationService.checkAccess('read', data['collection'], data['item']);
+		const sudoService = new VersionsService({
+			knex: this.knex,
+			schema: this.schema,
+		});
+
+		const existingVersions = (await sudoService.readByQuery({
+			aggregate: { count: ['*'] },
+			filter: {
+				key: { _eq: data['key'] },
+				collection: { _eq: data['collection'] },
+				item: itemLess ? { _null: true } : { _eq: data['item'] },
+			},
+		})) as any[];
+
+		if (existingVersions[0]['count'] > 0) {
+			throw new UnprocessableContentError({
+				reason: itemLess
+					? `Singleton collection "${data['collection']}" already has an item-less version`
+					: `Version "${data['key']}" already exists for item "${data['item']}" in collection "${data['collection']}"`,
+			});
+		}
 	}
 
 	async getMainItem(collection: string, item: PrimaryKey, query?: Query): Promise<Item> {
-		// will throw an error if the accountability does not have permission to read the item
-		await this.authorizationService.checkAccess('read', collection, item);
-
 		const itemsService = new ItemsService(collection, {
 			knex: this.knex,
 			accountability: this.accountability,
@@ -96,46 +157,55 @@ export class VersionsService extends ItemsService {
 		return { outdated: hash !== mainHash, mainHash };
 	}
 
-	async getVersionSavesById(id: PrimaryKey): Promise<Partial<Item>[]> {
-		const revisionsService = new RevisionsService({
-			knex: this.knex,
-			schema: this.schema,
-		});
-
-		const result = await revisionsService.readByQuery({
-			filter: { version: { _eq: id } },
-		});
-
-		return result.map((revision) => revision['delta']);
-	}
-
-	async getVersionSaves(key: string, collection: string, item: string | undefined): Promise<Partial<Item>[] | null> {
-		const filter: Filter = {
-			key: { _eq: key },
-			collection: { _eq: collection },
-		};
+	async getVersionSaves(key: string, collection: string, item: PrimaryKey | null, mapDelta = true) {
+		let itemFilter = {};
 
 		if (item) {
-			filter['item'] = { _eq: item };
+			itemFilter = { item: { _eq: item } };
 		}
 
-		const versions = await this.readByQuery({ filter });
+		let versions = await this.readByQuery({
+			filter: {
+				key: { _eq: key },
+				collection: { _eq: collection },
+				...itemFilter,
+			},
+			limit: -1,
+		});
 
-		if (!versions?.[0]) return null;
+		if (mapDelta) {
+			versions = versions.map((version) => {
+				if (version.delta) {
+					version.delta = this.mapDelta(version);
+				}
 
-		const saves = await this.getVersionSavesById(versions[0]['id']);
+				return version;
+			});
+		}
 
-		return saves;
+		return versions;
 	}
 
 	override async createOne(data: Partial<Item>, opts?: MutationOptions): Promise<PrimaryKey> {
 		await this.validateCreateData(data);
 
-		const mainItem = await this.getMainItem(data['collection'], data['item']);
+		if (data['item']) {
+			const mainItem = await this.getMainItem(data['collection'], data['item']);
 
-		data['hash'] = objectHash(mainItem);
+			data['hash'] = objectHash(mainItem);
+		} else {
+			data['hash'] = null;
+		}
 
 		return super.createOne(data, opts);
+	}
+
+	override async readOne(key: PrimaryKey, query: Query = {}, opts?: QueryOptions): Promise<ContentVersion> {
+		const version = await super.readOne(key, query, opts);
+
+		if (version?.delta) version.delta = this.mapDelta(version);
+
+		return version;
 	}
 
 	override async createMany(data: Partial<Item>[], opts?: MutationOptions): Promise<PrimaryKey[]> {
@@ -146,7 +216,8 @@ export class VersionsService extends ItemsService {
 		const keyCombos = new Set();
 
 		for (const item of data) {
-			await this.validateCreateData(item);
+			// Itemless versions are allowed to share a key within a collection
+			if (isNil(item['item'])) continue;
 
 			const keyCombo = `${item['key']}-${item['collection']}-${item['item']}`;
 
@@ -157,61 +228,95 @@ export class VersionsService extends ItemsService {
 			}
 
 			keyCombos.add(keyCombo);
-
-			const mainItem = await this.getMainItem(item['collection'], item['item']);
-
-			item['hash'] = objectHash(mainItem);
 		}
 
 		return super.createMany(data, opts);
 	}
 
 	override async updateMany(keys: PrimaryKey[], data: Partial<Item>, opts?: MutationOptions): Promise<PrimaryKey[]> {
-		// Only allow updates on "key" and "name" fields
+		// Only allow updates on "key", "item" and "name" fields
 		const versionUpdateSchema = Joi.object({
 			key: Joi.string(),
-			name: Joi.string().allow(null).optional(),
+			name: Joi.string().allow(null),
+			item: Joi.string().allow(null),
 		});
 
 		const { error } = versionUpdateSchema.validate(data);
 		if (error) throw new InvalidPayloadError({ reason: error.message });
 
-		if ('key' in data) {
-			// Reserves the "main" version key for the version query parameter
-			if (data['key'] === 'main') throw new InvalidPayloadError({ reason: `"main" is a reserved version key` });
+		// Reserves the "published" version key for the version query parameter
+		if (isPublishedVersionKey(data['key']))
+			throw new InvalidPayloadError({ reason: `"${data['key']}" is a reserved version key` });
 
-			const keyCombos = new Set();
+		const keyCombos = new Set();
 
-			for (const pk of keys) {
-				const { collection, item } = await this.readOne(pk, { fields: ['collection', 'item'] });
+		for (const pk of keys) {
+			const existingVersion = await this.readOne(pk, { fields: ['collection', 'item', 'key'] });
 
-				const keyCombo = `${data['key']}-${collection}-${item}`;
+			const collection = existingVersion.collection;
+			const item = 'item' in data ? data['item'] : existingVersion.item;
+			const key = 'key' in data ? data['key'] : existingVersion.key;
 
-				if (keyCombos.has(keyCombo)) {
-					throw new UnprocessableContentError({
-						reason: `Cannot update multiple versions on "${item}" in collection "${collection}" to the same key "${data['key']}"`,
-					});
-				}
-
-				keyCombos.add(keyCombo);
-
-				const existingVersions = await super.readByQuery({
-					aggregate: { count: ['*'] },
-					filter: { id: { _neq: pk }, key: { _eq: data['key'] }, collection: { _eq: collection }, item: { _eq: item } },
+			if (key !== VERSION_KEY_DRAFT && item === null) {
+				throw new InvalidPayloadError({
+					reason: `"key" must be "${VERSION_KEY_DRAFT}" for versions not linked to an item`,
 				});
+			}
 
-				if (existingVersions[0]!['count'] > 0) {
-					throw new UnprocessableContentError({
-						reason: `Version "${data['key']}" already exists for item "${item}" in collection "${collection}"`,
-					});
+			if (item === null) {
+				if (this.schema.collections[collection]?.singleton) {
+					await this.assertSingletonEmpty(collection);
+
+					const existingItemless = (await super.readByQuery({
+						aggregate: { count: ['*'] },
+						filter: {
+							id: { _neq: pk },
+							collection: { _eq: collection },
+							item: { _null: true },
+						},
+					})) as any[];
+
+					if (existingItemless[0]['count'] > 0) {
+						throw new UnprocessableContentError({
+							reason: `Singleton collection "${collection}" already has an item-less version`,
+						});
+					}
 				}
+
+				continue;
+			}
+
+			const keyCombo = `${key}-${collection}-${item}`;
+
+			if (keyCombos.has(keyCombo)) {
+				throw new UnprocessableContentError({
+					reason: `Cannot update multiple versions on "${item}" in collection "${collection}" to the same key "${key}"`,
+				});
+			}
+
+			keyCombos.add(keyCombo);
+
+			const existingVersions = await super.readByQuery({
+				aggregate: { count: ['*'] },
+				filter: {
+					id: { _neq: pk },
+					key: { _eq: key },
+					collection: { _eq: collection },
+					item: { _eq: item },
+				},
+			});
+
+			if ((existingVersions as any)[0]['count'] > 0) {
+				throw new UnprocessableContentError({
+					reason: `Version "${key}" already exists for item "${item}" in collection "${collection}"`,
+				});
 			}
 		}
 
 		return super.updateMany(keys, data, opts);
 	}
 
-	async save(key: PrimaryKey, data: Partial<Item>) {
+	async save(key: PrimaryKey, delta: Partial<Item>, opts?: { patchRevision?: boolean }): Promise<Partial<Item>> {
 		const version = await super.readOne(key);
 
 		const payloadService = new PayloadService(this.collection, {
@@ -220,38 +325,104 @@ export class VersionsService extends ItemsService {
 			schema: this.schema,
 		});
 
-		const activityService = new ActivityService({
+		const { item, collection, delta: existingDelta } = version;
+
+		const collectionInfo = getCollectionFromSchema(this.schema, collection);
+
+		let revisionDelta = await payloadService.prepareDelta(delta);
+
+		// Only store activity and revisions for versions associated with an item,
+		// and only when the underlying collection's tracking is enabled.
+		if (item) {
+			const trackingAccountability = collectionInfo.accountability;
+
+			if (trackingAccountability !== null) {
+				const revisionsService = new RevisionsService({
+					knex: this.knex,
+					schema: this.schema,
+				});
+
+				// In patch mode, try to coalesce into the most recent revision for this version
+				// instead of appending a new activity + revision pair.
+				let patchedExistingRevision = false;
+
+				if (opts?.patchRevision && trackingAccountability === 'all') {
+					const [latestRevision] = await revisionsService.readByQuery({
+						filter: { version: { _eq: key } },
+						sort: ['-activity.timestamp'],
+						limit: 1,
+						fields: ['id', 'data', 'delta', 'activity.user'],
+					});
+
+					// Only coalesce when the latest revision was authored by the current user.
+					// Otherwise we'd silently rewrite another user's revision with our content while
+					// leaving the linked activity attributed to the original author — breaking the audit trail.
+					const currentUser = this.accountability?.user ?? null;
+					const latestRevisionUser = (latestRevision?.['activity'] as { user?: string | null })?.user ?? null;
+
+					if (latestRevision && latestRevisionUser === currentUser) {
+						const mergedRevisionData = assign({}, latestRevision['data'], revisionDelta);
+						const mergedRevisionDelta = assign({}, latestRevision['delta'], revisionDelta);
+
+						await revisionsService.updateOne(latestRevision['id'], {
+							data: mergedRevisionData,
+							delta: mergedRevisionDelta,
+						});
+
+						patchedExistingRevision = true;
+					}
+				}
+
+				// Fall through to create-new path when not patching, or when patching had nothing to coalesce.
+				if (!patchedExistingRevision) {
+					const activityService = new ActivityService({
+						knex: this.knex,
+						schema: this.schema,
+					});
+
+					const activity = await activityService.createOne({
+						action: Action.VERSION_SAVE,
+						user: this.accountability?.user ?? null,
+						collection,
+						ip: this.accountability?.ip ?? null,
+						user_agent: this.accountability?.userAgent ?? null,
+						origin: this.accountability?.origin ?? null,
+						item,
+					});
+
+					if (trackingAccountability === 'all') {
+						await revisionsService.createOne({
+							activity,
+							version: key,
+							collection,
+							item,
+							data: revisionDelta,
+							delta: revisionDelta,
+						});
+					}
+				}
+			}
+		}
+
+		revisionDelta = revisionDelta ? revisionDelta : null;
+
+		const helpers = getHelpers(this.knex);
+		const date = new Date(helpers.date.writeTimestamp(new Date().toISOString()));
+
+		this.trackChanges(revisionDelta, collection, existingDelta, date);
+
+		const finalVersionDelta = assign({}, existingDelta, revisionDelta);
+
+		const sudoService = new ItemsService(this.collection, {
 			knex: this.knex,
 			schema: this.schema,
+			accountability: {
+				...this.accountability!,
+				admin: true,
+			},
 		});
 
-		const revisionsService = new RevisionsService({
-			knex: this.knex,
-			schema: this.schema,
-		});
-
-		const { item, collection } = version;
-
-		const activity = await activityService.createOne({
-			action: Action.VERSION_SAVE,
-			user: this.accountability?.user ?? null,
-			collection,
-			ip: this.accountability?.ip ?? null,
-			user_agent: this.accountability?.userAgent ?? null,
-			origin: this.accountability?.origin ?? null,
-			item,
-		});
-
-		const revisionDelta = await payloadService.prepareDelta(data);
-
-		await revisionsService.createOne({
-			activity,
-			version: key,
-			collection,
-			item,
-			data: revisionDelta,
-			delta: revisionDelta,
-		});
+		await sudoService.updateOne(key, { delta: finalVersionDelta });
 
 		const { cache } = getCache();
 
@@ -259,31 +430,59 @@ export class VersionsService extends ItemsService {
 			cache.clear();
 		}
 
-		return data;
+		return finalVersionDelta;
 	}
 
-	async promote(version: PrimaryKey, mainHash: string, fields?: string[]) {
-		const { id, collection, item } = (await this.readOne(version)) as ContentVersion;
+	async promote(version: PrimaryKey, opts?: { mainHash: string; fields?: string[] }) {
+		const { collection, item, delta } = (await super.readOne(version)) as ContentVersion;
 
-		// will throw an error if the accountability does not have permission to update the item
-		await this.authorizationService.checkAccess('update', collection, item);
+		if (item && typeof opts?.mainHash !== 'string') {
+			throw new InvalidPayloadError({ reason: `"mainHash" field is required` });
+		}
 
-		const { outdated } = await this.verifyHash(collection, item, mainHash);
+		// will throw an error if the accountability does not have permission to create/update the item
+		if (this.accountability) {
+			await validateAccess(
+				item
+					? {
+							accountability: this.accountability,
+							action: 'update',
+							collection,
+							primaryKeys: [item],
+						}
+					: {
+							accountability: this.accountability,
+							action: 'create',
+							collection,
+						},
+				{
+					schema: this.schema,
+					knex: this.knex,
+				},
+			);
+		}
 
-		if (outdated) {
+		if (!delta) {
 			throw new UnprocessableContentError({
-				reason: `Main item has changed since this version was last updated`,
+				reason: `No changes to promote`,
 			});
 		}
 
-		const saves = await this.getVersionSavesById(id);
+		if (item) {
+			const { outdated, mainHash } = await this.verifyHash(collection, item, opts?.mainHash as string);
 
-		const versionResult = assign({}, ...saves);
+			if (outdated) {
+				throw new VersionHashMismatchError({ mainHash });
+			}
+		}
 
-		const payloadToUpdate = fields ? pick(versionResult, fields) : versionResult;
+		const { rawDelta, defaultOverwrites } = splitRecursive(delta);
+
+		const payloadToUpdate = opts?.fields ? pick(rawDelta, opts.fields) : rawDelta;
 
 		const itemsService = new ItemsService(collection, {
 			accountability: this.accountability,
+			knex: this.knex,
 			schema: this.schema,
 		});
 
@@ -296,13 +495,27 @@ export class VersionsService extends ItemsService {
 				version,
 			},
 			{
-				database: getDatabase(),
+				database: this.knex,
 				schema: this.schema,
 				accountability: this.accountability,
 			},
 		);
 
-		const updatedItemKey = await itemsService.updateOne(item, payloadAfterHooks);
+		let updatedItemKey;
+
+		if (item) {
+			updatedItemKey = await itemsService.updateOne(item, payloadAfterHooks, {
+				overwriteDefaults: defaultOverwrites as any,
+			});
+		} else {
+			await this.assertSingletonEmpty(collection);
+
+			updatedItemKey = await itemsService.createOne(payloadAfterHooks, {
+				overwriteDefaults: defaultOverwrites as any,
+			});
+
+			await this.updateOne(version, { item: String(updatedItemKey) });
+		}
 
 		emitter.emitAction(
 			['items.promote', `${collection}.items.promote`],
@@ -313,12 +526,123 @@ export class VersionsService extends ItemsService {
 				version,
 			},
 			{
-				database: getDatabase(),
+				database: this.knex,
 				schema: this.schema,
 				accountability: this.accountability,
 			},
 		);
 
 		return updatedItemKey;
+	}
+
+	/** Only items are stamped, never the contents of a field's own value (e.g. the blocks of a json field) */
+	private trackChanges(
+		delta: Partial<Item> | null,
+		collection: string,
+		existingDelta: Partial<Item> | null,
+		date: Date,
+	) {
+		const walk = (value: unknown, collection: string, path: string[]) => {
+			if (Array.isArray(value)) {
+				value.forEach((entry, index) => walk(entry, collection, [...path, String(index)]));
+				return;
+			}
+
+			if (!isPlainObject(value)) return;
+
+			const object = value as Record<string, any>;
+			const existing = get(existingDelta, path);
+
+			if (!existing || !isEqual(existing, object)) {
+				object['_user'] = this.accountability?.user;
+				object['_date'] = date;
+			}
+
+			// Each list is optional, so a payload may carry only the ones it needs
+			if (ALTERATION_ACTIONS.some((action) => Array.isArray(object[action]))) {
+				for (const action of ALTERATION_ACTIONS) {
+					walk(object[action], collection, [...path, action]);
+				}
+
+				return;
+			}
+
+			for (const [field, child] of Object.entries(object)) {
+				if (!isPlainObject(child) && !Array.isArray(child)) continue;
+
+				const relatedCollection = this.getRelatedCollection(collection, field, object);
+
+				if (relatedCollection) walk(child, relatedCollection, [...path, field]);
+			}
+		};
+
+		walk(delta, collection, []);
+	}
+
+	private getRelatedCollection(collection: string, field: string, object: Record<string, any>): string | null {
+		const { relation, relationType } = getRelationInfo(this.schema.relations, collection, field);
+
+		if (!relation) return null;
+
+		let related: unknown = relation.collection;
+
+		if (relationType === 'm2o') related = relation.related_collection;
+		// The related collection of an m2a is stored on the item itself, which may not be part of the delta
+		if (relationType === 'a2o') related = object[relation.meta!.one_collection_field!];
+
+		if (typeof related !== 'string' || !(related in this.schema.collections)) return null;
+
+		return related;
+	}
+
+	private async assertSingletonEmpty(collection: string): Promise<void> {
+		const collectionMeta = this.schema.collections[collection];
+
+		if (!collectionMeta?.singleton) return;
+
+		const existingRow = await this.knex(collection).first(collectionMeta.primary);
+
+		if (existingRow) {
+			throw new UnprocessableContentError({
+				reason: `Singleton collection "${collection}" already contains an item`,
+			});
+		}
+	}
+
+	private mapDelta(version: ContentVersion) {
+		const delta = version.delta ?? {};
+		const collectionInfo = getCollectionFromSchema(this.schema, version.collection);
+		delta[collectionInfo.primary] = version.item;
+
+		return deepMapWithSchema(
+			delta,
+			([key, value], context) => {
+				if (key === '_user' || key === '_date') return;
+
+				if (context.collection.primary in context.object) {
+					if (context.field.special.includes('user-updated')) {
+						return [key, context.object['_user']];
+					}
+
+					if (context.field.special.includes('date-updated')) {
+						return [key, context.object['_date']];
+					}
+				} else {
+					if (context.field.special.includes('user-created')) {
+						return [key, context.object['_user']];
+					}
+
+					if (context.field.special.includes('date-created')) {
+						return [key, context.object['_date']];
+					}
+				}
+
+				if (key in context.object) return [key, value];
+
+				return undefined;
+			},
+			{ collection: version.collection, schema: this.schema },
+			{ mapNonExistentFields: true, detailedUpdateSyntax: true },
+		);
 	}
 }

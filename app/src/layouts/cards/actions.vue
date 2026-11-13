@@ -1,35 +1,29 @@
 <script setup lang="ts">
+defineOptions({ inheritAttrs: false });
+
 defineProps<{
-	itemCount?: number;
-	showingCount: string;
+	showingCount?: string;
 }>();
 </script>
 
-<script lang="ts">
-import { defineComponent } from 'vue';
-
-export default defineComponent({
-	inheritAttrs: false,
-});
-</script>
-
 <template>
-	<transition name="fade">
-		<span v-if="itemCount" class="item-count">
+	<Transition name="fade">
+		<span v-if="showingCount" class="item-count">
 			{{ showingCount }}
 		</span>
-	</transition>
+	</Transition>
 </template>
 
 <style lang="scss" scoped>
+@use '@/styles/mixins';
+
 .item-count {
 	position: relative;
 	display: none;
-	margin: 0 8px;
 	color: var(--theme--foreground-subdued);
 	white-space: nowrap;
 
-	@media (min-width: 600px) {
+	@include mixins.breakpoint-up('sm') {
 		display: inline;
 	}
 }

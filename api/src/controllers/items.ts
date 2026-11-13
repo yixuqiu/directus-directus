@@ -1,9 +1,10 @@
-import { ErrorCode, ForbiddenError, RouteNotFoundError, isDirectusError } from '@directus/errors';
+import { ErrorCode, ForbiddenError, isDirectusError, RouteNotFoundError } from '@directus/errors';
 import { isSystemCollection } from '@directus/system-data';
 import type { PrimaryKey } from '@directus/types';
 import express from 'express';
+import collectionActive from '../middleware/collection-active.js';
 import collectionExists from '../middleware/collection-exists.js';
-import { mergeContentVersions } from '../middleware/merge-content-versions.js';
+import checkIsLocked from '../middleware/is-locked.js';
 import { respond } from '../middleware/respond.js';
 import { validateBatch } from '../middleware/validate-batch.js';
 import { ItemsService } from '../services/items.js';
@@ -13,9 +14,12 @@ import { sanitizeQuery } from '../utils/sanitize-query.js';
 
 const router = express.Router();
 
+router.use(checkIsLocked('items'));
+
 router.post(
 	'/:collection',
 	collectionExists,
+	collectionActive(),
 	asyncHandler(async (req, res, next) => {
 		if (isSystemCollection(req.params['collection']!)) throw new ForbiddenError();
 
@@ -92,12 +96,14 @@ const readHandler = asyncHandler(async (req, res, next) => {
 	return next();
 });
 
-router.search('/:collection', collectionExists, validateBatch('read'), readHandler, respond);
-router.get('/:collection', collectionExists, readHandler, mergeContentVersions, respond);
+router.search('/:collection', collectionExists, collectionActive(), validateBatch('read'), readHandler, respond);
+
+router.get('/:collection', collectionExists, collectionActive(), readHandler, respond);
 
 router.get(
 	'/:collection/:pk',
 	collectionExists,
+	collectionActive(),
 	asyncHandler(async (req, res, next) => {
 		if (isSystemCollection(req.params['collection']!)) throw new ForbiddenError();
 
@@ -114,13 +120,13 @@ router.get(
 
 		return next();
 	}),
-	mergeContentVersions,
 	respond,
 );
 
 router.patch(
 	'/:collection',
 	collectionExists,
+	collectionActive(),
 	validateBatch('update'),
 	asyncHandler(async (req, res, next) => {
 		if (isSystemCollection(req.params['collection']!)) throw new ForbiddenError();
@@ -138,14 +144,14 @@ router.patch(
 			return next();
 		}
 
-		let keys: PrimaryKey[] = [];
+		let keys: PrimaryKey[];
 
 		if (Array.isArray(req.body)) {
 			keys = await service.updateBatch(req.body);
 		} else if (req.body.keys) {
 			keys = await service.updateMany(req.body.keys, req.body.data);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			keys = await service.updateByQuery(sanitizedQuery, req.body.data);
 		}
 
@@ -168,6 +174,7 @@ router.patch(
 router.patch(
 	'/:collection/:pk',
 	collectionExists,
+	collectionActive(),
 	asyncHandler(async (req, res, next) => {
 		if (isSystemCollection(req.params['collection']!)) throw new ForbiddenError();
 
@@ -201,6 +208,7 @@ router.patch(
 router.delete(
 	'/:collection',
 	collectionExists,
+	collectionActive(),
 	validateBatch('delete'),
 	asyncHandler(async (req, _res, next) => {
 		if (isSystemCollection(req.params['collection']!)) throw new ForbiddenError();
@@ -215,7 +223,7 @@ router.delete(
 		} else if (req.body.keys) {
 			await service.deleteMany(req.body.keys);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			await service.deleteByQuery(sanitizedQuery);
 		}
 
@@ -227,6 +235,7 @@ router.delete(
 router.delete(
 	'/:collection/:pk',
 	collectionExists,
+	collectionActive(),
 	asyncHandler(async (req, _res, next) => {
 		if (isSystemCollection(req.params['collection']!)) throw new ForbiddenError();
 

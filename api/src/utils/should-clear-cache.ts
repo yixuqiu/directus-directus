@@ -1,6 +1,6 @@
 import { useEnv } from '@directus/env';
+import type { MutationOptions } from '@directus/types';
 import type Keyv from 'keyv';
-import type { MutationOptions } from '../types/items.js';
 
 /**
  * Check whether cache should be cleared
@@ -16,8 +16,8 @@ export function shouldClearCache(
 ): cache is Keyv<any> {
 	const env = useEnv();
 
-	if (env['CACHE_AUTO_PURGE']) {
-		if (collection && (env['CACHE_AUTO_PURGE_IGNORE_LIST'] as string[]).includes(collection)) {
+	if (env.CACHE_AUTO_PURGE) {
+		if (collection && env.CACHE_AUTO_PURGE_IGNORE_LIST.includes(collection)) {
 			return false;
 		}
 

@@ -1,12 +1,14 @@
 <script setup lang="ts">
+import { omit } from 'lodash-es';
 import { computed } from 'vue';
-import ModuleBarLogo from './module-bar-logo.vue';
 import ModuleBarAvatar from './module-bar-avatar.vue';
+import ModuleBarButton from './module-bar-button.vue';
+import ModuleBarLogo from './module-bar-logo.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import { MODULE_BAR_DEFAULT } from '@/constants';
+import { useExtensions } from '@/extensions';
 import { useSettingsStore } from '@/stores/settings';
 import { translate } from '@/utils/translate-object-values';
-import { MODULE_BAR_DEFAULT } from '@/constants';
-import { omit } from 'lodash';
-import { useExtensions } from '@/extensions';
 
 const settingsStore = useSettingsStore();
 const { modules: registeredModules } = useExtensions();
@@ -47,52 +49,53 @@ const modules = computed(() => {
 
 <template>
 	<div class="module-bar">
-		<module-bar-logo />
+		<ModuleBarLogo />
 
 		<div class="modules">
-			<v-button
+			<ModuleBarButton
 				v-for="modulePart in modules"
 				:key="modulePart.id"
 				v-tooltip.right="modulePart.name"
-				icon
-				x-large
 				:to="modulePart.to"
 				:href="modulePart.href"
-				tile
 			>
-				<v-icon :name="modulePart.icon" />
-			</v-button>
+				<VIcon :name="modulePart.icon" />
+			</ModuleBarButton>
 		</div>
 
-		<module-bar-avatar />
+		<ModuleBarAvatar />
 	</div>
 </template>
 
 <style lang="scss" scoped>
 .module-bar {
+	--module-bar-width: 3.375rem;
+	--module-bar-gap: 1.375rem;
+	--focus-ring-color: var(--theme--navigation--modules--button--foreground);
+
 	display: flex;
 	flex-direction: column;
-	width: 60px;
-	height: 100%;
+	inline-size: var(--module-bar-width);
+	block-size: 100%;
 	background-color: var(--theme--navigation--modules--background);
-	border-right: var(--theme--navigation--modules--border-width) solid var(--theme--navigation--modules--border-color);
+	border-inline-end: var(--theme--navigation--modules--border-width) solid
+		var(--theme--navigation--modules--border-color);
 
 	/* Explicitly render the border outside of the width of the bar itself */
 	box-sizing: content-box;
 
 	.modules {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
 		flex-grow: 1;
-		overflow-x: hidden;
-		overflow-y: auto;
+		padding-block: calc(var(--module-bar-gap) / 2);
+		gap: var(--module-bar-gap);
+		overflow: hidden auto;
 	}
+}
 
-	.v-button {
-		--v-button-color: var(--theme--navigation--modules--button--foreground);
-		--v-button-color-hover: var(--theme--navigation--modules--button--foreground-hover);
-		--v-button-color-active: var(--theme--navigation--modules--button--foreground-active);
-		--v-button-background-color: var(--theme--navigation--modules--button--background);
-		--v-button-background-color-hover: var(--theme--navigation--modules--button--background-hover);
-		--v-button-background-color-active: var(--theme--navigation--modules--button--background-active);
-	}
+.module-bar-logo {
+	--focus-ring-color: var(--foreground-inverted);
 }
 </style>

@@ -1,10 +1,12 @@
-import { getCurrentLanguage } from '@/lang/get-current-language';
-import { setLanguage } from '@/lang/set-language';
+import { useAppStore } from '@directus/stores';
+import { onDehydrateExtensions, onHydrateExtensions } from './extensions';
+import { setLanguage } from './lang/set-language';
+import { useAiStore } from '@/ai/stores/use-ai';
 import { useCollectionsStore } from '@/stores/collections';
 import { useFieldsStore } from '@/stores/fields';
 import { useFlowsStore } from '@/stores/flows';
 import { useInsightsStore } from '@/stores/insights';
-import { useLatencyStore } from '@/stores/latency';
+import { useLicenseStore } from '@/stores/license';
 import { useNotificationsStore } from '@/stores/notifications';
 import { usePermissionsStore } from '@/stores/permissions';
 import { usePresetsStore } from '@/stores/presets';
@@ -14,8 +16,6 @@ import { useServerStore } from '@/stores/server';
 import { useSettingsStore } from '@/stores/settings';
 import { useUserStore } from '@/stores/user';
 import { getBasemapSources } from '@/utils/geometry/basemap';
-import { useAppStore } from '@directus/stores';
-import { onDehydrateExtensions, onHydrateExtensions } from './extensions';
 
 type GenericStore = {
 	$id: string;
@@ -34,12 +34,13 @@ export function useStores(
 		usePresetsStore,
 		useSettingsStore,
 		useServerStore,
-		useLatencyStore,
 		useRelationsStore,
 		usePermissionsStore,
 		useInsightsStore,
 		useFlowsStore,
 		useNotificationsStore,
+		useAiStore,
+		useLicenseStore,
 	],
 ): GenericStore[] {
 	return stores.map((useStore) => useStore()) as GenericStore[];
@@ -67,10 +68,9 @@ export async function hydrate(): Promise<void> {
 		 */
 		await userStore.hydrate();
 
-		const lang = getCurrentLanguage();
 		const currentUser = userStore.currentUser;
 
-		if (currentUser?.role) {
+		if (currentUser?.app_access) {
 			await Promise.all([permissionsStore.hydrate(), fieldsStore.hydrate({ skipTranslation: true })]);
 
 			const hydratedStores = ['userStore', 'permissionsStore', 'fieldsStore', 'serverStore'];
@@ -79,7 +79,7 @@ export async function hydrate(): Promise<void> {
 			await onHydrateExtensions();
 		}
 
-		await setLanguage(lang);
+		await setLanguage(userStore.language);
 
 		appStore.basemap = getBasemapSources()[0].name;
 	} catch (error: any) {

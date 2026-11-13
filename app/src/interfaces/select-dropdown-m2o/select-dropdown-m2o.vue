@@ -1,18 +1,25 @@
 <script setup lang="ts">
+import { Filter } from '@directus/types';
+import { deepMap, getFieldsFromTemplate } from '@directus/utils';
+import { get } from 'lodash-es';
+import { render } from 'micromustache';
+import { computed, inject, ref, toRefs } from 'vue';
+import { RouterLink } from 'vue-router';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VNotice from '@/components/v-notice.vue';
+import VRemove from '@/components/v-remove.vue';
+import VSkeletonLoader from '@/components/v-skeleton-loader.vue';
 import { useRelationM2O } from '@/composables/use-relation-m2o';
 import { useRelationPermissionsM2O } from '@/composables/use-relation-permissions';
 import { RelationQuerySingle, useRelationSingle } from '@/composables/use-relation-single';
 import { useCollectionsStore } from '@/stores/collections';
 import { adjustFieldsForDisplays } from '@/utils/adjust-fields-for-displays';
+import { getItemRoute } from '@/utils/get-route';
 import { parseFilter } from '@/utils/parse-filter';
 import DrawerCollection from '@/views/private/components/drawer-collection.vue';
 import DrawerItem from '@/views/private/components/drawer-item.vue';
-import { Filter } from '@directus/types';
-import { deepMap, getFieldsFromTemplate } from '@directus/utils';
-import { get } from 'lodash';
-import { render } from 'micromustache';
-import { computed, inject, ref, toRefs } from 'vue';
-import { useI18n } from 'vue-i18n';
+import RenderTemplate from '@/views/private/components/render-template.vue';
 
 const props = withDefaults(
 	defineProps<{
@@ -22,19 +29,23 @@ const props = withDefaults(
 		template?: string | null;
 		selectMode?: 'auto' | 'dropdown' | 'modal';
 		disabled?: boolean;
+		nonEditable?: boolean;
 		filter?: Filter | null;
 		enableCreate?: boolean;
 		enableSelect?: boolean;
 		loading?: boolean;
+		enableLink?: boolean;
 	}>(),
 	{
 		value: null,
 		selectMode: 'auto',
 		disabled: false,
+		nonEditable: false,
 		template: null,
 		filter: null,
 		enableCreate: true,
 		enableSelect: true,
+		enableLink: false,
 	},
 );
 
@@ -56,7 +67,6 @@ const customFilter = computed(() => {
 	);
 });
 
-const { t } = useI18n();
 const { collection, field } = toRefs(props);
 const { relationInfo } = useRelationM2O(collection, field);
 
@@ -98,7 +108,7 @@ const { update, remove, displayItem, loading } = useRelationSingle(value, query,
 	enabled: computed(() => !props.loading),
 });
 
-const { createAllowed, updateAllowed } = useRelationPermissionsM2O(relationInfo);
+const { createAllowed } = useRelationPermissionsM2O(relationInfo);
 
 const currentPrimaryKey = computed<string | number>(() => {
 	if (!displayItem.value || !props.value || !relationInfo.value) return '+';
@@ -158,75 +168,116 @@ function onSelection(selection: (number | string)[] | null) {
 
 	selectModalActive.value = false;
 }
+
+function getLinkForItem() {
+	if (!collection.value || !currentPrimaryKey.value || !relationInfo.value) return '';
+	return getItemRoute(relationInfo.value.relatedCollection.collection, currentPrimaryKey.value);
+}
+
+const menuActive = computed(() => editModalActive.value || selectModalActive.value);
 </script>
 
 <template>
-	<v-notice v-if="!relationInfo" type="warning">
-		{{ t('relationship_not_setup') }}
-	</v-notice>
-	<v-notice v-else-if="relationInfo.relatedCollection.meta?.singleton" type="warning">
-		{{ t('no_singleton_relations') }}
-	</v-notice>
-	<v-notice v-else-if="!displayTemplate" type="warning">
-		{{ t('display_template_not_setup') }}
-	</v-notice>
-	<v-notice v-else-if="!enableCreate && !enableSelect && !displayItem">
-		{{ t('no_items') }}
-	</v-notice>
-	<div v-else class="many-to-one">
-		<v-skeleton-loader v-if="loading" type="input" />
-		<v-input
-			v-else
-			clickable
-			:placeholder="t(enableSelect ? 'select_an_item' : 'create_item')"
-			:disabled="disabled"
-			@click="onPreviewClick"
-		>
-			<template v-if="displayItem" #input>
-				<div class="preview">
-					<render-template
-						:collection="relationInfo.relatedCollection.collection"
-						:item="displayItem"
-						:template="displayTemplate"
-					/>
-				</div>
-			</template>
+	<VNotice v-if="!relationInfo" type="warning">
+		{{ $t('relationship_not_setup') }}
+	</VNotice>
+	<VNotice v-else-if="relationInfo.relatedCollection.meta?.singleton" type="warning">
+		{{ $t('no_singleton_relations') }}
+	</VNotice>
+	<VNotice v-else-if="!displayTemplate" type="warning">
+		{{ $t('display_template_not_setup') }}
+	</VNotice>
+	<VNotice v-else-if="!enableCreate && !enableSelect && !displayItem">
+		{{ $t('no_items') }}
+	</VNotice>
 
-			<template #append>
+	<div v-else v-prevent-focusout="menuActive" class="many-to-one">
+		<VSkeletonLoader v-if="loading" type="input" />
+
+		<VListItem
+			v-else
+			block
+			clickable
+			:disabled="disabled && !(nonEditable && displayItem)"
+			:non-editable
+			@click="!(nonEditable && displayItem) ? onPreviewClick() : (editModalActive = true)"
+		>
+			<div v-if="displayItem" class="preview">
+				<RenderTemplate
+					:collection="relationInfo.relatedCollection.collection"
+					:item="displayItem"
+					:template="displayTemplate"
+				/>
+			</div>
+			<div v-else class="placeholder">{{ $t(enableSelect ? 'select_an_item' : 'create_item') }}</div>
+
+			<div class="spacer" />
+
+			<div v-if="!nonEditable || (enableLink && displayItem)" class="item-actions" @click.stop>
 				<template v-if="displayItem">
-					<v-icon v-tooltip="t('edit')" name="open_in_new" class="edit" @click="editModalActive = true" />
-					<v-icon
-						v-if="!disabled"
-						v-tooltip="t('deselect')"
-						name="close"
-						class="deselect"
-						@click.stop="$emit('input', null)"
-					/>
-				</template>
-				<template v-else>
-					<v-icon
-						v-if="createAllowed && enableCreate"
-						v-tooltip="t('create_item')"
-						class="add"
-						name="add"
+					<RouterLink v-if="enableLink" v-slot="{ href, navigate }" :to="getLinkForItem()" custom>
+						<VIcon v-if="disabled && !nonEditable" name="launch" />
+
+						<a
+							v-else
+							v-tooltip="$t('navigate_to_item')"
+							:href="href"
+							class="item-link"
+							@click.stop="navigate"
+							@keydown.stop
+						>
+							<VIcon name="launch" />
+						</a>
+					</RouterLink>
+
+					<VIcon
+						v-if="!nonEditable"
+						v-tooltip="$t('edit_item')"
+						name="edit"
+						clickable
+						:disabled
 						@click="editModalActive = true"
 					/>
-					<v-icon v-if="enableSelect" class="expand" name="expand_more" />
-				</template>
-			</template>
-		</v-input>
 
-		<drawer-item
+					<VRemove
+						v-if="!nonEditable"
+						deselect
+						:disabled
+						:item-info="relationInfo"
+						:item-edits="edits"
+						@action="$emit('input', null)"
+					/>
+				</template>
+
+				<template v-else>
+					<VIcon
+						v-if="!nonEditable && createAllowed && enableCreate"
+						v-tooltip="!disabled && $t('create_item')"
+						name="add"
+						clickable
+						class="add"
+						:class="{ disabled }"
+						:disabled
+						@click="editModalActive = true"
+					/>
+
+					<VIcon v-if="enableSelect" class="expand" name="expand_more" clickable @click="selectModalActive = true" />
+				</template>
+			</div>
+		</VListItem>
+
+		<DrawerItem
 			v-model:active="editModalActive"
 			:collection="relationInfo.relatedCollection.collection"
 			:primary-key="currentPrimaryKey"
 			:edits="edits"
 			:circular-field="relationInfo.relation.meta?.one_field ?? undefined"
-			:disabled="!updateAllowed || disabled"
+			:disabled="disabled"
+			:non-editable="nonEditable"
 			@input="onDrawerItemInput"
 		/>
 
-		<drawer-collection
+		<DrawerCollection
 			v-if="!disabled"
 			v-model:active="selectModalActive"
 			:collection="relationInfo.relatedCollection.collection"
@@ -238,23 +289,46 @@ function onSelection(selection: (number | string)[] | null) {
 </template>
 
 <style lang="scss" scoped>
+@use '@/styles/mixins';
+
+.item-actions {
+	@include mixins.list-interface-item-actions($item-link: true);
+
+	.add:not(.disabled) {
+		--v-icon-color-hover: var(--theme--primary);
+	}
+}
+
 .many-to-one {
 	position: relative;
+}
 
-	:deep(.v-input .append) {
-		display: flex;
+.v-list-item {
+	&.disabled:not(.non-editable) {
+		--v-list-item-color: var(--theme--foreground-subdued);
+		--v-list-item-background-color: var(--theme--form--field--input--background-subdued);
+		--v-list-item-border-color: var(--v-input-border-color, var(--theme--form--field--input--border-color));
+	}
+
+	&:focus-within:not(.disabled),
+	&:focus-visible:not(.disabled) {
+		outline: var(--focus-ring-width) solid var(--theme--form--field--input--focus-ring-color);
+		outline-offset: var(--focus-ring-offset-invert);
 	}
 }
 
 .v-skeleton-loader {
-	top: 0;
-	left: 0;
+	inset-block-start: 0;
+	inset-inline-start: 0;
+}
+
+.placeholder {
+	color: var(--v-input-placeholder-color, var(--theme--foreground-subdued));
 }
 
 .preview {
-	display: block;
 	flex-grow: 1;
-	height: calc(100% - 16px);
+	block-size: 100%;
 	overflow: hidden;
 }
 
@@ -264,21 +338,5 @@ function onSelection(selection: (number | string)[] | null) {
 	&.active {
 		transform: scaleY(-1);
 	}
-}
-
-.edit {
-	margin-right: 4px;
-
-	&:hover {
-		--v-icon-color: var(--theme--form--field--input--foreground);
-	}
-}
-
-.add:hover {
-	--v-icon-color: var(--theme--primary);
-}
-
-.deselect:hover {
-	--v-icon-color: var(--theme--danger);
 }
 </style>

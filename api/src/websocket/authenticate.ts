@@ -1,8 +1,11 @@
 import type { Accountability } from '@directus/types';
+import { isEqual } from 'lodash-es';
 import { DEFAULT_AUTH_PROVIDER } from '../constants.js';
+import getDatabase from '../database/index.js';
+import emitter from '../emitter.js';
+import { createDefaultAccountability } from '../permissions/utils/create-default-accountability.js';
 import { AuthenticationService } from '../services/index.js';
 import { getAccountabilityForToken } from '../utils/get-accountability-for-token.js';
-import { getPermissions } from '../utils/get-permissions.js';
 import { getSchema } from '../utils/get-schema.js';
 import { WebSocketError } from './errors.js';
 import type { BasicAuthMessage, WebSocketResponse } from './messages.js';
@@ -11,6 +14,7 @@ import { getExpiresAtForToken } from './utils/get-expires-at-for-token.js';
 
 export async function authenticateConnection(
 	message: BasicAuthMessage & Record<string, any>,
+	accountabilityOverrides?: Partial<Accountability>,
 ): Promise<AuthenticationState> {
 	let access_token: string | undefined, refresh_token: string | undefined;
 
@@ -34,28 +38,42 @@ export async function authenticateConnection(
 		}
 
 		if (!access_token) throw new Error();
-		const accountability = await getAccountabilityForToken(access_token);
-		const expires_at = getExpiresAtForToken(access_token);
-		return { accountability, expires_at, refresh_token } as AuthenticationState;
-	} catch (error) {
+
+		const defaultAccountability = createDefaultAccountability(accountabilityOverrides);
+
+		const authenticationState = {
+			accountability: defaultAccountability,
+			expires_at: getExpiresAtForToken(access_token),
+			refresh_token,
+		} as AuthenticationState;
+
+		const customAccountability = await emitter.emitFilter(
+			'websocket.authenticate',
+			defaultAccountability,
+			{
+				message,
+			},
+			{
+				database: getDatabase(),
+				schema: null,
+				accountability: null,
+			},
+		);
+
+		if (customAccountability && isEqual(customAccountability, defaultAccountability) === false) {
+			authenticationState.accountability = customAccountability;
+		} else {
+			authenticationState.accountability = await getAccountabilityForToken(access_token, defaultAccountability);
+		}
+
+		if (authenticationState.accountability.oauth) {
+			throw new Error('OAuth sessions are not allowed on WebSocket connections');
+		}
+
+		return authenticationState;
+	} catch {
 		throw new WebSocketError('auth', 'AUTH_FAILED', 'Authentication failed.', message['uid']);
 	}
-}
-
-export async function refreshAccountability(
-	accountability: Accountability | null | undefined,
-): Promise<Accountability> {
-	accountability = accountability ?? {
-		role: null,
-		user: null,
-		admin: false,
-		app: false,
-	};
-
-	const schema = await getSchema();
-	const permissions = await getPermissions(accountability, schema);
-
-	return { ...accountability, permissions };
 }
 
 export function authenticationSuccess(uid?: string | number, refresh_token?: string): string {

@@ -1,8 +1,8 @@
 {
 	"name": "@directus/sdk",
-	"version": "16.0.0",
+	"version": "27.1.0",
 	"description": "Directus JavaScript SDK",
-	"homepage": "https://directus.io",
+	"homepage": "https://directus.com",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/directus/directus.git",
@@ -23,21 +23,21 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "NODE_ENV=production tsup",
-		"dev": "NODE_ENV=development tsup",
-		"test": "vitest --typecheck --watch=false"
-	},
-	"dependencies": {
-		"@directus/system-data": "workspace:*"
+		"build": "NODE_ENV=production tsdown",
+		"dev": "NODE_ENV=development tsdown",
+		"test": "vitest run --typecheck",
+		"test:coverage": "vitest run --coverage --typecheck"
 	},
 	"devDependencies": {
-		"@directus/tsconfig": "workspace:*",
-		"@types/node-fetch": "2.6.11",
-		"tsup": "8.0.2",
-		"typescript": "5.4.5",
-		"vitest": "1.5.3"
+		"@directus/system-data": "workspace:*",
+		"@directus/tsconfig": "catalog:",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	},
 	"engines": {
-		"node": ">=18.0.0"
+		"node": ">=22"
 	}
 }

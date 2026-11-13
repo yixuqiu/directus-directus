@@ -1,38 +1,41 @@
 <script setup lang="ts">
-import { Header as TableHeader } from '@/components/v-table/types';
-import { fetchAll } from '@/utils/fetch-all';
-import { translate } from '@/utils/translate-object-values';
-import { unexpectedError } from '@/utils/unexpected-error';
-import SearchInput from '@/views/private/components/search-input.vue';
 import { Role } from '@directus/types';
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
+import { RouterView, useRouter } from 'vue-router';
 import SettingsNavigation from '../../components/navigation.vue';
+import VButton from '@/components/v-button.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInfo from '@/components/v-info.vue';
+import { Header as TableHeader } from '@/components/v-table/types';
+import VTable from '@/components/v-table/v-table.vue';
+import VTextOverflow from '@/components/v-text-overflow.vue';
+import { fetchAll } from '@/utils/fetch-all';
+import { translate } from '@/utils/translate-object-values';
+import { unexpectedError } from '@/utils/unexpected-error';
+import { PrivateViewHeaderBarActionButton } from '@/views/private';
+import { PrivateView } from '@/views/private';
+import RenderDisplay from '@/views/private/components/render-display.vue';
+import SearchInput from '@/views/private/components/search-input.vue';
+import ValueNull from '@/views/private/components/value-null.vue';
+
+const { t } = useI18n();
 
 type RoleBaseFields = 'id' | 'name' | 'description' | 'icon';
 
-type RoleResponse = Pick<Role, RoleBaseFields | 'admin_access'> & {
+type RoleResponse = Pick<Role, RoleBaseFields> & {
 	users: [{ count: { id: number } }];
 };
 
-type RoleItem = Pick<Role, RoleBaseFields> &
-	Partial<Pick<Role, 'admin_access'>> & {
-		public?: boolean;
-		count?: number;
-	};
-
-const { t } = useI18n();
+type RoleItem = Pick<Role, RoleBaseFields> & {
+	public?: boolean;
+	count?: number;
+};
 
 const router = useRouter();
 
 const roles = ref<RoleItem[]>([]);
 const loading = ref(false);
-
-const lastAdminRoleId = computed(() => {
-	const adminRoles = roles.value.filter((role) => role.admin_access === true);
-	return adminRoles.length === 1 ? (adminRoles[0] as RoleItem).id : null;
-});
 
 const search = ref<string | null>(null);
 
@@ -71,6 +74,20 @@ const tableHeaders = ref<TableHeader[]>([
 		description: null,
 	},
 	{
+		text: t('fields.directus_roles.children'),
+		display: 'related-values',
+		displayOptions: {
+			template: '{{ name }}',
+		},
+		field: 'children',
+		collection: 'directus_roles',
+		value: 'children',
+		sortable: false,
+		width: 140,
+		align: 'left',
+		description: null,
+	},
+	{
 		text: t('description'),
 		value: 'description',
 		sortable: false,
@@ -93,7 +110,7 @@ async function fetchRoles() {
 		const response = await fetchAll<RoleResponse>(`/roles`, {
 			params: {
 				limit: -1,
-				fields: ['id', 'name', 'description', 'icon', 'admin_access', 'users'],
+				fields: ['id', 'name', 'description', 'icon', 'users', 'children.name', 'children.id'],
 				deep: {
 					users: {
 						_aggregate: { count: 'id' },
@@ -108,11 +125,11 @@ async function fetchRoles() {
 
 		roles.value = [
 			{
-				public: true,
-				name: t('public_label'),
-				icon: 'public',
-				description: t('public_description'),
 				id: 'public',
+				name: t('public_label'),
+				description: t('public_description'),
+				icon: 'public',
+				public: true,
 			},
 			...response.map((role) => {
 				return {
@@ -129,53 +146,41 @@ async function fetchRoles() {
 }
 
 function navigateToRole({ item }: { item: Role }) {
-	if (item.id !== 'public' && lastAdminRoleId.value) {
+	if (item.id === 'public') {
+		router.push({ name: 'settings-roles-public-item' });
+		return;
+	} else {
 		router.push({
 			name: 'settings-roles-item',
-			params: { primaryKey: item.id, lastAdminRoleId: lastAdminRoleId.value },
+			params: { primaryKey: item.id },
 		});
-	} else {
-		router.push(`/settings/roles/${item.id}`);
 	}
 }
 </script>
 
 <template>
-	<private-view :title="t('settings_permissions')">
-		<template #headline><v-breadcrumb :items="[{ name: t('settings'), to: '/settings' }]" /></template>
-
-		<template #title-outer:prepend>
-			<v-button class="header-icon" rounded icon exact disabled>
-				<v-icon name="admin_panel_settings" />
-			</v-button>
-		</template>
-
+	<PrivateView :title="$t('settings_roles')" icon="group">
 		<template #actions>
-			<search-input
+			<SearchInput
 				v-if="!loading"
 				v-model="search"
 				:autofocus="roles.length > 25"
-				:placeholder="t('search_role')"
+				:placeholder="$t('search_role')"
 				:show-filter="false"
+				small
 			/>
+		</template>
 
-			<v-button v-tooltip.bottom="t('create_role')" rounded icon :to="addNewLink">
-				<v-icon name="add" />
-			</v-button>
+		<template #actions:primary>
+			<PrivateViewHeaderBarActionButton :label="$t('create')" :to="addNewLink" icon="add" />
 		</template>
 
 		<template #navigation>
-			<settings-navigation />
-		</template>
-
-		<template #sidebar>
-			<sidebar-detail icon="info" :title="t('information')" close>
-				<div v-md="t('page_help_settings_roles_collection')" class="page-description" />
-			</sidebar-detail>
+			<SettingsNavigation />
 		</template>
 
 		<div v-if="!search || filteredRoles.length > 0" class="roles">
-			<v-table
+			<VTable
 				v-model:headers="tableHeaders"
 				show-resize
 				:items="filteredRoles"
@@ -185,33 +190,45 @@ function navigateToRole({ item }: { item: Role }) {
 				@click:row="navigateToRole"
 			>
 				<template #[`item.icon`]="{ item }">
-					<v-icon class="icon" :name="item.icon" :class="{ public: item.public }" />
+					<VIcon class="icon" :name="item.icon" :class="{ public: item.public }" />
 				</template>
 
 				<template #[`item.name`]="{ item }">
-					<v-text-overflow :text="item.name" class="name" :class="{ public: item.public }" :highlight="search" />
+					<VTextOverflow :text="item.name" class="name" :highlight="search" :class="{ public: item.public }" />
 				</template>
 
 				<template #[`item.count`]="{ item }">
-					<value-null v-if="item.public" />
+					<ValueNull v-if="item.public" />
 				</template>
 
 				<template #[`item.description`]="{ item }">
-					<v-text-overflow :text="item.description" class="description" :highlight="search" />
+					<VTextOverflow :text="item.description" class="description" :highlight="search" />
 				</template>
-			</v-table>
+
+				<template #[`item.children`]="{ item }">
+					<ValueNull v-if="item.public || item.children.length === 0" />
+					<RenderDisplay
+						v-else
+						:value="item.children"
+						:display="tableHeaders[3]!.display"
+						:options="tableHeaders[3]!.displayOptions"
+						:field="tableHeaders[3]!.field"
+						:collection="tableHeaders[3]!.collection"
+					/>
+				</template>
+			</VTable>
 		</div>
 
-		<v-info v-else icon="search" :title="t('no_results')" center>
-			{{ t('no_results_copy') }}
+		<VInfo v-else icon="search" :title="$t('no_results')" center>
+			{{ $t('no_results_copy') }}
 
 			<template #append>
-				<v-button @click="search = null">{{ t('clear_filters') }}</v-button>
+				<VButton @click="search = null">{{ $t('clear_filters') }}</VButton>
 			</template>
-		</v-info>
+		</VInfo>
 
-		<router-view name="add" />
-	</private-view>
+		<RouterView name="add" />
+	</PrivateView>
 </template>
 
 <style lang="scss" scoped>
@@ -224,8 +241,7 @@ function navigateToRole({ item }: { item: Role }) {
 
 .roles {
 	padding: var(--content-padding);
-	padding-top: 0;
-	padding-bottom: var(--content-padding-bottom);
+	padding-block: var(--content-padding-top-table) var(--content-padding-bottom);
 }
 
 .system {

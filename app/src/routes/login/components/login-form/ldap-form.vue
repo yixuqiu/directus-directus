@@ -1,11 +1,16 @@
 <script setup lang="ts">
+import { computed, ref, toRefs, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { RequestError } from '@/api';
 import { login } from '@/auth';
+import TransitionExpand from '@/components/transition/expand.vue';
+import VButton from '@/components/v-button.vue';
+import VInput from '@/components/v-input.vue';
+import VNotice from '@/components/v-notice.vue';
+import VTextOverflow from '@/components/v-text-overflow.vue';
 import { translateAPIError } from '@/lang';
+import { navigateAfterLogin } from '@/routes/login/utils/navigate-after-login';
 import { useUserStore } from '@/stores/user';
-import { computed, ref, toRefs, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
 
 type Credentials = {
 	identifier: string;
@@ -16,8 +21,6 @@ type Credentials = {
 const props = defineProps<{
 	provider: string;
 }>();
-
-const { t } = useI18n();
 
 const router = useRouter();
 
@@ -71,13 +74,15 @@ async function onSubmit() {
 
 		await login({ provider: provider.value, credentials });
 
+		const redirectQuery = router.currentRoute.value.query.redirect as string;
+
 		let lastPage: string | undefined;
 
 		if (userStore.currentUser && 'last_page' in userStore.currentUser) {
 			lastPage = userStore.currentUser.last_page;
 		}
 
-		router.push(lastPage || '/content');
+		navigateAfterLogin(router, redirectQuery || lastPage || '/content');
 	} catch (err: any) {
 		if (err.errors?.[0]?.extensions?.code === 'INVALID_OTP' && requiresTFA.value === false) {
 			requiresTFA.value = true;
@@ -92,30 +97,36 @@ async function onSubmit() {
 
 <template>
 	<form @submit.prevent="onSubmit">
-		<v-input v-model="identifier" autofocus autocomplete="username" :placeholder="t('identifier')" />
-		<v-input v-model="password" type="password" autocomplete="current-password" :placeholder="t('password')" />
+		<VInput v-model="identifier" autofocus autocomplete="username" :placeholder="$t('identifier')" />
+		<VInput v-model="password" type="password" autocomplete="current-password" :placeholder="$t('password')" />
 
-		<transition-expand>
-			<v-input
+		<TransitionExpand>
+			<VInput
 				v-if="requiresTFA"
 				v-model="otp"
 				type="text"
 				autocomplete="one-time-code"
-				:placeholder="t('otp')"
+				:placeholder="$t('otp')"
 				autofocus
 			/>
-		</transition-expand>
+		</TransitionExpand>
 
-		<v-notice v-if="error" type="warning">
+		<VNotice v-if="error" type="warning">
 			{{ errorFormatted }}
-		</v-notice>
-		<v-button type="submit" :loading="loggingIn" large>{{ t('sign_in') }}</v-button>
+		</VNotice>
+		<VButton class="sign-in" type="submit" :loading="loggingIn" large>
+			<VTextOverflow :text="$t('sign_in')" />
+		</VButton>
 	</form>
 </template>
 
 <style lang="scss" scoped>
 .v-input,
 .v-notice {
-	margin-bottom: 20px;
+	margin-block-end: 1.125rem;
+}
+
+.sign-in {
+	max-inline-size: 50%;
 }
 </style>

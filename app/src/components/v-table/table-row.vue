@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import type { ShowSelect } from '@directus/extensions';
+import type { ShowSelect } from '@directus/types';
 import { computed } from 'vue';
 import type { Header, Item } from './types';
+import VCheckbox from '@/components/v-checkbox.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VTextOverflow from '@/components/v-text-overflow.vue';
+import ValueNull from '@/views/private/components/value-null.vue';
 
 const props = withDefaults(
 	defineProps<{
 		headers: Header[];
 		item: Item;
-		showSelect: ShowSelect;
+		showSelect?: ShowSelect;
 		showManualSort?: boolean;
 		isSelected?: boolean;
 		subdued?: boolean;
@@ -26,24 +30,45 @@ const props = withDefaults(
 	},
 );
 
-defineEmits(['click', 'item-selected']);
+const emit = defineEmits(['click', 'item-selected']);
 
-const cssHeight = computed(() => {
-	return {
-		tableRow: props.height + 2 + 'px',
-		renderTemplateImage: props.height - 16 + 'px',
-	};
-});
+// Inline vars instead of CSS v-bind(): v-bind() adds a MutationObserver and a document-wide query per row
+const rowStyle = computed(() => ({
+	'--table-row-height': props.height + 2 + 'px',
+	'--table-row-image-height': props.height - 16 + 'px',
+}));
+
+function onKeydown(e: KeyboardEvent) {
+	if (e.metaKey) return;
+	if ((e.target as HTMLElement)?.tagName === 'TR' && ['Enter', ' '].includes(e.key)) emit('click', e);
+}
+
+function onClick(event: MouseEvent) {
+	const rowAction = (event.target as HTMLElement | null)?.closest('[data-row-action]');
+
+	if (rowAction && (event.currentTarget as HTMLElement).contains(rowAction)) {
+		return;
+	}
+
+	emit('click', event);
+}
 </script>
 
 <template>
-	<tr class="table-row" :class="{ subdued: subdued, clickable: hasClickListener }" @click="$emit('click', $event)">
-		<td v-if="showManualSort" class="manual cell" @click.stop>
-			<v-icon name="drag_handle" class="drag-handle" :class="{ 'sorted-manually': sortedManually }" />
+	<tr
+		class="table-row"
+		:class="{ subdued: subdued, clickable: hasClickListener }"
+		:style="rowStyle"
+		:tabindex="hasClickListener ? 0 : undefined"
+		@click="onClick"
+		@keydown="onKeydown"
+	>
+		<td v-if="showManualSort" class="manual cell" data-row-action>
+			<VIcon name="drag_handle" class="drag-handle" :class="{ 'sorted-manually': sortedManually }" />
 		</td>
 
-		<td v-if="showSelect !== 'none'" class="select cell" @click.stop>
-			<v-checkbox
+		<td v-if="showSelect !== 'none'" class="select cell" data-row-action>
+			<VCheckbox
 				:icon-on="showSelect === 'one' ? 'radio_button_checked' : undefined"
 				:icon-off="showSelect === 'one' ? 'radio_button_unchecked' : undefined"
 				:model-value="isSelected"
@@ -51,9 +76,14 @@ const cssHeight = computed(() => {
 			/>
 		</td>
 
-		<td v-for="header in headers" :key="header.value" class="cell" :class="`align-${header.align}`">
+		<td
+			v-for="header in headers"
+			:key="header.value"
+			class="cell"
+			:class="[`align-${header.align}`, { inactive: header.inactive }]"
+		>
 			<slot :name="`item.${header.value}`" :item="item">
-				<v-text-overflow
+				<VTextOverflow
 					v-if="
 						header.value.split('.').reduce((acc, val) => {
 							return acc[val];
@@ -65,12 +95,12 @@ const cssHeight = computed(() => {
 						}, item)
 					"
 				/>
-				<value-null v-else />
+				<ValueNull v-else />
 			</slot>
 		</td>
 
 		<td class="spacer cell" />
-		<td v-if="$slots['item-append']" class="append cell" @click.stop>
+		<td v-if="$slots['item-append']" class="append cell" data-row-action>
 			<slot name="item-append" />
 		</td>
 	</tr>
@@ -78,25 +108,32 @@ const cssHeight = computed(() => {
 
 <style lang="scss" scoped>
 .table-row {
-	height: v-bind('cssHeight.tableRow');
+	--focus-ring-offset: var(--focus-ring-offset-invert);
+
+	block-size: var(--table-row-height);
 
 	.cell {
 		display: flex;
 		align-items: center;
-		padding: 8px 12px;
+		padding: 0.4375rem 0.6875rem;
 		overflow: hidden;
 		white-space: nowrap;
 		text-overflow: ellipsis;
 		background-color: var(--v-table-background-color, transparent);
-		border-bottom: var(--theme--border-width) solid var(--theme--border-color-subdued);
+		border-block-end: var(--theme--border-width) solid var(--theme--border-color-subdued);
 
 		&:last-child {
-			padding: 0 12px;
+			padding: 0 0.6875rem;
 		}
 
 		&.select {
 			display: flex;
 			align-items: center;
+		}
+
+		/* Columns of an inactive collection stay readable, but are muted */
+		&.inactive {
+			color: var(--theme--foreground-subdued);
 		}
 	}
 
@@ -128,10 +165,10 @@ const cssHeight = computed(() => {
 	}
 
 	:deep(.render-template) {
-		height: v-bind('cssHeight.tableRow');
+		block-size: var(--table-row-height);
 
 		img {
-			height: v-bind('cssHeight.renderTemplateImage');
+			block-size: var(--table-row-image-height);
 		}
 	}
 }

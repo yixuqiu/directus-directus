@@ -1,10 +1,9 @@
+import { createRequire } from 'node:module';
 import { useEnv } from '@directus/env';
 import { merge } from 'lodash-es';
 import type { IRateLimiterOptions, IRateLimiterStoreOptions, RateLimiterAbstract } from 'rate-limiter-flexible';
 import { RateLimiterMemory, RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
 import { getConfigFromEnv } from './utils/get-config-from-env.js';
-
-import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
@@ -16,7 +15,7 @@ export function createRateLimiter(
 ): RateLimiterAbstract {
 	const env = useEnv();
 
-	switch (env['RATE_LIMITER_STORE']) {
+	switch (env.RATE_LIMITER_STORE) {
 		case 'redis':
 			return new RateLimiterRedis(getConfig('redis', configPrefix, configOverrides));
 		case 'memory':
@@ -42,14 +41,14 @@ function getConfig(
 	configPrefix = 'RATE_LIMITER',
 	overrides?: IRateLimiterOptionsOverrides,
 ): IRateLimiterOptions | IRateLimiterStoreOptions {
-	const config: any = getConfigFromEnv(`${configPrefix}_`, `${configPrefix}_${store}_`);
+	const config: any = getConfigFromEnv(`${configPrefix}_`, { omitPrefix: `${configPrefix}_${store}_` });
 
 	if (store === 'redis') {
 		const Redis = require('ioredis');
 
 		const env = useEnv();
 
-		config.storeClient = new Redis(env[`REDIS`] || getConfigFromEnv(`REDIS_`));
+		config.storeClient = new Redis(env[`REDIS`] || getConfigFromEnv(`REDIS_`, { omitSuffix: '_NAMESPACE' }));
 	}
 
 	delete config.enabled;

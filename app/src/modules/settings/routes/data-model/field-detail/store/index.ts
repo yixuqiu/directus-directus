@@ -1,17 +1,16 @@
+import type { DisplayConfig, InterfaceConfig } from '@directus/extensions';
+import type { Collection, DeepPartial, Field, LocalType, Relation } from '@directus/types';
+import { getEndpoint } from '@directus/utils';
+import { cloneDeep, get, has, isEmpty, mergeWith, orderBy, set, sortBy } from 'lodash-es';
+import { defineStore } from 'pinia';
+import { computed } from 'vue';
+import * as alterations from './alterations';
 import api from '@/api';
 import { useExtensions } from '@/extensions';
 import { useCollectionsStore } from '@/stores/collections';
 import { useFieldsStore } from '@/stores/fields';
 import { useRelationsStore } from '@/stores/relations';
 import { getLocalTypeForField } from '@/utils/get-local-type';
-import { unexpectedError } from '@/utils/unexpected-error';
-import type { DisplayConfig, InterfaceConfig } from '@directus/extensions';
-import type { Collection, DeepPartial, Field, LocalType, Relation } from '@directus/types';
-import { getEndpoint } from '@directus/utils';
-import { cloneDeep, get, has, isEmpty, mergeWith, orderBy, set, sortBy } from 'lodash';
-import { defineStore } from 'pinia';
-import { computed } from 'vue';
-import * as alterations from './alterations';
 
 export function syncFieldDetailStoreProperty(path: string, defaultValue?: any) {
 	const fieldDetailStore = useFieldDetailStore();
@@ -38,7 +37,7 @@ export const useFieldDetailStore = defineStore({
 		/** What field we're currently editing ("+"" for new)  */
 		editing: '+' as string,
 
-		/** Full field data with edits  */
+		/** Full field data with edits */
 		field: {
 			field: undefined,
 			type: undefined,
@@ -165,14 +164,27 @@ export const useFieldDetailStore = defineStore({
 					alterations[localType].applyChanges(updates, state, { hasChanged, getCurrent });
 				}
 
-				const { field: fieldUpdates, ...restUpdates } = updates;
+				if (hasChanged('relations.m2o.related_collection')) {
+					const currentType = getCurrent('localType');
+					let targetType = currentType;
 
-				mergeWith(state, restUpdates, (_, srcValue, key, object) => {
-					if (Array.isArray(srcValue)) return srcValue;
-					if (srcValue === undefined) object[key] = undefined;
-					return;
-				});
+					if (get(updates, 'relations.m2o.related_collection') === 'directus_files') {
+						if (currentType === 'm2o') targetType = 'file';
+						if (currentType === 'm2m') targetType = 'files';
+					} else {
+						if (currentType === 'file') targetType = 'm2o';
+						if (currentType === 'files') targetType = 'm2m';
+					}
 
+					if (currentType !== targetType) {
+						updates.localType = targetType;
+						alterations.global.switchInterfaceAndDisplay(updates);
+					}
+				}
+
+				const { field: fieldUpdates, items: itemUpdates, ...restUpdates } = updates;
+
+				// Handle `field` updates, shallow merge and mirror to `fieldUpdates`
 				if (fieldUpdates) {
 					const { schema: schemaUpdates, meta: metaUpdates, ...restFieldUpdates } = fieldUpdates;
 
@@ -189,6 +201,20 @@ export const useFieldDetailStore = defineStore({
 						Object.assign((state.fieldUpdates.meta ??= {}), metaUpdates);
 					}
 				}
+
+				// Handle `item` updates, allowing full replacements
+				if (itemUpdates) {
+					state.items = itemUpdates as (typeof this.$state)['items'];
+				}
+
+				// Handle remaining updates, deep merge
+				mergeWith(state, restUpdates, (_, srcValue, key, object) => {
+					// Override arrays instead of merging
+					if (Array.isArray(srcValue)) return srcValue;
+					// Allow properties to be resettable
+					if (srcValue === undefined) object[key] = undefined;
+					return;
+				});
 			});
 		},
 		async save() {
@@ -258,10 +284,10 @@ export const useFieldDetailStore = defineStore({
 				}
 
 				await fieldsStore.hydrate({ skipTranslation: true });
-			} catch (error) {
-				unexpectedError(error);
-			} finally {
 				this.saving = false;
+			} catch (error) {
+				this.saving = false;
+				throw error;
 			}
 		},
 	},

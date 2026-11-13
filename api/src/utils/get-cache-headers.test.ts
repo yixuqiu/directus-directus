@@ -1,16 +1,31 @@
+import { useEnv } from '@directus/env';
+import type { Accountability } from '@directus/types';
 import type { Request } from 'express';
 import { describe, expect, test, vi } from 'vitest';
+import { mockEnv } from '../test-utils/env.js';
 import { getCacheControlHeader } from './get-cache-headers.js';
-import { useEnv } from '@directus/env';
 
 vi.mock('@directus/env');
 
-const scenarios = [
+type Scenario = {
+	name: string;
+	input: {
+		env: Record<string, any>;
+		headers: Record<string, string>;
+		accountability: Accountability | null;
+		ttl?: number;
+		globalCacheSettings: boolean;
+		personalized: boolean;
+	};
+	output: string;
+};
+
+const scenarios: Scenario[] = [
 	// Test the cache-control header
 	{
 		name: 'when cache-Control header includes no-store',
 		input: {
-			env: { CACHE_SKIP_ALLOWED: 'true' },
+			env: { CACHE_SKIP_ALLOWED: true },
 			headers: { 'Cache-Control': 'no-store' },
 			accountability: null,
 			ttl: 5678910,
@@ -22,7 +37,7 @@ const scenarios = [
 	{
 		name: 'when cache-Control header does not include no-store',
 		input: {
-			env: { CACHE_SKIP_ALLOWED: 'true' },
+			env: { CACHE_SKIP_ALLOWED: true },
 			headers: { other: 'value' },
 			accountability: null,
 			ttl: 5678910,
@@ -133,7 +148,7 @@ const scenarios = [
 			headers: {},
 			accountability: {
 				role: '7efc7413-7ffe-4e6f-a0ac-687bbf9f8076',
-			},
+			} as Accountability,
 			ttl: 5678910,
 			globalCacheSettings: false,
 			personalized: true,
@@ -145,7 +160,7 @@ const scenarios = [
 		input: {
 			env: {},
 			headers: {},
-			accountability: {},
+			accountability: {} as Accountability,
 			ttl: 5678910,
 			globalCacheSettings: false,
 			personalized: true,
@@ -194,7 +209,7 @@ describe('get cache headers', () => {
 				}),
 			} as Partial<Request>;
 
-			vi.mocked(useEnv).mockReturnValue(scenario.input.env);
+			vi.mocked(useEnv).mockReturnValue(mockEnv(scenario.input.env));
 
 			const { ttl, globalCacheSettings, personalized } = scenario.input;
 

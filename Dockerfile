@@ -1,33 +1,36 @@
 # syntax=docker/dockerfile:1.4
 
+ARG NODE_VERSION=26.13.0
+
 ####################################################################################################
 ## Build Packages
 
-FROM node:18-alpine AS builder
+FROM node:${NODE_VERSION}-alpine AS builder
+
+RUN apk --no-cache add python3 py3-setuptools build-base
+
 WORKDIR /directus
 
-ARG TARGETPLATFORM
+COPY package.json .
+
+RUN npm install --global "$(node -p "require('./package.json').packageManager")"
+
+# Deploy as 'node' user to match pnpm setups in production image
+# (see https://github.com/directus/directus/issues/23822)
+RUN chown node:node .
+USER node
 
 ENV NODE_OPTIONS=--max-old-space-size=8192
 
-RUN <<EOF
-  if [ "$TARGETPLATFORM" = 'linux/arm64' ]; then
-  	apk --no-cache add python3 build-base
-  	ln -sf /usr/bin/python3 /usr/bin/python
-  fi
-EOF
-
-COPY package.json .
-RUN corepack enable && corepack prepare
-
-COPY pnpm-lock.yaml .
+COPY --chown=node:node pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm fetch
 
-COPY . .
+COPY --chown=node:node . .
 RUN <<EOF
+	set -ex
 	pnpm install --recursive --offline --frozen-lockfile
-	npm_config_workspace_concurrency=1 pnpm run build
-	pnpm --filter directus deploy --prod dist
+	pnpm_config_workspace_concurrency=2 pnpm --recursive --filter '!e2e' run build
+	pnpm --filter directus deploy --legacy --prod dist
 	cd dist
 	# Regenerate package.json file with essential fields only
 	# (see https://github.com/directus/directus/issues/20338)
@@ -41,15 +44,22 @@ EOF
 ####################################################################################################
 ## Create Production Image
 
-FROM node:18-alpine AS runtime
+FROM node:${NODE_VERSION}-alpine AS runtime
 
-RUN npm install --global pm2@5
+# Apply outstanding OS-level security patches (openssl, zlib, busybox, ...),
+# then purge npm, npx, corepack, and the npm cache from the final image.
+RUN apk --no-cache upgrade \
+	&& rm -rf \
+		/usr/local/lib/node_modules/npm \
+		/usr/local/lib/node_modules/corepack \
+		/usr/local/bin/npm \
+		/usr/local/bin/npx \
+		/usr/local/bin/corepack \
+		/root/.npm
 
 USER node
 
 WORKDIR /directus
-
-EXPOSE 8055
 
 ENV \
 	DB_CLIENT="sqlite3" \
@@ -59,8 +69,14 @@ ENV \
 
 COPY --from=builder --chown=node:node /directus/ecosystem.config.cjs .
 COPY --from=builder --chown=node:node /directus/dist .
+COPY --chown=node:node docker-entrypoint.cjs .
 
-CMD : \
-	&& node cli.js bootstrap \
-	&& pm2-runtime start ecosystem.config.cjs \
-	;
+# Put pm2 on the path so `docker exec <container> pm2 ...` keeps working for diagnostics.
+
+USER root
+RUN ln -s /directus/node_modules/.pnpm/pm2@*/node_modules/pm2/bin/pm2 /usr/local/bin/pm2
+USER node
+
+EXPOSE 8055
+
+CMD ["node", "docker-entrypoint.cjs"]

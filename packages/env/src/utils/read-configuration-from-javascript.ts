@@ -1,7 +1,7 @@
-import { isPlainObject } from 'lodash-es';
 import { createRequire } from 'node:module';
+import { isPlainObject } from 'lodash-es';
 
-export const readConfigurationFromJavaScript = (path: string) => {
+export function readConfigurationFromJavaScript(path: string): Record<string, unknown> {
 	const require = createRequire(import.meta.url);
 
 	const module = require(path);
@@ -21,4 +21,4 @@ export const readConfigurationFromJavaScript = (path: string) => {
 	throw new Error(
 		`Invalid JS configuration file export type. Requires one of "function", "object", received: "${typeof exported}"`,
 	);
-};
+}

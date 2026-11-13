@@ -1,4 +1,4 @@
-import { ErrorCode, InvalidPayloadError, isDirectusError } from '@directus/errors';
+import { ErrorCode, ForbiddenError, isDirectusError } from '@directus/errors';
 import type { PrimaryKey } from '@directus/types';
 import express from 'express';
 import { assign } from 'lodash-es';
@@ -108,14 +108,14 @@ router.patch(
 			schema: req.schema,
 		});
 
-		let keys: PrimaryKey[] = [];
+		let keys: PrimaryKey[];
 
 		if (Array.isArray(req.body)) {
 			keys = await service.updateBatch(req.body);
 		} else if (req.body.keys) {
 			keys = await service.updateMany(req.body.keys, req.body.data);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			keys = await service.updateByQuery(sanitizedQuery, req.body.data);
 		}
 
@@ -175,7 +175,7 @@ router.delete(
 		} else if (req.body.keys) {
 			await service.deleteMany(req.body.keys);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			await service.deleteByQuery(sanitizedQuery);
 		}
 
@@ -209,15 +209,18 @@ router.get(
 
 		const version = await service.readOne(req.params['pk']!);
 
-		const { outdated, mainHash } = await service.verifyHash(version['collection'], version['item'], version['hash']);
+		if (!version.item) {
+			throw new ForbiddenError({ reason: `Version with key ${req.params['pk']} does not have an associated item` });
+		}
 
-		const saves = await service.getVersionSavesById(version['id']);
+		const { outdated, mainHash } = await service.verifyHash(version['collection'], version['item'], version['hash']!);
 
-		const current = assign({}, ...saves);
+		const delta = version.delta ?? {};
+		delta[req.schema.collections[version.collection]!.primary] = version.item;
 
 		const main = await service.getMainItem(version['collection'], version['item']);
 
-		res.locals['payload'] = { data: { outdated, mainHash, current, main } };
+		res.locals['payload'] = { data: { outdated, mainHash, current: delta, main } };
 
 		return next();
 	}),
@@ -234,13 +237,17 @@ router.post(
 
 		const version = await service.readOne(req.params['pk']!);
 
-		const mainItem = await service.getMainItem(version['collection'], version['item']);
+		let mainItem = {};
 
-		await service.save(req.params['pk']!, req.body);
+		if (version.item) {
+			mainItem = await service.getMainItem(version['collection'], version['item']);
+		}
 
-		const saves = await service.getVersionSavesById(req.params['pk']!);
+		const patchRevision = req.query['patchRevision'] !== undefined && req.query['patchRevision'] !== 'false';
 
-		const result = assign(mainItem, ...saves);
+		const updatedVersion = await service.save(req.params['pk']!, req.body, { patchRevision });
+
+		const result = assign(mainItem, updatedVersion);
 
 		res.locals['payload'] = { data: result || null };
 
@@ -252,16 +259,15 @@ router.post(
 router.post(
 	'/:pk/promote',
 	asyncHandler(async (req, res, next) => {
-		if (typeof req.body.mainHash !== 'string') {
-			throw new InvalidPayloadError({ reason: `"mainHash" field is required` });
-		}
-
 		const service = new VersionsService({
 			accountability: req.accountability,
 			schema: req.schema,
 		});
 
-		const updatedItemKey = await service.promote(req.params['pk']!, req.body.mainHash, req.body?.['fields']);
+		const updatedItemKey = await service.promote(req.params['pk']!, {
+			mainHash: req.body?.mainHash,
+			fields: req.body?.['fields'],
+		});
 
 		res.locals['payload'] = { data: updatedItemKey || null };
 

@@ -1,6 +1,10 @@
 <script setup lang="ts">
+import { isDynamicVariable } from '@directus/utils';
 import { computed, onMounted, onUpdated, ref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
+import VDatePicker from '@/components/v-date-picker/v-date-picker.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VMenu from '@/components/v-menu.vue';
+import VSelect from '@/components/v-select/v-select.vue';
 
 type Choice = {
 	text: string;
@@ -13,6 +17,7 @@ const props = withDefaults(
 		is: string;
 		type: string;
 		value: string | number | Record<string, unknown> | boolean | null;
+		commaAllowed?: boolean;
 		focus?: boolean;
 		choices?: Choice[];
 	}>(),
@@ -24,9 +29,10 @@ const props = withDefaults(
 
 const emit = defineEmits<{
 	input: [value: string | number | Record<string, unknown> | boolean | null];
+	commaKeyPressed: [];
+	commaValuePasted: [value: string];
 }>();
 
-const { t } = useI18n();
 const dateTimeMenu = ref();
 const inputEl = ref<HTMLInputElement | null>(null);
 const isInputValid = ref(true);
@@ -47,14 +53,14 @@ const inputPattern = computed(() => {
 	switch (props.type) {
 		case 'integer':
 		case 'bigInteger':
-			return '[+\\-]?[0-9]+';
+			return '^[+\\-]?[0-9]+$';
 		case 'decimal':
 		case 'float':
-			return '[+\\-]?[0-9]+\\.?[0-9]*';
+			return '^[+\\-]?[0-9]+\\.?[0-9]*$';
 		case 'uuid':
-			return '[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}';
+			return '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$';
 		default:
-			return '';
+			return undefined;
 	}
 });
 
@@ -77,15 +83,17 @@ watch(
 );
 
 function isValueValid(value: any): boolean {
-	if (value === '' || typeof value !== 'string' || new RegExp(inputPattern.value).test(value)) {
+	if (
+		value === '' ||
+		typeof value !== 'string' ||
+		(props.commaAllowed && value.includes(',')) ||
+		!inputPattern.value ||
+		new RegExp(inputPattern.value).test(value)
+	) {
 		return true;
 	}
 
-	if (
-		typeof value === 'string' &&
-		(['$NOW', '$CURRENT_USER', '$CURRENT_ROLE'].some((prefix) => value.startsWith(prefix)) ||
-			/^{{\s*?\S+?\s*?}}$/.test(value))
-	) {
+	if (isDynamicVariable(value) || /^{{\s*?\S+?\s*?}}$/.test(value)) {
 		return true;
 	}
 
@@ -96,17 +104,39 @@ function onEffect(value: typeof props.value) {
 	isInputValid.value = isValueValid(value);
 }
 
-function onInput(value: string | null) {
+function onInput(value: string | number | Record<string, unknown> | boolean | null) {
 	isInputValid.value = isValueValid(value);
 
-	if (isInputValid.value) {
-		emit('input', value === '' ? null : value);
+	if (isInputValid.value) emit('input', value === '' ? null : value);
+}
+
+function onKeyDown(event: KeyboardEvent) {
+	if (event.key === ',' && props.commaAllowed) {
+		event.preventDefault();
+		emit('commaKeyPressed');
 	}
 }
+
+function onPaste(event: ClipboardEvent) {
+	if (!props.commaAllowed) return;
+
+	const clipboardData = event.clipboardData?.getData('text') || '';
+
+	if (clipboardData.includes(',')) {
+		event.preventDefault();
+		emit('commaValuePasted', clipboardData);
+	}
+}
+
+defineExpose({
+	focus() {
+		inputEl.value?.focus();
+	},
+});
 </script>
 
 <template>
-	<v-icon
+	<VIcon
 		v-if="type === 'boolean'"
 		:name="value === null ? 'indeterminate_check_box' : value ? 'check_box' : 'check_box_outline_blank'"
 		clickable
@@ -123,13 +153,15 @@ function onInput(value: string | null) {
 		:value="value"
 		placeholder="--"
 		@input="onInput(($event.target as HTMLInputElement).value)"
+		@keydown="onKeyDown"
+		@paste="onPaste"
 	/>
-	<v-select
+	<VSelect
 		v-else-if="is === 'select'"
 		inline
 		:items="choices"
 		:model-value="value"
-		:placeholder="t('select')"
+		:placeholder="$t('select')"
 		allow-other
 		group-selectable
 		@update:model-value="onInput($event)"
@@ -143,23 +175,23 @@ function onInput(value: string | null) {
 			placeholder="--"
 			@input="onInput(($event.target as HTMLInputElement).value)"
 		/>
-		<v-menu ref="dateTimeMenu" :close-on-content-click="false" show-arrow placement="bottom-start" seamless full-height>
+		<VMenu ref="dateTimeMenu" :close-on-content-click="false" show-arrow placement="bottom-start" seamless full-height>
 			<template #activator="{ toggle }">
-				<v-icon class="preview" name="event" small @click="toggle" />
+				<VIcon class="preview" name="event" small clickable @click="toggle" />
 			</template>
 			<div class="date-input">
-				<v-date-picker
+				<VDatePicker
 					:type="type"
 					:model-value="value"
 					@update:model-value="onInput"
 					@close="dateTimeMenu?.deactivate"
 				/>
 			</div>
-		</v-menu>
+		</VMenu>
 	</template>
-	<v-menu v-else :close-on-content-click="false" show-arrow placement="bottom-start">
+	<VMenu v-else :close-on-content-click="false" show-arrow placement="bottom-start">
 		<template #activator="{ toggle }">
-			<v-icon
+			<VIcon
 				v-if="type.startsWith('geometry') || type === 'json'"
 				class="preview"
 				:name="type === 'json' ? 'integration_instructions' : 'map'"
@@ -171,7 +203,7 @@ function onInput(value: string | null) {
 		<div class="input" :class="type">
 			<component :is="is" class="input-component" small :type="type" :value="value" @input="onInput($event)" />
 		</div>
-	</v-menu>
+	</VMenu>
 </template>
 
 <style lang="scss" scoped>
@@ -193,28 +225,28 @@ function onInput(value: string | null) {
 }
 
 .input {
-	padding: 8px 4px;
+	padding: 0.4375rem 0.25rem;
 
 	&.date,
 	&.timestamp,
 	&.time,
 	&.dateTime {
-		min-width: 250px;
+		min-inline-size: 14.0625rem;
 	}
 
 	&.geometry,
 	&.json {
-		width: 500px;
+		inline-size: 28.125rem;
 	}
 }
 
 input {
 	color: var(--theme--primary);
 	font-family: var(--theme--fonts--monospace--font-family);
-	line-height: 1em;
+	line-height: 1;
 	background-color: var(--theme--form--field--input--background);
 	border: none;
-	max-width: 40ch;
+	max-inline-size: 40ch;
 	box-shadow: 0 4px 0 -2px v-bind(inputBorderColor);
 
 	&::placeholder {
@@ -226,10 +258,10 @@ input {
 
 .dialog {
 	position: relative;
-	min-width: 800px;
+	min-inline-size: 45rem;
 }
 
 .date-input {
-	min-width: 400px;
+	min-inline-size: 22.5rem;
 }
 </style>

@@ -1,10 +1,10 @@
 import type { Knex } from 'knex';
+import type { Column, TableColumn } from '../types/column.js';
 import type { ForeignKey } from '../types/foreign-key.js';
 import type { SchemaOverview } from '../types/overview.js';
 import type { SchemaInspector } from '../types/schema-inspector.js';
 import type { Table } from '../types/table.js';
 import { stripQuotes } from '../utils/strip-quotes.js';
-import type { Column } from '../types/column.js';
 
 /**
  * NOTE: Use previous optimizer for better data dictionary performance.
@@ -26,6 +26,7 @@ type RawColumn = {
 	CONSTRAINT_TYPE: 'P' | 'U' | 'R' | null;
 	VIRTUAL_COLUMN: 'YES' | 'NO';
 	IDENTITY_COLUMN: 'YES' | 'NO';
+	INDEX_NAME: string | null;
 };
 
 export function rawColumnToColumn(rawColumn: RawColumn): Column {
@@ -44,6 +45,7 @@ export function rawColumnToColumn(rawColumn: RawColumn): Column {
 		is_generated: rawColumn.VIRTUAL_COLUMN === 'YES',
 		is_nullable: rawColumn.NULLABLE === 'Y',
 		is_unique: rawColumn.CONSTRAINT_TYPE === 'U',
+		is_indexed: !!rawColumn.INDEX_NAME && rawColumn.INDEX_NAME.length > 0,
 		is_primary_key: rawColumn.CONSTRAINT_TYPE === 'P',
 		has_auto_increment: rawColumn.IDENTITY_COLUMN === 'YES',
 		foreign_key_column: rawColumn.REFERENCED_COLUMN_NAME,
@@ -224,7 +226,7 @@ export default class oracleDB implements SchemaInspector {
 	/**
 	 * Get all the available columns in the current schema/database. Can be filtered to a specific table
 	 */
-	async columns(table?: string) {
+	async columns(table?: string): Promise<TableColumn[]> {
 		const query = this.knex
 			.select<{ table: string; column: string }[]>(
 				this.knex.raw(`
@@ -296,7 +298,8 @@ export default class oracleDB implements SchemaInspector {
             "cm"."COMMENTS" "COLUMN_COMMENT",
             "ct"."CONSTRAINT_TYPE",
             "fk"."TABLE_NAME" "REFERENCED_TABLE_NAME",
-            "fk"."COLUMN_NAME" "REFERENCED_COLUMN_NAME"
+            "fk"."COLUMN_NAME" "REFERENCED_COLUMN_NAME",
+            "ui"."INDEX_NAME"
           FROM "USER_TAB_COLS" "c"
           LEFT JOIN "USER_COL_COMMENTS" "cm"
             ON "c"."TABLE_NAME" = "cm"."TABLE_NAME"
@@ -308,6 +311,10 @@ export default class oracleDB implements SchemaInspector {
             AND "ct"."CONSTRAINT_PRIORITY" = 1
           LEFT JOIN "uc" "fk"
             ON "ct"."R_CONSTRAINT_NAME" = "fk"."CONSTRAINT_NAME"
+          LEFT JOIN "USER_IND_COLUMNS" "uic"
+            ON "uic"."TABLE_NAME" = "c"."TABLE_NAME" AND "uic"."COLUMN_NAME" = "c"."COLUMN_NAME"
+          LEFT JOIN "USER_INDEXES" "ui"
+            ON "uic"."INDEX_NAME" = "ui"."INDEX_NAME" AND "ui"."UNIQUENESS" = 'NONUNIQUE'
         `),
 			)
 			.where({ 'c.HIDDEN_COLUMN': 'NO' });

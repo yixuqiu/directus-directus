@@ -1,15 +1,15 @@
+import { ItemPermissions } from '@directus/types';
+import { computed, MaybeRef, Ref, unref } from 'vue';
+import { Collection, IsNew } from '../../types';
 import { usePermissionsStore } from '@/stores/permissions';
 import { useUserStore } from '@/stores/user';
-import { ItemPermissions } from '@directus/types';
-import { Ref, computed, unref } from 'vue';
-import { Collection, IsNew } from '../../types';
-import { isFullPermission } from '../utils/is-full-permission';
 
 export const isActionAllowed = (
 	collection: Collection,
 	isNew: IsNew,
 	fetchedItemPermissions: Ref<ItemPermissions>,
 	action: 'update' | 'delete' | 'share',
+	isVersion: MaybeRef<boolean> = false,
 ) => {
 	const userStore = useUserStore();
 	const { getPermission } = usePermissionsStore();
@@ -21,12 +21,17 @@ export const isActionAllowed = (
 
 		if (unref(isNew)) return false;
 
+		// Version editing bypasses underlying collection write permissions.
+		// Field-level access is enforced by the backend at promote time.
+		if (action === 'update' && unref(isVersion)) return true;
+
 		if (userStore.isAdmin) return true;
 
 		const permission = getPermission(collectionValue, action);
-		if (!permission) return false;
 
-		if (isFullPermission(permission)) return true;
+		if (!permission) return false;
+		if (permission.access === 'full') return true;
+		if (permission.access === 'none') return false;
 
 		return null;
 	});

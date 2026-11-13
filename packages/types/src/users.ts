@@ -1,23 +1,22 @@
+import type { Policy } from './policies.js';
+
 export type Role = {
 	id: string;
 	name: string;
-	description: string;
+	description: string | null;
 	icon: string;
-	enforce_tfa: null | boolean;
-	external_id: null | string;
-	ip_access: string[];
-	app_access: boolean;
-	admin_access: boolean;
 	users: string[];
+	parent: string | null;
 };
 
 export type Avatar = {
 	id: string;
+	modified_on?: Date;
 };
 
 export type User = {
 	id: string;
-	status: 'draft' | 'invited' | 'unverified' | 'active' | 'suspended' | 'archived';
+	status: 'draft' | 'invited' | 'unverified' | 'active' | 'suspended' | 'archived' | 'inactive-license';
 	first_name: string | null;
 	last_name: string | null;
 	email: string | null;
@@ -35,7 +34,9 @@ export type User = {
 	theme_light_overrides: Record<string, unknown> | null;
 	theme_dark_overrides: Record<string, unknown> | null;
 	role: Role | null;
+	policies: Policy[];
 	language: string | null;
+	text_direction: 'ltr' | 'rtl' | 'auto';
 	avatar: Avatar | null;
 	title: string | null;
 	description: string | null;
@@ -47,6 +48,16 @@ export type User = {
 export type RegisterUserInput = {
 	email: NonNullable<User['email']>;
 	password: NonNullable<User['password']>;
+	verification_url?: string | null;
 	first_name?: User['first_name'];
 	last_name?: User['last_name'];
 };
+
+export enum UserIntegrityCheckFlag {
+	None = 0,
+	/** Check if the number of remaining admin users is greater than 0 */
+	RemainingAdmins = 1 << 0,
+	/** Check if the number of users is within the limits */
+	UserLimits = 1 << 1,
+	All = ~(~0 << 2),
+}

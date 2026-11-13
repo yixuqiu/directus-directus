@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import Color from 'color';
-import { isHex } from '@/utils/is-hex';
 import { cssVar } from '@directus/utils/browser';
-import { ComponentPublicInstance, computed, ref, watch } from 'vue';
+import Color, { ColorInstance } from 'color';
+import { ComponentPublicInstance, computed, ref, useTemplateRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { i18n } from '@/lang';
+import VButton from '@/components/v-button.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
+import VMenu from '@/components/v-menu.vue';
+import VRemove from '@/components/v-remove.vue';
+import VSelect from '@/components/v-select/v-select.vue';
+import VSlider from '@/components/v-slider.vue';
+import { useFocusin } from '@/composables/use-focusin';
+import { isCssVar as isCssVarUtil } from '@/utils/is-css-var';
+import { isHex } from '@/utils/is-hex';
 
 const { t } = useI18n();
 
 interface Props {
 	disabled?: boolean;
+	nonEditable?: boolean;
 	value?: string | null;
 	placeholder?: string;
 	presets?: { name: string; color: string }[];
@@ -19,54 +28,68 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
 	disabled: false,
+	nonEditable: false,
 	value: null,
 	placeholder: undefined,
 	opacity: false,
-	presets: () => [
-		{
-			name: i18n.global.t('colors.purple'),
-			color: '#6644FF',
-		},
-		{
-			name: i18n.global.t('colors.blue'),
-			color: '#3399FF',
-		},
-		{
-			name: i18n.global.t('colors.green'),
-			color: '#2ECDA7',
-		},
-		{
-			name: i18n.global.t('colors.yellow'),
-			color: '#FFC23B',
-		},
-		{
-			name: i18n.global.t('colors.orange'),
-			color: '#FFA439',
-		},
-		{
-			name: i18n.global.t('colors.red'),
-			color: '#E35169',
-		},
-		{
-			name: i18n.global.t('colors.black'),
-			color: '#18222F',
-		},
-		{
-			name: i18n.global.t('colors.gray'),
-			color: '#A2B5CD',
-		},
-		{
-			name: i18n.global.t('colors.white'),
-			color: '#FFFFFF',
-		},
-	],
 });
+
+const menu = useTemplateRef('menu');
+const { active } = useFocusin(menu);
+
+// Reactive translations can't be default values of props
+const presetsWithDefaults = computed(
+	() =>
+		props.presets || [
+			{
+				name: t('colors.purple'),
+				color: '#6644FF',
+			},
+			{
+				name: t('colors.blue'),
+				color: '#3399FF',
+			},
+			{
+				name: t('colors.green'),
+				color: '#2ECDA7',
+			},
+			{
+				name: t('colors.yellow'),
+				color: '#FFC23B',
+			},
+			{
+				name: t('colors.orange'),
+				color: '#FFA439',
+			},
+			{
+				name: t('colors.red'),
+				color: '#E35169',
+			},
+			{
+				name: t('colors.black'),
+				color: '#18222F',
+			},
+			{
+				name: t('colors.gray'),
+				color: '#A2B5CD',
+			},
+			{
+				name: t('colors.white'),
+				color: '#FFFFFF',
+			},
+		],
+);
 
 const emit = defineEmits(['input']);
 
+const isCssVar = computed(() => {
+	if (!props.value) return false;
+	return isCssVarUtil(props.value);
+});
+
 const valueWithoutVariables = computed(() => {
 	if (!props.value) return null;
-	return props.value?.startsWith('var(--') ? cssVar(props.value.substring(4, props.value.length - 1)) : props.value;
+	return isCssVar.value ? cssVar(props.value.substring(4, props.value.length - 1)) : props.value;
 });
 
 const htmlColorInput = ref<ComponentPublicInstance | null>(null);
@@ -96,7 +119,13 @@ const getPresetContrast = (hex: string) => {
 	return color.contrast(Color(cssVar('--theme--popover--menu--background'))) < 1.1;
 };
 
-const { hsl, rgb, hex, alpha, color } = useColor();
+const { hsl, rgb, hex, alpha, color, input, onChanged } = useColor();
+
+const showSwatch = computed(() => {
+	if (color.value) return true;
+	if (isCssVar.value) return true;
+	return false;
+});
 
 function setValue(type: 'rgb' | 'hsl' | 'alpha', i: number, val: number) {
 	if (type === 'rgb') {
@@ -124,17 +153,29 @@ function activateColorPicker() {
 	htmlColorInput.value?.$el.getElementsByTagName('input')[0]?.click();
 }
 
+function onClickInput(e: InputEvent, toggle: () => void) {
+	if ((e.target as HTMLInputElement).tagName === 'INPUT') toggle();
+}
+
+function onKeydownInput(e: KeyboardEvent, activate: () => void) {
+	const systemKeys = e.metaKey || e.altKey || e.ctrlKey || e.shiftKey || e.key === 'Tab';
+
+	if (!e.repeat && !systemKeys && (e.target as HTMLInputElement).tagName === 'INPUT') activate();
+}
+
 function useColor() {
-	const color = ref<Color | null>(null);
+	const color = ref<ColorInstance | null>(null);
 
 	const getHexa = (): string | null => {
 		if (color.value !== null) {
+			if (!props.opacity || color.value.rgb().array().length !== 4) return color.value.hex();
+
 			let alpha = Math.round(255 * color.value.alpha())
 				.toString(16)
 				.toUpperCase();
 
 			alpha = alpha.padStart(2, '0');
-			return color.value.rgb().array().length === 4 ? `${color.value.hex()}${alpha}` : color.value.hex();
+			return `${color.value.hex()}${alpha}`;
 		}
 
 		return null;
@@ -143,7 +184,11 @@ function useColor() {
 	watch(
 		() => props.value,
 		() => {
-			color.value = valueWithoutVariables.value !== null ? Color(valueWithoutVariables.value) : null;
+			try {
+				color.value = valueWithoutVariables.value !== null ? Color(valueWithoutVariables.value) : null;
+			} catch {
+				color.value = null;
+			}
 		},
 		{ immediate: true },
 	);
@@ -157,7 +202,7 @@ function useColor() {
 			return roundColorValues(props.opacity ? [0, 0, 0, 1] : [0, 0, 0]);
 		},
 		set(newRGB) {
-			setColor(Color.rgb(newRGB).alpha(newRGB.length === 4 ? newRGB[3] : 1));
+			setColor(Color.rgb(newRGB).alpha(newRGB.length === 4 ? newRGB[3]! : 1));
 		},
 	});
 
@@ -170,7 +215,7 @@ function useColor() {
 			return roundColorValues(props.opacity ? [0, 0, 0, 1] : [0, 0, 0]);
 		},
 		set(newHSL) {
-			setColor(Color.hsl(newHSL).alpha(newHSL.length === 4 ? newHSL[3] : 1));
+			setColor(Color.hsl(newHSL).alpha(newHSL.length === 4 ? newHSL[3]! : 1));
 		},
 	});
 
@@ -202,9 +247,53 @@ function useColor() {
 		},
 	});
 
-	return { rgb, hsl, hex, alpha, color };
+	const input = computed<string | null>({
+		get() {
+			return props.value;
+		},
+		set(newInput) {
+			if (newInput === null || newInput === '') {
+				unsetColor();
+				return;
+			}
 
-	function setColor(newColor: Color | null) {
+			emit('input', newInput);
+
+			if (isCssVarUtil(newInput)) {
+				try {
+					color.value = Color(cssVar(newInput.substring(4, newInput.length - 1)));
+				} catch {
+					// Color or cssVar could not resolve the color to a color in JS, however, the CSS Var may still be a valid color.
+					// So we keep the input value as is and set the internal color to null.
+					// This way the user can still edit the input and we can still show the color in the swatch.
+					// The color editor (rgb/hsl) will show the color as black (0,0,0) in this case.
+					color.value = null;
+				}
+			}
+		},
+	});
+
+	return { rgb, hsl, hex, alpha, color, input, onChanged };
+
+	function onChanged() {
+		if (!input.value) {
+			unsetColor();
+			return;
+		}
+
+		if (isCssVarUtil(input.value)) return;
+
+		try {
+			// If the input is a valid color, we set the color and emit the input as a hex value which is consistent with the dropdown selector and HTML color picker
+			const newColor = Color(input.value);
+			setColor(newColor);
+		} catch {
+			// The input is not a valid color, but we still want to let the user edit/type in the input so we emit null to prevent using an invalid value
+			unsetColor();
+		}
+	}
+
+	function setColor(newColor: ColorInstance | null) {
 		color.value = newColor;
 
 		if (newColor === null) {
@@ -217,7 +306,7 @@ function useColor() {
 	function roundColorValues(arr: number[]): number[] {
 		if (arr.length === 4) {
 			// Do not round the opacity
-			return [...arr.slice(0, -1).map((x) => Math.round(x)), arr[3]];
+			return [...arr.slice(0, -1).map((x) => Math.round(x)), arr[3]!];
 		}
 
 		return arr.map((x) => Math.round(x));
@@ -226,44 +315,64 @@ function useColor() {
 </script>
 
 <template>
-	<v-menu attached :disabled="disabled" :close-on-content-click="false">
-		<template #activator="{ activate }">
-			<v-input
-				v-model="hex"
-				:disabled="disabled"
-				:placeholder="placeholder || t('interfaces.select-color.placeholder')"
+	<VMenu
+		ref="menu"
+		v-model="active"
+		v-prevent-focusout="active"
+		attached
+		:disabled="disabled"
+		:close-on-content-click="false"
+		no-focus-return
+	>
+		<template #activator="{ activate, toggle }">
+			<VInput
+				v-model="input"
+				:disabled
+				:non-editable
+				:placeholder="placeholder || $t('interfaces.select-color.placeholder')"
 				:pattern="opacity ? /#([a-f\d]{2}){4}/i : /#([a-f\d]{2}){3}/i"
 				class="color-input"
 				:maxlength="opacity ? 9 : 7"
-				@focus="activate"
+				@change="onChanged"
+				@click="onClickInput($event, toggle)"
+				@keydown="onKeydownInput($event, activate)"
 			>
 				<template #prepend>
-					<v-input
+					<VInput
 						ref="htmlColorInput"
 						:model-value="hex ? hex.slice(0, 7) : null"
 						type="color"
 						class="html-color-select"
+						@click.stop
 						@update:model-value="setSwatchValue($event)"
 					/>
-					<v-button
+					<VButton
 						class="swatch"
+						:class="{ 'non-editable': nonEditable }"
 						icon
 						:style="{
-							'--v-button-background-color': isValidColor ? hex : 'transparent',
+							'--swatch-color': showSwatch ? value : 'transparent',
+							...(lowContrast === false ? { '--theme--border-width': '0px' } : {}),
 							border:
 								lowContrast === false
 									? 'none'
 									: 'var(--theme--border-width) solid var(--theme--form--field--input--border-color)',
 						}"
+						:disabled
 						@click="activateColorPicker"
 					>
-						<v-icon v-if="!isValidColor" name="colorize" />
-					</v-button>
+						<VIcon v-if="!isValidColor" name="colorize" />
+						<VIcon v-else-if="!showSwatch" name="question_mark" />
+					</VButton>
 				</template>
 				<template #append>
-					<v-icon :name="isValidColor ? 'close' : 'palette'" :clickable="isValidColor" @click="unsetColor" />
+					<div v-if="!nonEditable" class="item-actions">
+						<VRemove v-if="isValidColor" deselect :disabled @action="unsetColor" />
+
+						<VIcon v-else name="palette" clickable :disabled @click="toggle" />
+					</div>
 				</template>
-			</v-input>
+			</VInput>
 		</template>
 
 		<div
@@ -274,8 +383,8 @@ function useColor() {
 						? 'repeat(4, 1fr)'
 						: 'repeat(6, 1fr)'
 					: width.startsWith('half')
-					  ? 'repeat(3, 1fr)'
-					  : 'repeat(5, 1fr)',
+						? 'repeat(3, 1fr)'
+						: 'repeat(5, 1fr)',
 			}"
 			:class="{ stacked: width.startsWith('half') }"
 		>
@@ -287,14 +396,14 @@ function useColor() {
 							? '1 / span 4'
 							: '1 / span 2'
 						: width.startsWith('half')
-						  ? '1 / span 3'
-						  : '1 / span 2',
+							? '1 / span 3'
+							: '1 / span 2',
 				}"
 			>
-				<v-select v-model="colorType" :items="colorTypes" />
+				<VSelect v-model="colorType" :items="colorTypes" />
 			</div>
 			<template v-if="colorType === 'RGB' || colorType === 'RGBA'">
-				<v-input
+				<VInput
 					v-for="(val, i) in rgb.length > 3 ? rgb.slice(0, -1) : rgb"
 					:key="i"
 					:hidden="i === 3"
@@ -308,7 +417,7 @@ function useColor() {
 					maxlength="3"
 					@update:model-value="setValue('rgb', i, $event)"
 				/>
-				<v-input
+				<VInput
 					v-if="opacity"
 					type="number"
 					:model-value="alpha"
@@ -322,7 +431,7 @@ function useColor() {
 				/>
 			</template>
 			<template v-if="colorType === 'HSL' || colorType === 'HSLA'">
-				<v-input
+				<VInput
 					v-for="(val, i) in hsl.length > 3 ? hsl.slice(0, -1) : hsl"
 					:key="i"
 					type="number"
@@ -335,7 +444,7 @@ function useColor() {
 					maxlength="3"
 					@update:model-value="setValue('hsl', i, $event)"
 				/>
-				<v-input
+				<VInput
 					v-if="opacity"
 					type="number"
 					:model-value="alpha"
@@ -351,7 +460,7 @@ function useColor() {
 		</div>
 		<div v-if="opacity" class="color-data-alphas">
 			<div class="color-data-alpha">
-				<v-slider
+				<VSlider
 					:model-value="alpha"
 					:min="0"
 					:max="100"
@@ -370,85 +479,100 @@ function useColor() {
 				/>
 			</div>
 		</div>
-		<div v-if="presets" class="presets">
-			<v-button
-				v-for="preset in presets"
+		<div v-if="presetsWithDefaults" class="presets">
+			<VButton
+				v-for="preset in presetsWithDefaults"
 				:key="preset.color"
 				v-tooltip="preset.name"
 				class="preset"
-				rounded
 				icon
 				:class="{ 'low-contrast': getPresetContrast(preset.color) }"
 				:style="{ '--v-button-background-color': preset.color }"
 				@click="() => (hex = preset.color)"
 			/>
 		</div>
-	</v-menu>
+	</VMenu>
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/mixins';
+
+.item-actions {
+	@include mixins.list-interface-item-actions;
+}
+
 .swatch {
-	--v-button-padding: 6px;
-	--v-button-background-color: transparent;
+	--v-button-padding: 0.3125rem;
+	--v-button-background-color: var(--swatch-color, transparent);
 	--v-button-background-color-hover: var(--v-button-background-color);
+	--v-button-height: calc(var(--theme--form--field--input--height) - 1.125rem - var(--theme--border-width) * 2);
+	--v-button-width: var(--v-button-height);
+	--swatch-radius: calc(var(--theme--border-radius) + 0.125rem);
+	--focus-ring-offset: 0;
+	--focus-ring-radius: var(--swatch-radius);
 
 	position: relative;
 	box-sizing: border-box;
-	margin-left: -8px;
-	width: calc(var(--theme--form--field--input--height) - 20px);
-	max-height: calc(var(--theme--form--field--input--height) - 20px);
-	overflow: hidden;
-	border-radius: calc(var(--theme--border-radius) + 2px);
+	margin-inline-start: -0.4375rem;
+	inline-size: calc(var(--theme--form--field--input--height) - 1.125rem);
+	block-size: calc(var(--theme--form--field--input--height) - 1.125rem);
+	border-radius: var(--swatch-radius);
 	cursor: pointer;
+
+	&.non-editable {
+		--v-button-background-color-disabled: var(--v-button-background-color);
+	}
 }
 
 .presets {
 	display: flex;
-	width: 100%;
-	margin-bottom: 14px;
-	padding: 8px;
+	inline-size: 100%;
+	margin-block-end: 0.8125rem;
+	padding: 0.4375rem;
 	overflow-x: auto;
 }
 
 .presets .preset {
 	--v-button-background-color-hover: var(--v-button-background-color);
-	--v-button-height: 20px;
-	--v-button-width: 20px;
+	--v-button-height: 1.125rem;
+	--v-button-width: 1.125rem;
 
-	margin: 0px 4px;
+	margin-inline: 0.25rem;
 
-	&.low-contrast {
-		--v-button-height: 18px;
-		--v-button-width: 18px;
+	:deep(.button) {
+		border-radius: var(--v-button-width);
+	}
+
+	&.low-contrast :deep(.button) {
 		border: 1px solid var(--theme--form--field--input--border-color-hover);
 	}
 }
 
 .presets .preset:first-child {
-	padding-left: 0px;
+	padding-inline-start: 0;
 }
 
 .presets .preset:last-child {
-	padding-right: 0px;
+	padding-inline-end: 0;
 }
 
 .color-input {
 	.v-input.html-color-select {
-		width: 0;
-		height: 0;
+		inline-size: 0;
+		block-size: 0;
 		visibility: hidden;
 	}
 }
 
 .color-data-inputs {
 	display: grid;
-	grid-gap: 0px;
-	width: 100%;
-	padding: 12px 10px;
+	gap: 0;
+	inline-size: 100%;
+	padding: 0.6875rem 0.5625rem;
 }
 
 .color-data-inputs .color-data-input {
-	--v-input-border-radius: 0px;
+	--v-input-border-radius: 0;
 }
 
 .color-data-inputs .color-data-input :deep(.input:focus-within),
@@ -460,49 +584,49 @@ function useColor() {
 }
 
 .color-data-inputs .color-data-input:not(.color-type) {
-	--theme--form--field--input--padding: 12px 8px;
+	--theme--form--field--input--padding: 0.6875rem 0.4375rem;
 }
 
 .color-data-inputs .color-data-input:not(:first-child) :deep(.input) {
-	margin-left: calc(-1 * var(--theme--border-width));
+	margin-inline-start: calc(-1 * var(--theme--border-width));
 }
 
 .color-data-inputs .color-data-input:first-child {
-	--v-input-border-radius: var(--theme--border-radius) 0px 0px var(--theme--border-radius);
+	--v-input-border-radius: var(--theme--border-radius) 0 0 var(--theme--border-radius);
 }
 
 .color-data-inputs .color-data-input:last-child {
-	--v-input-border-radius: 0px var(--theme--border-radius) var(--theme--border-radius) 0px;
+	--v-input-border-radius: 0 var(--theme--border-radius) var(--theme--border-radius) 0;
 }
 
 .color-data-inputs.stacked .color-data-input:not(:first-child) :deep(.input) {
-	margin-top: calc(-2 * var(--theme--border-width));
-	margin-left: initial;
+	margin-block-start: calc(-2 * var(--theme--border-width));
+	margin-inline-start: initial;
 }
 
 .color-data-inputs.stacked .color-data-input:not(:first-child):not(:nth-child(2)) :deep(.input) {
-	margin-left: calc(-1 * var(--theme--border-width));
+	margin-inline-start: calc(-1 * var(--theme--border-width));
 }
 
 .color-data-inputs.stacked .color-data-input:first-child {
-	--v-input-border-radius: var(--theme--border-radius) var(--theme--border-radius) 0px 0px;
+	--v-input-border-radius: var(--theme--border-radius) var(--theme--border-radius) 0 0;
 }
 
 .color-data-inputs.stacked .color-data-input:nth-child(2) {
-	--v-input-border-radius: 0px 0px 0px var(--theme--border-radius);
+	--v-input-border-radius: 0 0 0 var(--theme--border-radius);
 }
 
 .color-data-inputs.stacked .color-data-input:last-child {
-	--v-input-border-radius: 0px 0px var(--theme--border-radius) 0px;
+	--v-input-border-radius: 0 0 var(--theme--border-radius) 0;
 }
 
 .color-data-alphas {
 	display: grid;
-	grid-gap: 12px;
+	gap: 0.6875rem;
 	align-items: baseline;
-	width: 100%;
-	height: 45px;
-	padding: 12px 14px;
+	inline-size: 100%;
+	block-size: 2.5625rem;
+	padding: 0.6875rem 0.8125rem;
 }
 
 .color-data-alphas .color-data-alpha {

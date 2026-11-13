@@ -1,26 +1,35 @@
 <script setup lang="ts">
+import { useLayout } from '@directus/composables';
+import { useShortcut } from '@directus/composables';
+import { isSystemCollection } from '@directus/system-data';
+import { DeepPartial, Field, Filter, Preset } from '@directus/types';
+import { isEqual } from 'lodash-es';
 import { computed, ref } from 'vue';
-import { useI18n } from 'vue-i18n';
-
+import { useRouter } from 'vue-router';
+import SettingsNavigation from '../../components/navigation.vue';
 import api from '@/api';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VForm from '@/components/v-form/v-form.vue';
+import VInfo from '@/components/v-info.vue';
+import VNotice from '@/components/v-notice.vue';
 import { useEditsGuard } from '@/composables/use-edits-guard';
-import { useExtension } from '@/composables/use-extension';
-import { useShortcut } from '@/composables/use-shortcut';
 import { useExtensions } from '@/extensions';
 import { useCollectionsStore } from '@/stores/collections';
 import { usePresetsStore } from '@/stores/presets';
 import { unexpectedError } from '@/utils/unexpected-error';
-import { useLayout } from '@directus/composables';
-import { Filter, Preset } from '@directus/types';
-import { isEqual } from 'lodash';
-import { useRouter } from 'vue-router';
-import SettingsNavigation from '../../components/navigation.vue';
-import { isSystemCollection } from '@directus/system-data';
+import { PrivateViewHeaderBarActionButton } from '@/views/private';
+import { PrivateView } from '@/views/private';
+import SidebarDetail from '@/views/private/components/sidebar-detail.vue';
 
 type FormattedPreset = {
 	id: number;
 	scope: string;
-	collection: string;
+	collection: string | null;
 	layout: string | null;
 	name: string | null;
 	search: string | null;
@@ -38,8 +47,6 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
 	id: null,
 });
-
-const { t } = useI18n();
 
 const router = useRouter();
 
@@ -65,8 +72,6 @@ const layoutFilter = computed<any>({
 });
 
 const layout = computed(() => values.value.layout);
-
-const currentLayout = useExtension('layout', layout);
 
 const { layoutWrapper } = useLayout(layout);
 
@@ -138,7 +143,7 @@ function useSave() {
 			unexpectedError(error);
 		} finally {
 			saving.value = false;
-			router.push(`/settings/presets`);
+			router.push({ name: 'settings-presets-collection' });
 		}
 	}
 }
@@ -150,12 +155,14 @@ function useDelete() {
 	return { deleting, confirmDelete, deleteAndQuit };
 
 	async function deleteAndQuit() {
+		if (deleting.value) return;
+
 		deleting.value = true;
 
 		try {
 			await presetsStore.delete([Number(props.id)]);
 			edits.value = {};
-			router.replace(`/settings/presets`);
+			router.replace({ name: 'settings-presets-collection' });
 		} catch (error) {
 			unexpectedError(error);
 		} finally {
@@ -317,15 +324,60 @@ function usePreset() {
 function useForm() {
 	const systemCollectionWhiteList = ['directus_users', 'directus_files', 'directus_activity'];
 
-	const fields = computed(() => [
+	const fields = computed<DeepPartial<Field>[]>(() => [
+		{
+			field: 'meta-group',
+			type: 'alias',
+			meta: {
+				field: 'meta-group',
+				special: ['alias', 'no-data', 'group'],
+				interface: 'group-raw',
+			},
+		},
+		{
+			field: 'name',
+			name: '$t:name',
+			type: 'string',
+			meta: {
+				interface: 'system-input-translated-string',
+				options: {
+					placeholder: '$t:preset_name_placeholder',
+				},
+				width: 'half',
+				group: 'meta-group',
+			},
+		},
+		{
+			field: 'icon',
+			name: '$t:icon',
+			type: 'string',
+			meta: {
+				interface: 'select-icon',
+				width: 'half',
+				group: 'meta-group',
+			},
+			schema: {
+				default_value: 'bookmark',
+			},
+		},
+		{
+			field: 'color',
+			name: '$t:color',
+			type: 'string',
+			meta: {
+				interface: 'select-color',
+				width: 'half',
+				group: 'meta-group',
+			},
+		},
 		{
 			field: 'collection',
-			name: t('collection'),
+			name: '$t:collection',
 			type: 'string',
 			meta: {
 				interface: 'select-dropdown',
 				options: {
-					choices: collectionsStore.collections
+					choices: collectionsStore.sortedCollections
 						.map((collection) => ({
 							text: collection.collection,
 							value: collection.collection,
@@ -341,7 +393,7 @@ function useForm() {
 		},
 		{
 			field: 'scope',
-			name: t('scope'),
+			name: '$t:scope',
 			type: 'string',
 			meta: {
 				interface: 'system-scope',
@@ -350,7 +402,7 @@ function useForm() {
 		},
 		{
 			field: 'layout',
-			name: t('layout'),
+			name: '$t:layout',
 			type: 'string',
 			meta: {
 				interface: 'select-dropdown',
@@ -363,58 +415,25 @@ function useForm() {
 				width: 'half',
 			},
 		},
-		{
-			field: 'name',
-			name: t('name'),
-			type: 'string',
-			meta: {
-				interface: 'system-input-translated-string',
-				width: 'half',
-				options: {
-					placeholder: t('preset_name_placeholder'),
-				},
-			},
-		},
-		{
-			field: 'icon',
-			name: '$t:icon',
-			type: 'string',
-			meta: {
-				interface: 'select-icon',
-				width: 'half',
-			},
-			schema: {
-				default_value: 'bookmark',
-			},
-		},
-		{
-			field: 'color',
-			name: '$t:color',
-			type: 'string',
-			meta: {
-				interface: 'select-color',
-				width: 'half',
-			},
-		},
+
 		{
 			field: 'search',
-			name: t('search'),
+			name: '$t:search',
 			type: 'string',
 			meta: {
 				interface: 'input',
 				width: 'half',
 				options: {
-					placeholder: t('search_items'),
+					placeholder: '$t:search_items',
 				},
 			},
 		},
 		{
 			field: 'filter',
-			name: t('filter'),
+			name: '$t:filter',
 			type: 'json',
 			meta: {
 				interface: 'system-filter',
-				width: 'half',
 				options: {
 					collectionField: 'collection',
 					rawFieldNames: true,
@@ -422,14 +441,14 @@ function useForm() {
 			},
 		},
 		{
-			field: 'divider',
-			name: t('divider'),
+			field: 'layout-divider',
+			name: '$t:divider',
 			type: 'alias',
 			meta: {
 				interface: 'presentation-divider',
 				width: 'fill',
 				options: {
-					title: t('layout_preview'),
+					title: '$t:layout_preview',
 					icon: 'visibility',
 				},
 			},
@@ -459,95 +478,74 @@ function discardAndLeave() {
 		:collection="values.collection"
 		readonly
 	>
-		<private-view
-			:title="t('editing_preset')"
-			:small-header="currentLayout?.smallHeader"
-			:header-shadow="currentLayout?.headerShadow"
-		>
-			<template #headline>
-				<v-breadcrumb :items="[{ name: t('settings_presets'), to: '/settings/presets' }]" />
-			</template>
-			<template #title-outer:prepend>
-				<v-button class="header-icon" rounded icon exact to="/settings/presets">
-					<v-icon name="arrow_back" />
-				</v-button>
-			</template>
-
+		<PrivateView :title="$t('editing_preset')" show-back back-to="/settings/presets">
 			<template #navigation>
-				<settings-navigation />
+				<SettingsNavigation />
 			</template>
 
 			<template #actions>
-				<v-dialog v-model="confirmDelete" @esc="confirmDelete = false">
+				<VDialog v-model="confirmDelete" @esc="confirmDelete = false" @apply="deleteAndQuit">
 					<template #activator="{ on }">
-						<v-button
-							v-tooltip.bottom="t('delete_label')"
-							rounded
-							icon
-							class="action-delete"
-							secondary
+						<PrivateViewHeaderBarActionButton
+							v-tooltip.bottom="$t('delete_label')"
+							kind="danger"
+							variant="ghost"
 							:disabled="preset === null || id === '+'"
+							icon="delete"
 							@click="on"
-						>
-							<v-icon name="delete" />
-						</v-button>
+						/>
 					</template>
 
-					<v-card>
-						<v-card-title>{{ t('delete_are_you_sure') }}</v-card-title>
+					<VCard>
+						<VCardTitle>{{ $t('delete_are_you_sure') }}</VCardTitle>
 
-						<v-card-actions>
-							<v-button secondary @click="confirmDelete = false">
-								{{ t('cancel') }}
-							</v-button>
-							<v-button kind="danger" :loading="deleting" @click="deleteAndQuit">
-								{{ t('delete_label') }}
-							</v-button>
-						</v-card-actions>
-					</v-card>
-				</v-dialog>
+						<VCardActions>
+							<VButton secondary @click="confirmDelete = false">
+								{{ $t('cancel') }}
+							</VButton>
+							<VButton kind="danger" :loading="deleting" @click="deleteAndQuit">
+								{{ $t('delete_label') }}
+							</VButton>
+						</VCardActions>
+					</VCard>
+				</VDialog>
+			</template>
 
-				<v-button
-					v-tooltip.bottom="t('save')"
-					icon
-					rounded
+			<template #actions:primary>
+				<PrivateViewHeaderBarActionButton
+					:label="$t('save')"
 					:disabled="hasEdits === false"
 					:loading="saving"
+					icon="check"
 					@click="save"
-				>
-					<v-icon name="check" />
-				</v-button>
+				/>
 			</template>
 
 			<div class="preset-item">
-				<v-form v-model="edits" :fields="fields" :loading="loading" :initial-values="initialValues" :primary-key="id" />
+				<VForm v-model="edits" :fields="fields" :loading="loading" :initial-values="initialValues" :primary-key="id" />
 
 				<div class="layout">
 					<component :is="`layout-${values.layout}`" v-if="values.layout && values.collection" v-bind="layoutState">
 						<template #no-results>
-							<v-info :title="t('no_results')" icon="search" center>
-								{{ t('no_results_copy') }}
-							</v-info>
+							<VInfo :title="$t('no_results')" icon="search" center>
+								{{ $t('no_results_copy') }}
+							</VInfo>
 						</template>
 
 						<template #no-items>
-							<v-info :title="t('item_count', 0)" center>
-								{{ t('no_items_copy') }}
-							</v-info>
+							<VInfo :title="$t('item_count', 0)" center>
+								{{ $t('no_items_copy') }}
+							</VInfo>
 						</template>
 					</component>
 
-					<v-notice v-else>
-						{{ t('no_layout_collection_selected_yet') }}
-					</v-notice>
+					<VNotice v-else>
+						{{ $t('no_layout_collection_selected_yet') }}
+					</VNotice>
 				</div>
 			</div>
 
 			<template #sidebar>
-				<sidebar-detail icon="info" :title="t('information')" close>
-					<div v-md="t('page_help_settings_presets_item')" class="page-description" />
-				</sidebar-detail>
-
 				<div class="layout-sidebar">
 					<component
 						:is="`layout-sidebar-${values.layout}`"
@@ -555,7 +553,7 @@ function discardAndLeave() {
 						v-bind="layoutState"
 					/>
 
-					<sidebar-detail icon="layers" :title="t('layout_options')">
+					<SidebarDetail id="layout-options" icon="layers" :title="$t('layout_options')">
 						<div class="layout-options">
 							<component
 								:is="`layout-options-${values.layout}`"
@@ -563,28 +561,28 @@ function discardAndLeave() {
 								v-bind="layoutState"
 							/>
 						</div>
-					</sidebar-detail>
+					</SidebarDetail>
 				</div>
 			</template>
 
-			<v-dialog v-model="confirmLeave" @esc="confirmLeave = false">
-				<v-card>
-					<v-card-title>{{ t('unsaved_changes') }}</v-card-title>
-					<v-card-text>{{ t('unsaved_changes_copy') }}</v-card-text>
-					<v-card-actions>
-						<v-button secondary @click="discardAndLeave">
-							{{ t('discard_changes') }}
-						</v-button>
-						<v-button @click="confirmLeave = false">{{ t('keep_editing') }}</v-button>
-					</v-card-actions>
-				</v-card>
-			</v-dialog>
-		</private-view>
+			<VDialog v-model="confirmLeave" @esc="confirmLeave = false" @apply="discardAndLeave">
+				<VCard>
+					<VCardTitle>{{ $t('unsaved_changes') }}</VCardTitle>
+					<VCardText>{{ $t('unsaved_changes_copy') }}</VCardText>
+					<VCardActions>
+						<VButton secondary @click="discardAndLeave">
+							{{ $t('discard_changes') }}
+						</VButton>
+						<VButton @click="confirmLeave = false">{{ $t('keep_editing') }}</VButton>
+					</VCardActions>
+				</VCard>
+			</VDialog>
+		</PrivateView>
 	</component>
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
 
 .header-icon {
 	--v-button-background-color: var(--theme--primary-background);
@@ -593,43 +591,37 @@ function discardAndLeave() {
 	--v-button-color-hover: var(--theme--primary);
 }
 
-.action-delete {
-	--v-button-background-color-hover: var(--theme--danger) !important;
-	--v-button-color-hover: var(--white) !important;
-}
-
 .preset-item {
 	padding: var(--content-padding);
 }
 
 .layout {
-	--content-padding: 0px;
-	--content-padding-bottom: 0px;
-	--layout-offset-top: 0;
+	--content-padding: 0;
+	--content-padding-bottom: 0;
 
 	position: relative;
-	width: 100%;
-	margin-top: 32px;
+	inline-size: 100%;
+	margin-block-start: 1.8125rem;
 
 	:deep(#map-container) {
-		min-height: 360px;
+		min-block-size: 20.25rem;
 	}
 }
 
 .layout-sidebar {
-	--theme--form--row-gap: 24px;
+	--theme--form--row-gap: 1.375rem;
 
 	display: contents;
 }
 
 :deep(.layout-options) {
-	--theme--form--row-gap: 24px;
+	--theme--form--row-gap: 1.375rem;
 
-	@include form-grid;
+	@include mixins.form-grid;
 }
 
 :deep(.layout-options .type-label) {
-	font-size: 1rem;
+	font-size: 0.8125rem;
 }
 
 .subdued {

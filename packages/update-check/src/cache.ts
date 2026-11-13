@@ -1,9 +1,9 @@
-import { buildStorage } from 'axios-cache-interceptor';
-import findCacheDirectory from 'find-cache-dir';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { type AxiosStorage, buildStorage } from 'axios-cache-interceptor';
+import findCacheDirectory from 'find-cache-directory';
 
-export async function getCache() {
+export async function getCache(): Promise<AxiosStorage | undefined> {
 	const dir = findCacheDirectory({ name: 'directus' });
 	if (!dir) return;
 
@@ -37,6 +37,15 @@ export async function getCache() {
 				return value;
 			} catch {
 				return undefined;
+			}
+		},
+
+		async clear() {
+			try {
+				const files = await fs.readdir(dir);
+				await Promise.all(files.map((name) => fs.unlink(path.join(dir, name))));
+			} catch {
+				// Ignore any errors
 			}
 		},
 	});

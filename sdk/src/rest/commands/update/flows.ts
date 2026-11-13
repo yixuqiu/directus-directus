@@ -1,7 +1,7 @@
 import type { DirectusFlow } from '../../../schema/flow.js';
-import type { ApplyQueryFields, Query } from '../../../types/index.js';
-import { throwIfEmpty } from '../../utils/index.js';
+import type { ApplyQueryFields, NestedPartial, Query } from '../../../types/index.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfEmpty } from '../../utils/index.js';
 
 export type UpdateFlowOutput<
 	Schema,
@@ -20,7 +20,7 @@ export type UpdateFlowOutput<
 export const updateFlows =
 	<Schema, const TQuery extends Query<Schema, DirectusFlow<Schema>>>(
 		keys: DirectusFlow<Schema>['id'][],
-		item: Partial<DirectusFlow<Schema>>,
+		item: NestedPartial<DirectusFlow<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateFlowOutput<Schema, TQuery>[], Schema> =>
 	() => {
@@ -35,6 +35,24 @@ export const updateFlows =
 	};
 
 /**
+ * Update multiple flows as batch.
+ * @param items
+ * @param query
+ * @returns Returns the flow objects for the updated flows.
+ */
+export const updateFlowsBatch =
+	<Schema, const TQuery extends Query<Schema, DirectusFlow<Schema>>>(
+		items: NestedPartial<DirectusFlow<Schema>>[],
+		query?: TQuery,
+	): RestCommand<UpdateFlowOutput<Schema, TQuery>[], Schema> =>
+	() => ({
+		path: `/flows`,
+		params: query ?? {},
+		body: JSON.stringify(items),
+		method: 'PATCH',
+	});
+
+/**
  * Update an existing flow.
  * @param key
  * @param item
@@ -45,7 +63,7 @@ export const updateFlows =
 export const updateFlow =
 	<Schema, const TQuery extends Query<Schema, DirectusFlow<Schema>>>(
 		key: DirectusFlow<Schema>['id'],
-		item: Partial<DirectusFlow<Schema>>,
+		item: NestedPartial<DirectusFlow<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateFlowOutput<Schema, TQuery>, Schema> =>
 	() => {

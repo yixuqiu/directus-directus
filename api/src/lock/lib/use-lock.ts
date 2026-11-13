@@ -1,3 +1,4 @@
+import { useEnv } from '@directus/env';
 import { createKv, type Kv } from '@directus/memory';
 import { redisConfigAvailable, useRedis } from '../../redis/index.js';
 
@@ -14,7 +15,13 @@ export const useLock = () => {
 	}
 
 	if (redisConfigAvailable()) {
-		_cache.lock = createKv({ type: 'redis', redis: useRedis(), namespace: 'directus:lock' });
+		const { REDIS_LOCK_NAMESPACE } = useEnv();
+
+		_cache.lock = createKv({
+			type: 'redis',
+			redis: useRedis(),
+			namespace: REDIS_LOCK_NAMESPACE,
+		});
 	} else {
 		_cache.lock = createKv({ type: 'local' });
 	}

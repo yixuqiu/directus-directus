@@ -3,10 +3,11 @@ export type ContentVersion = {
 	key: string;
 	name: string | null;
 	collection: string;
-	item: string;
-	hash: string;
+	item: string | null;
+	hash: string | null;
 	date_created: string;
 	date_updated: string | null;
 	user_created: string | null;
 	user_updated: string | null;
+	delta: Record<string, any> | null;
 };

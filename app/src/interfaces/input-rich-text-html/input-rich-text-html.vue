@@ -1,86 +1,281 @@
 <script setup lang="ts">
-import { useSettingsStore } from '@/stores/settings';
-import { percentage } from '@/utils/percentage';
-import { SettingsStorageAssetPreset } from '@directus/types';
-import Editor from '@tinymce/tinymce-vue';
-import { ComponentPublicInstance, computed, ref, toRefs, watch } from 'vue';
+import { RICHTEXT_EDITABLE_INJECT } from '@directus/constants';
+import type { SettingsStorageAssetPreset } from '@directus/types';
+import { type Editor, EditorContent, useEditor } from '@tiptap/vue-3';
+import { onKeyStroke } from '@vueuse/core';
+import { computed, nextTick, provide, ref, type Ref, toRefs, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import getEditorStyles from './get-editor-styles';
-import useImage from './useImage';
-import useLink from './useLink';
-import useMedia from './useMedia';
-import useSourceCode from './useSourceCode';
-
-import 'tinymce/tinymce';
-
-import 'tinymce/icons/default';
-import 'tinymce/models/dom';
-import 'tinymce/plugins/autoresize/plugin';
-import 'tinymce/plugins/code/plugin';
-import 'tinymce/plugins/directionality/plugin';
-import 'tinymce/plugins/fullscreen/plugin';
-import 'tinymce/plugins/image/plugin';
-import 'tinymce/plugins/insertdatetime/plugin';
-import 'tinymce/plugins/link/plugin';
-import 'tinymce/plugins/lists/plugin';
-import 'tinymce/plugins/media/plugin';
-import 'tinymce/plugins/pagebreak/plugin';
-import 'tinymce/plugins/preview/plugin';
-import 'tinymce/plugins/table/plugin';
-import 'tinymce/themes/silver';
-
-type CustomFormat = {
-	title: string;
-	inline: string;
-	classes: string;
-	styles: Record<string, string>;
-	attributes: Record<string, string>;
-};
+import { useImage } from './composables/use-image';
+import { useLink } from './composables/use-link';
+import { useMedia } from './composables/use-media';
+import { useNormalizationWarning } from './composables/use-normalization-warning';
+import { usePasteWarning } from './composables/use-paste-warning';
+import { useSourceCode } from './composables/use-source-code';
+import ImageDrawer from './drawers/image-drawer.vue';
+import LinkDrawer from './drawers/link-drawer.vue';
+import MediaDrawer from './drawers/media-drawer.vue';
+import NormalizationWarningDialog from './drawers/normalization-warning-dialog.vue';
+import PasteWarningDialog from './drawers/paste-warning-dialog.vue';
+import SourceCodeDrawer from './drawers/source-code-drawer.vue';
+import { buildFieldSchema, fieldEditorExtensions } from './extensions';
+import { LinkShortcut } from './extensions/link-shortcut';
+import { decodePageBreaks, encodePageBreaks } from './extensions/page-break';
+import ContributedBubbleMenu from './toolbar/menus/contributed-bubble-menu.vue';
+import TableBubbleMenu from './toolbar/menus/table-bubble-menu.vue';
+import Toolbar from './toolbar/toolbar.vue';
+import toolbarDefault from './toolbar-default';
+import VNotice from '@/components/v-notice.vue';
+import { useInjectFocusTrapManager } from '@/composables/use-focus-trap-manager';
+import { parseGlobalMimeTypeAllowList, useMimeTypeFilter } from '@/composables/use-mime-type-filter';
+import InterfaceInputCode from '@/interfaces/input-code/input-code.vue';
+import type { StoredExtensionOptions } from '@/rich-text/register';
+import { useServerStore } from '@/stores/server';
+import { useSettingsStore } from '@/stores/settings';
+import { getDirectusUrlWithUtm } from '@/utils/directus-url';
+import { percentage } from '@/utils/percentage';
 
 const props = withDefaults(
 	defineProps<{
 		value: string | null;
-		field?: string;
 		toolbar?: string[];
 		font?: 'sans-serif' | 'serif' | 'monospace';
-		customFormats?: CustomFormat[];
-		tinymceOverrides?: Record<string, unknown>;
 		disabled?: boolean;
+		nonEditable?: boolean;
 		imageToken?: string;
 		folder?: string;
+		/** Legacy TinyMCE `customFormats` option (array or JSON string); see extensions/custom-formats.ts. */
+		customFormats?: unknown;
+		/** Field `extensions` option: ids of the registered richtext extensions this field opted into. */
+		extensions?: string[];
+		/** Field `extensionOptions` option: per-extension values, keyed by extension id. */
+		extensionOptions?: StoredExtensionOptions;
+		/** Extra URL schemes links may use (e.g. `myapp`), on top of Tiptap's defaults. */
+		linkProtocols?: string[] | null;
+		/** Deprecated TinyMCE raw-config passthrough; accepted but inert (warning below). */
+		tinymceOverrides?: unknown;
 		softLength?: number;
 		direction?: string;
+		/** Comparison view (versioning/revision diffs); the value arrives pre-marked with comparison-diff spans. */
+		comparisonMode?: boolean;
+		field?: string;
+		autoSwitchToDraft?: boolean;
 	}>(),
 	{
-		toolbar: () => [
-			'bold',
-			'italic',
-			'underline',
-			'h1',
-			'h2',
-			'h3',
-			'numlist',
-			'bullist',
-			'removeformat',
-			'blockquote',
-			'customLink',
-			'customImage',
-			'customMedia',
-			'code',
-			'fullscreen',
-		],
+		toolbar: () => toolbarDefault,
 		font: 'sans-serif',
-		customFormats: () => [],
 	},
 );
 
-const emit = defineEmits(['input']);
+const emit = defineEmits<{
+	input: [value: string | null];
+	readonly: [locked: boolean];
+	setFieldValue: [payload: { field: string; value: string | null }];
+}>();
 
 const { t } = useI18n();
-const editorRef = ref<any | null>(null);
-const editorElement = ref<ComponentPublicInstance | null>(null);
-const { imageToken } = toRefs(props);
+
+const { imageToken, folder, value } = toRefs(props);
+
+if (
+	props.tinymceOverrides != null &&
+	(typeof props.tinymceOverrides !== 'object' || Object.keys(props.tinymceOverrides).length > 0)
+) {
+	// eslint-disable-next-line no-console
+	console.warn(
+		'[input-rich-text-html] The "tinymceOverrides" option is deprecated and no longer has any effect. Use the customFormats interface option instead.',
+	);
+}
+
+// built once: the schema is frozen when the editor is constructed, so a field options change needs a remount
+// In comparison mode ComparisonDiff joins the schema, so precomputed diff spans don't read as loss.
+const fieldSchema = buildFieldSchema({
+	customFormats: props.customFormats,
+	extensions: props.extensions,
+	extensionOptions: props.extensionOptions,
+	linkProtocols: props.linkProtocols,
+	comparisonMode: props.comparisonMode,
+});
+
+const pageBreakLabel = computed(() => `"${t('wysiwyg_options.pagebreak')}"`);
+
+// theme tokens use `sans`, not `sans-serif`
+const fontFamily = computed(() => {
+	const token = props.font === 'sans-serif' ? 'sans' : props.font;
+	return `var(--theme--fonts--${token}--font-family)`;
+});
+
+const {
+	normalizationLocked,
+	normalizationWarningOpen,
+	normalizationWarningDiff,
+	checkValue,
+	onLockedClick,
+	confirmNormalizationWarning,
+	cancelNormalizationWarning,
+} = useNormalizationWarning(value, fieldSchema.extensions, fieldSchema.key);
+
+// comparison runs it to pick the source fallback below; plain read-only display has nothing to act on
+if (!props.nonEditable || props.comparisonMode) checkValue();
+
+// the editor would drop what it can't represent, hiding the content a revision is opened for
+const comparisonSource = computed(() => props.comparisonMode && normalizationLocked.value);
+
+// surface the lock to the form so the field menu can gate raw editing, which would bypass this guard
+watch(normalizationLocked, (locked) => emit('readonly', locked), { immediate: true });
+
+const isEditable = computed(
+	() => !props.disabled && !props.nonEditable && !props.comparisonMode && !normalizationLocked.value,
+);
+
+// `editor.isEditable` is not reactive, so node views inject this to follow a later lock
+provide(RICHTEXT_EDITABLE_INJECT, isEditable);
+
+const editorDir = computed(() => (props.direction === 'rtl' ? 'rtl' : 'ltr'));
+
+// `addToHistory: false` keeps programmatic syncs out of the undo stack (undo would wipe the content).
+// The initial load routes through here (not the constructor) so TrailingNode normalization runs inside
+// this suppressed transaction instead of dirtying the field on first click (see dirty-on-click.test.ts).
+function syncValue(instance: Editor, value: string | null) {
+	instance
+		.chain()
+		.setMeta('addToHistory', false)
+		.setContent(decodePageBreaks(value ?? ''), { emitUpdate: false })
+		.run();
+
+	// `emitUpdate: false` skips `onUpdate`, so refresh the soft-length count here too
+	updateCount(instance);
+}
+
+const count = ref(0);
+
+function updateCount(instance: Editor) {
+	count.value = instance.storage.characterCount?.characters() ?? 0;
+}
+
+const percRemaining = computed(() => percentage(count.value, props.softLength) ?? 100);
+
+const editor = useEditor({
+	// LinkShortcut is per-instance (its Mod-K handler opens this editor's drawer), so it stays out of
+	// the shared field schema the normalization checks re-parse with
+	extensions: [
+		...fieldEditorExtensions(fieldSchema.extensions),
+		LinkShortcut.configure({ onTrigger: () => openLinkDrawer() }),
+	],
+	content: '',
+	editable: isEditable.value,
+	editorProps: {
+		// public styling hook: richtext extensions scope their CSS under it, so never rename it
+		attributes: { class: 'richtext-content' },
+		// media nodes handle dblclick themselves in their node view
+		handleDoubleClickOn: (_view, _pos, node, nodePos) => {
+			if (node.type.name === 'image') {
+				editor.value?.commands.setNodeSelection(nodePos);
+				openImageDrawer();
+				return true;
+			}
+
+			return false;
+		},
+		handlePaste: (view, event) => handlePaste(view, event),
+		handleDOMEvents: {
+			// handleClick fires on mouseup, too late to preventDefault; the browser would follow a linked image's `<a>`
+			click: (view, event) => {
+				if (!view.editable || event.button !== 0) return false;
+				const link = (event.target as HTMLElement | null)?.closest('a');
+				if (!link?.href) return false;
+
+				event.preventDefault();
+
+				// Cmd/Ctrl+click opens links in a new tab (parity with TinyMCE)
+				if (event.metaKey || event.ctrlKey) {
+					window.open(link.href, '_blank', 'noopener,noreferrer');
+					return true;
+				}
+
+				return false;
+			},
+		},
+	},
+	onCreate: ({ editor }) => {
+		syncValue(editor as Editor, props.value);
+		const storage = (editor as Editor).storage as Record<string, any>;
+		if (storage.media) storage.media.onOpenDrawer = openMediaDrawer;
+	},
+	onUpdate: ({ editor }) => {
+		updateCount(editor as Editor);
+		emit('input', editor.isEmpty ? null : encodePageBreaks(editor.getHTML()));
+	},
+});
+
+const {
+	pasteNoticeVisible,
+	pasteWarningOpen,
+	pasteWarningDiff,
+	pasteUndoable,
+	handlePaste,
+	openPasteWarning,
+	keepPaste,
+	undoPaste,
+	takeRawPaste,
+	dismissPasteWarning,
+} = usePasteWarning(editor, fieldSchema.extensions);
+
+function onEditorClick() {
+	if (props.disabled || props.nonEditable || props.comparisonMode) return;
+	onLockedClick();
+}
+
+// raw mode edits the stored HTML as text; emits never round-trip the schema, so nothing is normalized away
+const rawMode = ref(false);
+
+function enterRawMode() {
+	normalizationWarningOpen.value = false;
+
+	// Opening raw editing is an edit intent: on a versioned item it must move to a Draft (parity with
+	// "Edit anyway"), so force the current value through unchanged. `set-field-value` bypasses the
+	// equal-to-initial unset; the auto-switch gate keeps it a no-op on non-versioned items.
+	if (props.autoSwitchToDraft && props.field) {
+		emit('setFieldValue', { field: props.field, value: props.value });
+	}
+
+	rawMode.value = true;
+}
+
+// The clipboard HTML goes in verbatim, so raw mode has to be on before the emit: the value watcher
+// skips syncing while it's on, and would otherwise push the new value back through the schema.
+function onPasteRaw() {
+	const html = takeRawPaste();
+	if (html === null) return;
+	rawMode.value = true;
+	emit('input', html);
+}
+
+// the unlock flips `isEditable` on the next flush, so focus has to wait for it
+async function onWarningConfirm() {
+	confirmNormalizationWarning();
+	await nextTick();
+	editor.value?.commands.focus();
+}
+
 const settingsStore = useSettingsStore();
+const { info } = useServerStore();
+
+const allowedMimeTypes = computed(() => parseGlobalMimeTypeAllowList(info.files?.mimeTypeAllowList)?.join(','));
+
+const normalizationDocsUrl = computed(
+	() =>
+		getDirectusUrlWithUtm(
+			'https://directus.com/docs/releases/breaking-changes/version-12',
+			info.version,
+			'wysiwyg_normalization_locked_learn_more_link',
+		) + '#wysiwyg-editor-rebuilt-on-tiptap',
+);
+
+// without this the picker/upload accept the global (usually image) list and the pick lands as a broken <video>
+const { mimeTypeFilter: mediaMimeTypeFilter, combinedAcceptString: mediaAllowedMimeTypes } = useMimeTypeFilter([
+	'video/*',
+	'audio/*',
+]);
 
 const storageAssetTransform = ref('all');
 const storageAssetPresets = ref<SettingsStorageAssetPreset[]>([]);
@@ -90,421 +285,290 @@ if (settingsStore.settings?.storage_asset_transform) {
 	storageAssetPresets.value = settingsStore.settings.storage_asset_presets ?? [];
 }
 
-const count = ref(0);
-
-const { imageDrawerOpen, imageSelection, closeImageDrawer, onImageSelect, saveImage, imageButton } = useImage(
-	editorRef,
-	imageToken!,
-	{
-		storageAssetTransform,
-		storageAssetPresets,
-	},
+const { imageDrawerOpen, imageSelection, openImageDrawer, closeImageDrawer, onImageSelect, saveImage } = useImage(
+	editor as Ref<Editor>,
+	imageToken,
+	{ storageAssetTransform, storageAssetPresets },
 );
+
+const {
+	linkDrawerOpen,
+	linkSelection,
+	isEditingLink,
+	targetsImage,
+	linkUrlError,
+	isLinkSaveable,
+	openLinkDrawer,
+	closeLinkDrawer,
+	saveLink,
+	unlink,
+} = useLink(editor as Ref<Editor>, fieldSchema.linkProtocols);
 
 const {
 	mediaDrawerOpen,
 	mediaSelection,
-	closeMediaDrawer,
-	openMediaTab,
-	onMediaSelect,
 	embed,
+	embedInvalid,
+	activeTab,
+	openMediaDrawer,
+	closeMediaDrawer,
+	onMediaSelect,
 	saveMedia,
-	mediaHeight,
-	mediaWidth,
-	mediaSource,
-	mediaButton,
-} = useMedia(editorRef, imageToken!);
+} = useMedia(editor as Ref<Editor>, imageToken);
 
-const { linkButton, linkDrawerOpen, closeLinkDrawer, saveLink, linkSelection, linkNode } = useLink(editorRef);
+const {
+	sourceCodeDrawerOpen,
+	code,
+	normalizeConfirmOpen,
+	normalizeDiff,
+	openSourceCodeDrawer,
+	closeSourceCodeDrawer,
+	saveSourceCode,
+	confirmSaveSourceCode,
+	cancelNormalize,
+} = useSourceCode(editor as Ref<Editor>, fieldSchema.extensions);
 
-const { codeDrawerOpen, code, closeCodeDrawer, saveCode, sourceCodeButton } = useSourceCode(editorRef);
+// pause the surrounding view's focus trap while a drawer is open so its inputs stay reachable
+const { pauseFocusTrap, unpauseFocusTrap } = useInjectFocusTrapManager();
 
-const internalValue = computed({
-	get() {
-		return props.value || '';
-	},
-	set(value) {
-		if (props.value !== value) {
-			contentUpdated();
-		}
-	},
-});
+watch([imageDrawerOpen, linkDrawerOpen, mediaDrawerOpen, sourceCodeDrawerOpen], (open) =>
+	open.some(Boolean) ? pauseFocusTrap() : unpauseFocusTrap(),
+);
 
-const editorInitialized = ref(false);
+// `editable` is only read at init, so sync it manually. `setEditable(_, false)`: the default emits
+// `update`, turning every disabled flip into a phantom `input` that steals the collab field lock
+watch(isEditable, (editable) => editor.value?.setEditable(editable, false));
 
-const editorDisabled = computed(() => {
-	if (!editorInitialized.value) return false;
-
-	return props.disabled;
-});
+// external value changes (async load, revert, version switch) — guard against echo loops
+let syncScheduled = false;
 
 watch(
-	() => [props.direction, editorRef],
-	() => {
-		if (editorRef.value) {
-			if (props.direction === 'rtl') {
-				editorRef.value.editorCommands?.commands?.exec?.mcedirectionrtl();
-			} else {
-				editorRef.value.editorCommands?.commands?.exec?.mcedirectionltr();
-			}
-		}
+	() => props.value,
+	async () => {
+		if (syncScheduled) return;
+		syncScheduled = true;
+
+		// Defer past the current flush: setContent mid-patch (watchers run pre-flush) tears down Vue
+		// node views and corrupts ProseMirror's view tree; deferring also coalesces same-flush churn
+		// (save flows flip html -> null -> html)
+		await nextTick();
+		syncScheduled = false;
+
+		if (rawMode.value) return;
+		if (!editor.value) return;
+		// compare the encoded (stored) form so a re-emitted page-break marker doesn't look like a change
+		if (encodePageBreaks(editor.value.getHTML()) === props.value) return;
+		// the content the notice refers to is gone with the replaced value
+		dismissPasteWarning();
+		syncValue(editor.value, props.value);
+		if (!props.nonEditable || props.comparisonMode) checkValue();
 	},
 );
 
-const editorOptions = computed(() => {
-	let styleFormats = null;
+const fullscreen = ref(false);
+const visualaid = ref(false);
 
-	if (Array.isArray(props.customFormats) && props.customFormats.length > 0) {
-		styleFormats = props.customFormats;
-	}
-
-	let toolbarString = (props.toolbar ?? [])
-		.map((t) =>
-			t
-				.replace(/^link$/g, 'customLink')
-				.replace(/^media$/g, 'customMedia')
-				.replace(/^code$/g, 'customCode')
-				.replace(/^image$/g, 'customImage'),
-		)
-		.join(' ');
-
-	if (styleFormats) {
-		toolbarString += ' styles';
-	}
-
-	return {
-		skin: false,
-		content_css: false,
-		content_style: getEditorStyles(props.font as 'sans-serif' | 'serif' | 'monospace'),
-		plugins: [
-			'media',
-			'table',
-			'lists',
-			'image',
-			'link',
-			'pagebreak',
-			'code',
-			'insertdatetime',
-			'autoresize',
-			'preview',
-			'fullscreen',
-			'directionality',
-		],
-		license_key: 'gpl',
-		branding: false,
-		max_height: 1000,
-		elementpath: false,
-		statusbar: false,
-		menubar: false,
-		highlight_on_focus: false,
-		convert_urls: false,
-		image_dimensions: false,
-		extended_valid_elements: 'audio[loop|controls],source[src|type]',
-		toolbar: toolbarString,
-		style_formats: styleFormats,
-		file_picker_types: 'customImage customMedia image media',
-		link_default_protocol: 'https',
-		browser_spellcheck: true,
-		directionality: props.direction,
-		paste_data_images: false,
-		setup,
-		...(props.tinymceOverrides || {}),
-	};
+onKeyStroke('Escape', () => {
+	if (fullscreen.value) fullscreen.value = false;
 });
-
-const percRemaining = computed(() => percentage(count.value, props.softLength) ?? 100);
-
-let observer: MutationObserver;
-let emittedValue: any;
-
-function setCount() {
-	const iframeContents = editorRef.value?.contentWindow.document.getElementById('tinymce');
-	count.value = iframeContents?.textContent?.replace('\n', '')?.length ?? 0;
-}
-
-function contentUpdated() {
-	setCount();
-
-	if (!observer) return;
-
-	const newValue = editorRef.value.getContent() ? editorRef.value.getContent() : null;
-
-	if (newValue === emittedValue) return;
-
-	emittedValue = newValue;
-	emit('input', newValue);
-}
-
-function setupContentWatcher() {
-	if (observer) return;
-
-	const iframeContents = editorRef.value.contentWindow.document.getElementById('tinymce');
-
-	observer = new MutationObserver((_mutations) => {
-		contentUpdated();
-	});
-
-	const config = { characterData: true, childList: true, subtree: true };
-	observer.observe(iframeContents, config);
-}
-
-function setup(editor: any) {
-	editorRef.value = editor;
-
-	const linkShortcut = 'meta+k';
-
-	editor.ui.registry.addToggleButton('customImage', imageButton);
-	editor.ui.registry.addToggleButton('customMedia', mediaButton);
-	editor.ui.registry.addToggleButton('customLink', { ...linkButton, shortcut: linkShortcut });
-	editor.ui.registry.addButton('customCode', sourceCodeButton);
-
-	editor.on('init', function () {
-		editor.shortcuts.remove(linkShortcut);
-
-		editor.addShortcut(linkShortcut, 'Insert Link', () => {
-			editor.ui.registry.getAll().buttons.customlink.onAction();
-		});
-
-		setCount();
-
-		editorInitialized.value = true;
-	});
-
-	editor.on('OpenWindow', function (e: any) {
-		if (e.dialog?.getData) {
-			const data = e.dialog?.getData();
-
-			if (data) {
-				if (data.url) {
-					e.dialog.close();
-					editor.ui.registry.getAll().buttons.customlink.onAction();
-				}
-
-				if (data.src) {
-					e.dialog.close();
-					editor.ui.registry.getAll().buttons.customimage.onAction(true);
-				}
-			}
-		}
-	});
-}
-
-function setFocus(val: boolean) {
-	if (editorElement.value == null) return;
-	const body = editorElement.value.$el.parentElement?.querySelector('.tox-tinymce');
-
-	if (body == null) return;
-
-	if (val) {
-		body.classList.add('focus');
-	} else {
-		body.classList.remove('focus');
-	}
-}
 </script>
 
 <template>
-	<div :id="field" class="wysiwyg" :class="{ disabled }">
-		<editor
-			ref="editorElement"
-			v-model="internalValue"
-			:init="editorOptions"
-			:disabled="editorDisabled"
-			model-events="change keydown blur focus paste ExecCommand SetContent"
-			@focusin="setFocus(true)"
-			@focusout="setFocus(false)"
-			@focus="setupContentWatcher"
-			@set-content="contentUpdated"
+	<VNotice v-if="normalizationLocked && !rawMode" type="warning" multiline class="normalization-notice">
+		{{ t(`wysiwyg_options.${comparisonMode ? 'normalization_comparison_notice' : 'normalization_locked_notice'}`) }}
+		<a v-if="!comparisonMode" :href="normalizationDocsUrl" target="_blank" rel="noopener noreferrer">
+			{{ t('wysiwyg_options.normalization_locked_learn_more') }}
+		</a>
+	</VNotice>
+	<VNotice v-if="pasteNoticeVisible && !rawMode" type="warning" multiline class="paste-notice">
+		{{ t('wysiwyg_options.paste_warning_notice') }}
+		<a href="#" @click.prevent="openPasteWarning">{{ t('wysiwyg_options.paste_warning_see_removed') }}</a>
+	</VNotice>
+	<div
+		class="wysiwyg"
+		:class="{ disabled, 'non-editable': nonEditable || comparisonMode, fullscreen, visualaid }"
+		:style="{ '--editor-font-family': fontFamily, '--page-break-label': pageBreakLabel }"
+	>
+		<Toolbar
+			v-if="!nonEditable && !comparisonMode && !rawMode"
+			:editor="editor"
+			:toolbar="toolbar"
+			:font="font"
+			:custom-formats="fieldSchema.formats"
+			:contributed-buttons="fieldSchema.buttons"
+			:disabled="disabled || normalizationLocked"
+			:fullscreen="fullscreen"
+			:visualaid="visualaid"
+			@toggle-fullscreen="fullscreen = !fullscreen"
+			@toggle-visualaid="visualaid = !visualaid"
+			@open-image="openImageDrawer"
+			@open-media="openMediaDrawer"
+			@open-link="openLinkDrawer"
+			@open-source-code="openSourceCodeDrawer"
 		/>
-		<template v-if="softLength">
-			<span
-				class="remaining"
-				:class="{
-					warning: percRemaining < 10,
-					danger: percRemaining < 5,
-				}"
-			>
-				{{ softLength - count }}
-			</span>
-		</template>
-		<v-dialog v-model="linkDrawerOpen">
-			<v-card>
-				<v-card-title>{{ t('wysiwyg_options.link') }}</v-card-title>
-				<v-card-text>
-					<div class="grid">
-						<div class="field">
-							<div class="type-label">{{ t('url') }}</div>
-							<v-input v-model="linkSelection.url" :placeholder="t('url_placeholder')" autofocus></v-input>
-						</div>
-						<div class="field">
-							<div class="type-label">{{ t('display_text') }}</div>
-							<v-input v-model="linkSelection.displayText" :placeholder="t('display_text_placeholder')"></v-input>
-						</div>
-						<div class="field half">
-							<div class="type-label">{{ t('tooltip') }}</div>
-							<v-input v-model="linkSelection.title" :placeholder="t('tooltip_placeholder')"></v-input>
-						</div>
-						<div class="field half-right">
-							<div class="type-label">{{ t('open_link_in') }}</div>
-							<v-checkbox
-								v-model="linkSelection.newTab"
-								block
-								:label="t(linkSelection.newTab ? 'new_tab' : 'current_tab')"
-							></v-checkbox>
-						</div>
-					</div>
-				</v-card-text>
-				<v-card-actions>
-					<v-button secondary @click="closeLinkDrawer">{{ t('cancel') }}</v-button>
-					<v-button :disabled="linkSelection.url === null && !linkNode" @click="saveLink">{{ t('save') }}</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+		<InterfaceInputCode
+			v-if="rawMode || comparisonSource"
+			:value="value"
+			language="htmlmixed"
+			:line-number="false"
+			:disabled="disabled || comparisonSource"
+			@input="$emit('input', $event)"
+		/>
 
-		<v-drawer v-model="codeDrawerOpen" :title="t('wysiwyg_options.source_code')" icon="code" @cancel="closeCodeDrawer">
-			<div class="content">
-				<interface-input-code
-					:value="code"
-					language="htmlmixed"
-					line-wrapping
-					@input="code = $event"
-				></interface-input-code>
-			</div>
+		<EditorContent
+			v-show="!rawMode && !comparisonSource"
+			class="editor-content"
+			:editor="editor"
+			:dir="editorDir"
+			@click="onEditorClick"
+		/>
 
-			<template #actions>
-				<v-button icon rounded @click="saveCode">
-					<v-icon name="check" />
-				</v-button>
-			</template>
-		</v-drawer>
+		<span
+			v-if="softLength && !comparisonMode && !rawMode"
+			class="remaining"
+			:class="{
+				warning: percRemaining < 10,
+				danger: percRemaining < 5,
+			}"
+		>
+			{{ softLength - count }}
+		</span>
 
-		<v-drawer v-model="imageDrawerOpen" :title="t('wysiwyg_options.image')" icon="image" @cancel="closeImageDrawer">
-			<div class="content">
-				<template v-if="imageSelection">
-					<img class="image-preview" :src="imageSelection.previewUrl" />
-					<div class="grid">
-						<div class="field half">
-							<div class="type-label">{{ t('image_url') }}</div>
-							<v-input v-model="imageSelection.imageUrl" />
-						</div>
-						<div class="field half-right">
-							<div class="type-label">{{ t('alt_text') }}</div>
-							<v-input v-model="imageSelection.alt" :nullable="false" />
-						</div>
-						<template v-if="storageAssetTransform === 'all'">
-							<div class="field half">
-								<div class="type-label">{{ t('width') }}</div>
-								<v-input v-model="imageSelection.width" :disabled="!!imageSelection.transformationKey" />
-							</div>
-							<div class="field half-right">
-								<div class="type-label">{{ t('height') }}</div>
-								<v-input v-model="imageSelection.height" :disabled="!!imageSelection.transformationKey" />
-							</div>
-						</template>
-						<div class="field half">
-							<div class="type-label">{{ t('wysiwyg_options.lazy_loading') }}</div>
-							<v-checkbox v-model="imageSelection.lazy" block :label="t('wysiwyg_options.lazy_loading_label')" />
-						</div>
-						<div v-if="storageAssetTransform !== 'none' && storageAssetPresets.length > 0" class="field half">
-							<div class="type-label">{{ t('transformation_preset_key') }}</div>
-							<v-select
-								v-model="imageSelection.transformationKey"
-								:items="storageAssetPresets.map((preset) => ({ text: preset.key, value: preset.key }))"
-								show-deselect
-							/>
-						</div>
-					</div>
-				</template>
-				<v-upload v-else :multiple="false" from-library from-url :folder="folder" @input="onImageSelect" />
-			</div>
+		<!-- `isEditable`, not `shouldShow`: a lock flip changes no selection, so an open menu would stay usable -->
+		<TableBubbleMenu v-if="isEditable" :editor="editor" />
+		<ContributedBubbleMenu
+			v-if="fieldSchema.bubbleMenus.length > 0 && isEditable"
+			:editor="editor"
+			:menus="fieldSchema.bubbleMenus"
+		/>
 
-			<template #actions>
-				<v-button v-tooltip.bottom="t('save_image')" icon rounded @click="saveImage">
-					<v-icon name="check" />
-				</v-button>
-			</template>
-		</v-drawer>
+		<ImageDrawer
+			v-model="imageDrawerOpen"
+			v-model:image-selection="imageSelection"
+			:storage-asset-transform="storageAssetTransform"
+			:storage-asset-presets="storageAssetPresets"
+			:folder="folder"
+			:allowed-mime-types="allowedMimeTypes"
+			@select="onImageSelect"
+			@save="saveImage"
+			@cancel="closeImageDrawer"
+		/>
 
-		<v-drawer v-model="mediaDrawerOpen" :title="t('wysiwyg_options.media')" icon="slideshow" @cancel="closeMediaDrawer">
-			<template #sidebar>
-				<v-tabs v-model="openMediaTab" vertical>
-					<v-tab value="video">{{ t('media') }}</v-tab>
-					<v-tab value="embed">{{ t('embed') }}</v-tab>
-				</v-tabs>
-			</template>
+		<LinkDrawer
+			v-model="linkDrawerOpen"
+			v-model:link-selection="linkSelection"
+			:editing="isEditingLink"
+			:targets-image="targetsImage"
+			:url-error="linkUrlError"
+			:saveable="isLinkSaveable"
+			@save="saveLink"
+			@unlink="unlink"
+			@cancel="closeLinkDrawer"
+		/>
 
-			<div class="content">
-				<v-tabs-items v-model="openMediaTab">
-					<v-tab-item value="video">
-						<template v-if="mediaSelection">
-							<video v-if="mediaSelection.tag !== 'iframe'" class="media-preview" controls="true">
-								<source :src="mediaSelection.previewUrl" />
-							</video>
-							<iframe
-								v-if="mediaSelection.tag === 'iframe'"
-								class="media-preview"
-								:src="mediaSelection.previewUrl"
-							></iframe>
-							<div class="grid">
-								<div class="field">
-									<div class="type-label">{{ t('source') }}</div>
-									<v-input v-model="mediaSource" />
-								</div>
-								<div class="field half">
-									<div class="type-label">{{ t('width') }}</div>
-									<v-input v-model="mediaWidth" />
-								</div>
-								<div class="field half-right">
-									<div class="type-label">{{ t('height') }}</div>
-									<v-input v-model="mediaHeight" />
-								</div>
-							</div>
-						</template>
-						<v-upload v-else :multiple="false" from-library from-url :folder="folder" @input="onMediaSelect" />
-					</v-tab-item>
-					<v-tab-item value="embed">
-						<div class="grid">
-							<div class="field">
-								<div class="type-label">{{ t('embed') }}</div>
-								<v-textarea v-model="embed" :nullable="false" />
-							</div>
-						</div>
-					</v-tab-item>
-				</v-tabs-items>
-			</div>
+		<MediaDrawer
+			v-model="mediaDrawerOpen"
+			v-model:media-selection="mediaSelection"
+			v-model:embed="embed"
+			v-model:active-tab="activeTab"
+			:embed-invalid="embedInvalid"
+			:folder="folder"
+			:allowed-mime-types="mediaAllowedMimeTypes"
+			:filter="mediaMimeTypeFilter"
+			@select="onMediaSelect"
+			@save="saveMedia"
+			@cancel="closeMediaDrawer"
+		/>
 
-			<template #actions>
-				<v-button v-tooltip.bottom="t('save_media')" icon rounded @click="saveMedia">
-					<v-icon name="check" />
-				</v-button>
-			</template>
-		</v-drawer>
+		<SourceCodeDrawer
+			v-model="sourceCodeDrawerOpen"
+			v-model:code="code"
+			v-model:normalize-confirm-open="normalizeConfirmOpen"
+			:normalize-diff="normalizeDiff"
+			@save="saveSourceCode"
+			@cancel="closeSourceCodeDrawer"
+			@confirm-save="confirmSaveSourceCode"
+			@cancel-normalize="cancelNormalize"
+		/>
+
+		<NormalizationWarningDialog
+			v-model="normalizationWarningOpen"
+			:diff="normalizationWarningDiff"
+			@confirm="onWarningConfirm"
+			@cancel="cancelNormalizationWarning"
+			@raw="enterRawMode"
+		/>
+
+		<PasteWarningDialog
+			v-model="pasteWarningOpen"
+			:diff="pasteWarningDiff"
+			:undoable="pasteUndoable"
+			@keep="keepPaste"
+			@undo="undoPaste"
+			@raw="onPasteRaw"
+		/>
 	</div>
 </template>
 
-<style lang="scss">
-@import 'tinymce/skins/ui/oxide/skin.css';
-@import './tinymce-overrides.css';
-</style>
-
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+.wysiwyg {
+	--v-button-background-color: transparent;
+	--v-button-color: var(--theme--form--field--input--foreground);
+	--v-button-background-color-hover: var(--theme--form--field--input--border-color);
+	--v-button-color-hover: var(--theme--form--field--input--foreground);
 
-.body {
-	padding: 20px;
+	position: relative; // anchors the soft-length `.remaining` indicator
+	background-color: var(--theme--form--field--input--background);
+	border: var(--theme--border-width) solid var(--theme--form--field--input--border-color);
+	border-radius: var(--theme--border-radius);
+	transition: border-color var(--fast) var(--transition);
+
+	&:not(.disabled):not(.non-editable):hover {
+		border-color: var(--theme--form--field--input--border-color-hover);
+	}
+
+	&:not(.disabled):not(.non-editable):focus-within {
+		outline: var(--focus-ring-width) solid var(--theme--form--field--input--focus-ring-color);
+		outline-offset: var(--focus-ring-offset-invert);
+	}
+
+	// `non-editable` stays visually normal (read-only display); only `disabled` dims
+	&.disabled:not(.non-editable) {
+		background-color: var(--theme--form--field--input--background-subdued);
+
+		:deep(.ProseMirror) {
+			color: var(--theme--foreground-subdued);
+		}
+	}
+
+	&.fullscreen {
+		position: fixed;
+		inset: 0;
+		z-index: 490; // below drawers/dialogs (500+) so image/link drawers stay on top
+		display: flex;
+		flex-direction: column;
+		border-radius: 0;
+
+		.editor-content {
+			flex: 1;
+			min-block-size: 0;
+			overflow: auto;
+		}
+	}
 }
 
-.grid {
-	@include form-grid;
+.normalization-notice,
+.paste-notice {
+	margin-block-end: 0.5rem;
 }
 
 .remaining {
 	position: absolute;
-	right: 10px;
-	bottom: 5px;
+	inset-inline-end: 0.5625rem;
+	inset-block-end: 0.3125rem;
 	color: var(--theme--form--field--input--foreground-subdued);
 	font-weight: 600;
-	text-align: right;
+	text-align: end;
 	vertical-align: middle;
 	font-feature-settings: 'tnum';
 }
@@ -517,18 +581,267 @@ function setFocus(val: boolean) {
 	color: var(--theme--danger);
 }
 
-.image-preview,
-.media-preview {
-	width: 100%;
-	height: var(--input-height-tall);
-	margin-bottom: 24px;
-	object-fit: cover;
-	border-radius: var(--theme--border-radius);
+/* Content styles, scoped to the ProseMirror container so they neither leak into the app nor inherit app styles. */
+/* :where() keeps these at `.ProseMirror p` specificity, so extension rules scoped under .richtext-content can override them. */
+:where(.wysiwyg) :deep(.ProseMirror) {
+	min-block-size: var(--input-height-tall);
+	padding: 1.125rem;
+	outline: none;
+	color: var(--theme--form--field--input--foreground);
+	font-family: var(--editor-font-family);
+	font-size: 0.875rem;
+	line-height: 1.5714;
+	font-weight: 500;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
+
+	h1,
+	h2,
+	h3,
+	h4,
+	h5,
+	h6 {
+		font-family: var(--editor-font-family);
+		color: var(--theme--form--field--input--foreground-accent);
+		font-weight: 700;
+		margin-block-end: 0;
+	}
+
+	:is(h1, h2, h3, h4, h5, h6) + p {
+		margin-block-start: 0.5em;
+	}
+
+	h1 {
+		font-size: 2rem;
+		line-height: 1.2813;
+		margin-block-start: 1em;
+	}
+
+	h2 {
+		font-size: 1.375rem;
+		line-height: 1.4091;
+		margin-block-start: 1.25em;
+	}
+
+	h3 {
+		font-size: 1.0625rem;
+		line-height: 1.5294;
+		margin-block-start: 1.25em;
+	}
+
+	h4 {
+		font-size: 0.875rem;
+		line-height: 1.6429;
+		margin-block-start: 1.5em;
+	}
+
+	h5 {
+		font-size: 0.8125rem;
+		line-height: 1.6923;
+		margin-block-start: 2em;
+	}
+
+	h6 {
+		font-size: 0.6875rem;
+		line-height: 1.8182;
+		margin-block-start: 2em;
+	}
+
+	p,
+	ul,
+	ol {
+		font-family: var(--editor-font-family);
+		margin: 1.5em 0;
+	}
+
+	:is(ul, ol) :is(ul, ol) {
+		margin: 0;
+	}
+
+	li,
+	li > p {
+		margin: 0;
+	}
+
+	a {
+		color: var(--theme--primary-accent);
+		text-decoration: underline;
+		cursor: pointer;
+	}
+
+	b,
+	strong {
+		font-weight: 700;
+	}
+
+	code {
+		padding: 0.125rem 0.25rem;
+		font-family: var(--theme--fonts--monospace--font-family), monospace;
+		background-color: var(--theme--background-normal);
+		border-radius: var(--theme--border-radius);
+		overflow-wrap: break-word;
+	}
+
+	pre {
+		padding: 1em;
+		font-family: var(--theme--fonts--monospace--font-family), monospace;
+		background-color: var(--theme--background-normal);
+		border-radius: var(--theme--border-radius);
+		overflow: auto;
+
+		code {
+			padding: 0;
+			background: none;
+		}
+	}
+
+	blockquote {
+		font-family: var(--editor-font-family);
+		border-inline-start: 2px solid var(--theme--form--field--input--border-color);
+		padding-inline-start: 1em;
+		margin-inline-start: 0;
+	}
+
+	img,
+	video {
+		max-inline-size: 100%;
+		block-size: auto;
+		border-radius: var(--theme--border-radius);
+	}
+
+	iframe {
+		max-inline-size: 100%;
+		border-radius: var(--theme--border-radius);
+	}
+
+	// `.range-selected` (RangeSelectedAtoms) covers selections that merely span the leaf, which
+	// ProseMirror leaves unstyled — without it a select-all looks like it skipped the image.
+	// A linked image renders as `<a><img></a>`, so the class lands on the anchor, not the img
+	:is(img, hr, .page-break):is(.ProseMirror-selectednode, .range-selected),
+	a:is(.ProseMirror-selectednode, .range-selected) > img {
+		outline: 2px solid var(--theme--primary);
+	}
+
+	.page-break {
+		position: relative;
+		block-size: 0;
+		border: none;
+		border-block-start: 2px dashed var(--theme--form--field--input--border-color);
+		margin-block: 2em;
+		user-select: none;
+
+		&::after {
+			content: var(--page-break-label, 'Page Break');
+			position: absolute;
+			inset-block-start: -0.75em;
+			inset-inline-start: 50%;
+			transform: translateX(-50%);
+			padding-inline: 0.5em;
+			background-color: var(--theme--form--field--input--background);
+			color: var(--theme--foreground-subdued);
+			font-size: 0.6875rem;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+		}
+	}
+
+	hr {
+		background-color: var(--theme--form--field--input--border-color);
+		block-size: 0.0625rem;
+		border: none;
+		margin-block: 2em;
+	}
+
+	// prevent table from extending beyond the editor itself
+	.tableWrapper {
+		overflow-x: auto;
+		margin: 1.5em 0;
+	}
+
+	table {
+		border-collapse: collapse;
+		table-layout: fixed; // honor the resizable extension's colwidth
+		inline-size: 100%;
+		margin: 0; // vertical spacing lives on `.tableWrapper`
+		overflow: hidden;
+	}
+
+	table :is(th, td) {
+		position: relative; // anchors the resize handle
+		border: 0.0625rem solid var(--theme--form--field--input--border-color);
+		padding: 0.3125rem;
+		vertical-align: top;
+		box-sizing: border-box;
+	}
+
+	table :is(th, td) > * {
+		margin-block: 0;
+	}
+
+	table th {
+		font-weight: 700;
+		text-align: start;
+		background-color: var(--theme--background-subdued);
+	}
+
+	// tiptap adds `.selectedCell` to the active cell selection
+	table .selectedCell::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: var(--theme--primary);
+		opacity: 0.1;
+		pointer-events: none;
+	}
+
+	// tiptap adds `.column-resize-handle` while resizing
+	.column-resize-handle {
+		position: absolute;
+		inset-block: 0;
+		inset-inline-end: -0.125rem;
+		inline-size: 0.25rem;
+		background-color: var(--theme--primary);
+		cursor: col-resize;
+		pointer-events: none;
+	}
+
+	&.resize-cursor {
+		cursor: col-resize;
+	}
+
+	figure {
+		display: table;
+		margin: 0.8125rem auto;
+	}
+
+	figure figcaption {
+		color: var(--theme--foreground-subdued);
+		display: block;
+		margin-block-start: 0.1875rem;
+		text-align: center;
+	}
 }
 
-.content {
-	padding: var(--content-padding);
-	padding-top: 0;
-	padding-bottom: var(--content-padding);
+/* Outside the :where() block so extension styles cannot hide the diff highlights. */
+.wysiwyg :deep(.ProseMirror) {
+	.comparison-diff--added {
+		color: var(--theme--success);
+		background-color: var(--theme--success-background);
+		padding: 0.125rem;
+		border-radius: var(--theme--border-radius);
+	}
+
+	.comparison-diff--removed {
+		color: var(--theme--danger);
+		background-color: var(--theme--danger-background);
+		padding: 0.125rem;
+		border-radius: var(--theme--border-radius);
+	}
+}
+
+/* `visualaid` toggle: dashed guides so borderless tables stay visible while editing. */
+.wysiwyg.visualaid :deep(.ProseMirror) table :is(th, td) {
+	border: 0.0625rem dashed var(--theme--primary);
 }
 </style>

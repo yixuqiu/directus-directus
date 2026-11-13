@@ -1,27 +1,56 @@
 <script setup lang="ts">
+import { translateShortcut, useCollection, useLayout, useShortcut } from '@directus/composables';
+import { isPublishedVersionKey, VERSION_KEY_DRAFT } from '@directus/constants';
+import { ErrorCode } from '@directus/errors';
+import { isSystemCollection } from '@directus/system-data';
+import { Filter, Preset } from '@directus/types';
+import { mergeFilters } from '@directus/utils';
+import { isNil } from 'lodash-es';
+import { computed, ref, toRefs, watch } from 'vue';
+import { onBeforeRouteUpdate, useRouter } from 'vue-router';
+import BookmarkAdd from '../components/bookmark-add.vue';
+import BookmarkDelete from '../components/bookmark-delete.vue';
+import ContentNavigation from '../components/navigation.vue';
+import VersionChip from '../components/version-chip.vue';
+import { useDeleteBookmark } from '../composables/use-delete-bookmark';
+import { stripVersionWithoutReadAccess } from '../index';
+import { getBookmarkScope } from '../utils/get-bookmark-scope';
+import ContentNotFound from './not-found.vue';
 import api from '@/api';
-import { useExtension } from '@/composables/use-extension';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VError from '@/components/v-error.vue';
+import VInfo from '@/components/v-info.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VMenu from '@/components/v-menu.vue';
+import { useFlows } from '@/composables/use-flows';
 import { useCollectionPermissions } from '@/composables/use-permissions';
 import { usePreset } from '@/composables/use-preset';
+import { useVersionQuery } from '@/composables/use-version-query';
+import { useCollectionsStore } from '@/stores/collections';
+import { usePermissionsStore } from '@/stores/permissions';
+import { useUserStore } from '@/stores/user';
+import { isCollectionInactive } from '@/utils/collection-status';
+import { extractErrorCode } from '@/utils/extract-error-code';
 import { getCollectionRoute, getItemRoute } from '@/utils/get-route';
+import { getVersionDisplayName } from '@/utils/get-version-display-name';
 import { unexpectedError } from '@/utils/unexpected-error';
+import { PrivateViewHeaderBarActionButton } from '@/views/private';
+import { PrivateView } from '@/views/private';
 import ArchiveSidebarDetail from '@/views/private/components/archive-sidebar-detail.vue';
-import BookmarkAdd from '@/views/private/components/bookmark-add.vue';
 import DrawerBatch from '@/views/private/components/drawer-batch.vue';
 import ExportSidebarDetail from '@/views/private/components/export-sidebar-detail.vue';
+import FlowDialogs from '@/views/private/components/flow-dialogs.vue';
 import FlowSidebarDetail from '@/views/private/components/flow-sidebar-detail.vue';
 import LayoutSidebarDetail from '@/views/private/components/layout-sidebar-detail.vue';
 import RefreshSidebarDetail from '@/views/private/components/refresh-sidebar-detail.vue';
 import SearchInput from '@/views/private/components/search-input.vue';
-import { useCollection, useLayout } from '@directus/composables';
-import { Filter } from '@directus/types';
-import { mergeFilters } from '@directus/utils';
-import { computed, ref, toRefs, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
-import ContentNavigation from '../components/navigation.vue';
-import ContentNotFound from './not-found.vue';
-import { isSystemCollection } from '@directus/system-data';
 
 type Item = {
 	[field: string]: any;
@@ -33,19 +62,33 @@ const props = defineProps<{
 	archive?: string;
 }>();
 
-const { t } = useI18n();
-
 const router = useRouter();
+const collectionsStore = useCollectionsStore();
 
 const layoutRef = ref();
 
 const { collection } = toRefs(props);
 const bookmarkID = computed(() => (props.bookmark ? +props.bookmark : null));
 
-const { selection } = useSelection();
 const { info: currentCollection } = useCollection(collection);
+const { isVersioned, isVersion, version, versionName, versionKeyQuery, readVersionsAllowed } = useVersion();
+const { selection } = useSelection();
+
+onBeforeRouteUpdate((to) => {
+	const collectionParam = typeof to.params.collection === 'string' ? to.params.collection : undefined;
+	if (!collectionParam) return true;
+
+	if (collectionsStore.getCollection(collectionParam)?.meta?.singleton) {
+		return { name: 'content-singleton', params: to.params, query: to.query };
+	}
+
+	const stripped = stripVersionWithoutReadAccess(to);
+	if (stripped) return stripped;
+
+	return true;
+});
+
 const { addNewLink, currentCollectionLink } = useLinks();
-const { breadcrumb } = useBreadcrumb();
 
 const {
 	layout,
@@ -63,7 +106,10 @@ const {
 	refreshInterval,
 	busy: bookmarkSaving,
 	clearLocalSave,
+	localPreset,
 } = usePreset(collection, bookmarkID);
+
+const { headerTitle, headerIcon, headerIconColor } = useCollectionHeader();
 
 const { layoutWrapper } = useLayout(layout);
 
@@ -78,9 +124,19 @@ const {
 	batchEditActive,
 } = useBatch();
 
-const { bookmarkDialogActive, creatingBookmark, createBookmark } = useBookmarks();
-
-const currentLayout = useExtension('layout', layout);
+const {
+	bookmarkDialogActive,
+	creatingBookmark,
+	isBookmarkUpdateable,
+	isBookmarkResetable,
+	createBookmark,
+	bookmarkPreset,
+	bookmarkScope,
+	hasBookmarkPermission,
+	deleteActive,
+	deleteSaving,
+	deleteSave,
+} = useBookmarks();
 
 watch(
 	collection,
@@ -99,22 +155,34 @@ const {
 	createAllowed,
 } = useCollectionPermissions(collection);
 
-const hasArchive = computed(
-	() =>
-		currentCollection.value &&
-		currentCollection.value.meta?.archive_field &&
-		currentCollection.value.meta?.archive_app_filter,
-);
+const createNewAllowed = computed(() => {
+	if (isVersioned.value) return createAllowed.value && readVersionsAllowed.value;
+	return createAllowed.value;
+});
+
+useShortcut('meta+alt+n', () => {
+	if (!createAllowed.value) return;
+	router.push(addNewLink.value);
+});
+
+const permissionsStore = usePermissionsStore();
+
+const hasArchive = computed(() => {
+	const archiveField = currentCollection.value?.meta?.archive_field;
+	if (!archiveField || !currentCollection.value?.meta?.archive_app_filter) return false;
+
+	const permissions = permissionsStore.getPermission(collection.value, 'read');
+	if (permissions?.access === 'none') return false;
+
+	const hasArchiveFieldPermission = permissions?.fields?.[0] === '*' || permissions?.fields?.includes(archiveField);
+	return hasArchiveFieldPermission;
+});
 
 const archiveFilter = computed<Filter | null>(() => {
-	if (!currentCollection.value?.meta) return null;
-	if (!currentCollection.value?.meta?.archive_app_filter) return null;
+	if (!hasArchive.value) return null;
 
-	const field = currentCollection.value.meta.archive_field;
-
-	if (!field) return null;
-
-	let archiveValue: any = currentCollection.value.meta.archive_value;
+	const field = currentCollection.value!.meta!.archive_field!;
+	let archiveValue: any = currentCollection.value!.meta!.archive_value;
 	if (archiveValue === 'true') archiveValue = true;
 	if (archiveValue === 'false') archiveValue = false;
 
@@ -135,6 +203,15 @@ const archiveFilter = computed<Filter | null>(() => {
 	}
 });
 
+const { flowDialogsContext, provideRunManualFlow, sidebarManualFlows } = useFlows({
+	collection,
+	selection,
+	location: 'collection',
+	onRefreshCallback: refresh,
+});
+
+provideRunManualFlow();
+
 async function refresh() {
 	await layoutRef.value?.state?.refresh?.();
 }
@@ -146,27 +223,53 @@ async function batchRefresh() {
 	await refresh();
 }
 
-function useBreadcrumb() {
-	const breadcrumb = computed(() => [
-		{
-			name: currentCollection.value?.name,
-			to: getCollectionRoute(props.collection),
-		},
-	]);
+function useCollectionHeader() {
+	const headerTitle = computed(() => {
+		if (props.bookmark) return bookmarkTitle.value ?? undefined;
+		return currentCollection.value?.name;
+	});
 
-	return { breadcrumb };
+	const headerIcon = computed(() => {
+		if (props.archive) return 'archive';
+		if (props.bookmark) return localPreset.value.icon ?? undefined;
+		return currentCollection.value?.icon;
+	});
+
+	const headerIconColor = computed(() => {
+		if (props.bookmark) return localPreset.value.color ?? undefined;
+		return currentCollection.value?.color ?? undefined;
+	});
+
+	return { headerTitle, headerIcon, headerIconColor };
 }
 
 function useSelection() {
 	const selection = ref<Item[]>([]);
 
-	// Whenever the collection we're working on changes, we have to clear the selection
-	watch(
-		() => props.collection,
-		() => (selection.value = []),
-	);
+	// Clear selection when the collection changes or when switching version mode
+	// (stale keys across modes — draft selections are version_ids, published are primary keys)
+	watch([() => props.collection, versionKeyQuery], () => (selection.value = []));
 
 	return { selection };
+}
+
+function useVersion() {
+	const versionKeyQuery = useVersionQuery();
+	const isVersioned = computed(() => !!currentCollection.value?.meta?.versioning);
+	const { readAllowed: readVersionsAllowed } = useCollectionPermissions('directus_versions');
+	const version = computed(() => getValidVersion());
+	const versionName = computed(() => getVersionDisplayName(version.value ? { key: version.value, name: null } : null));
+	const isVersion = computed(() => !isNil(version.value));
+
+	return { isVersioned, isVersion, version, versionName, versionKeyQuery, readVersionsAllowed };
+
+	function getValidVersion() {
+		if (!isVersioned.value) return undefined;
+		if (!readVersionsAllowed.value) return null;
+		if (versionKeyQuery.value === VERSION_KEY_DRAFT) return VERSION_KEY_DRAFT;
+		if (!versionKeyQuery.value || isPublishedVersionKey(versionKeyQuery.value)) return null;
+		return undefined;
+	}
 }
 
 function useBatch() {
@@ -183,14 +286,16 @@ function useBatch() {
 	return { batchEditActive, confirmDelete, deleting, batchDelete, confirmArchive, archiving, archiveItems, error };
 
 	async function batchDelete() {
+		if (deleting.value) return;
+
 		deleting.value = true;
 
-		const batchPrimaryKeys = selection.value;
-
 		try {
-			await api.delete(`/items/${props.collection}`, {
-				data: batchPrimaryKeys,
-			});
+			if (isVersion.value) {
+				await api.delete('/versions', { data: selection.value });
+			} else {
+				await api.delete(`/items/${props.collection}`, { data: selection.value });
+			}
 
 			selection.value = [];
 			await refresh();
@@ -203,7 +308,7 @@ function useBatch() {
 	}
 
 	async function archiveItems() {
-		if (!currentCollection.value?.meta?.archive_field) return;
+		if (archiving.value || !currentCollection.value?.meta?.archive_field) return;
 
 		archiving.value = true;
 
@@ -232,9 +337,7 @@ function useBatch() {
 }
 
 function useLinks() {
-	const addNewLink = computed<string>(() => {
-		return getItemRoute(props.collection, '+');
-	});
+	const addNewLink = computed<string>(() => getItemRoute(props.collection, '+', version.value));
 
 	const currentCollectionLink = computed<string>(() => {
 		return getCollectionRoute(props.collection);
@@ -244,13 +347,31 @@ function useLinks() {
 }
 
 function useBookmarks() {
+	const userStore = useUserStore();
+
 	const bookmarkDialogActive = ref(false);
 	const creatingBookmark = ref(false);
+	const isBookmarkUpdateable = computed(() => props.bookmark && !bookmarkSaved.value && bookmarkIsMine.value);
+	const isBookmarkResetable = computed(() => props.bookmark && !bookmarkSaved.value && !bookmarkSaving.value);
+
+	const bookmarkPreset = computed(() => localPreset.value as Preset);
+	const bookmarkScope = computed(() => getBookmarkScope(bookmarkPreset.value));
+	const hasBookmarkPermission = computed(() => bookmarkIsMine.value || userStore.isAdmin);
+
+	const { deleteActive, deleteSaving, deleteSave } = useDeleteBookmark();
 
 	return {
 		bookmarkDialogActive,
 		creatingBookmark,
+		isBookmarkUpdateable,
+		isBookmarkResetable,
 		createBookmark,
+		bookmarkPreset,
+		bookmarkScope,
+		hasBookmarkPermission,
+		deleteActive,
+		deleteSaving,
+		deleteSave,
 	};
 
 	async function createBookmark(bookmark: any) {
@@ -278,6 +399,12 @@ function clearFilters() {
 	filter.value = null;
 	search.value = null;
 }
+
+function getInactiveCollection(error: any): string | null {
+	if (extractErrorCode(error) !== ErrorCode.CollectionInactive) return null;
+
+	return error?.response?.data?.errors?.[0]?.extensions?.collection ?? null;
+}
 </script>
 
 <template>
@@ -296,72 +423,28 @@ function clearFilters() {
 		:reset-preset="resetPreset"
 		:clear-filters="clearFilters"
 	>
-		<content-not-found v-if="!currentCollection || isSystemCollection(collection)" />
-		<private-view
-			v-else
-			:title="bookmark ? bookmarkTitle : currentCollection.name"
-			:small-header="currentLayout?.smallHeader"
-			:header-shadow="currentLayout?.headerShadow"
-			:sidebar-shadow="currentLayout?.sidebarShadow"
-		>
-			<template #title-outer:prepend>
-				<v-button class="header-icon" :class="{ archive }" rounded icon secondary disabled>
-					<v-icon :name="archive ? 'archive' : currentCollection.icon" :color="currentCollection.color" />
-				</v-button>
-			</template>
+		<ContentNotFound v-if="!currentCollection || isSystemCollection(collection) || isCollectionInactive(collection)" />
 
-			<template #headline>
-				<v-breadcrumb v-if="bookmark" :items="breadcrumb" />
-				<v-breadcrumb v-else :items="[{ name: t('content'), to: '/content' }]" />
-			</template>
-
+		<PrivateView v-else :title="headerTitle" :icon="headerIcon" :icon-color="headerIconColor">
 			<template #title-outer:append>
-				<div class="bookmark-controls">
-					<bookmark-add
-						v-if="!bookmark"
-						v-model="bookmarkDialogActive"
-						class="add"
-						:saving="creatingBookmark"
-						@save="createBookmark"
-					>
-						<template #activator="{ on }">
-							<v-icon v-tooltip.right="t('create_bookmark')" class="toggle" clickable name="bookmark" @click="on" />
-						</template>
-					</bookmark-add>
-
-					<v-icon v-else-if="bookmarkSaved" class="saved" name="bookmark" filled />
-
-					<template v-else-if="bookmarkIsMine">
-						<v-icon
-							v-tooltip.bottom="t('update_bookmark')"
-							class="save"
-							clickable
-							name="bookmark_save"
-							@click="savePreset()"
+				<VMenu v-if="isVersioned" show-arrow placement="bottom" :disabled="!readVersionsAllowed">
+					<template #activator="{ toggle }">
+						<VersionChip
+							:version="version ? { key: version, name: null } : null"
+							:clickable="readVersionsAllowed"
+							@click="toggle()"
 						/>
 					</template>
 
-					<bookmark-add
-						v-else
-						v-model="bookmarkDialogActive"
-						class="add"
-						:saving="creatingBookmark"
-						@save="createBookmark"
-					>
-						<template #activator="{ on }">
-							<v-icon class="toggle" name="bookmark" clickable @click="on" />
-						</template>
-					</bookmark-add>
-
-					<v-icon
-						v-if="bookmark && !bookmarkSaving && bookmarkSaved === false"
-						v-tooltip.bottom="t('reset_bookmark')"
-						name="settings_backup_restore"
-						clickable
-						class="clear"
-						@click="clearLocalSave"
-					/>
-				</div>
+					<VList>
+						<VListItem clickable :active="version === null" @click="versionKeyQuery = null">
+							<VListItemContent>{{ $t('published') }}</VListItemContent>
+						</VListItem>
+						<VListItem clickable :active="version === VERSION_KEY_DRAFT" @click="versionKeyQuery = VERSION_KEY_DRAFT">
+							<VListItemContent>{{ $t('draft') }}</VListItemContent>
+						</VListItem>
+					</VList>
+				</VMenu>
 			</template>
 
 			<template #actions:prepend>
@@ -369,154 +452,223 @@ function clearFilters() {
 			</template>
 
 			<template #actions>
-				<search-input v-model="search" v-model:filter="filter" :collection="collection" />
+				<SearchInput v-model="search" v-model:filter="filter" :collection="collection" />
 
-				<v-dialog v-if="selection.length > 0" v-model="confirmDelete" @esc="confirmDelete = false">
+				<PrivateViewHeaderBarActionButton
+					v-if="isBookmarkResetable"
+					:tooltip="$t('reset_bookmark')"
+					icon="settings_backup_restore"
+					variant="ghost"
+					kind="danger"
+					@click="clearLocalSave"
+				/>
+
+				<PrivateViewHeaderBarActionButton
+					v-if="isBookmarkUpdateable"
+					:tooltip="$t('update_bookmark')"
+					icon="bookmark_save"
+					variant="ghost"
+					@click="savePreset()"
+				/>
+
+				<BookmarkDelete
+					v-if="bookmark"
+					v-model="deleteActive"
+					:bookmark="bookmarkPreset"
+					:saving="deleteSaving"
+					@delete="deleteSave(bookmarkPreset)"
+				>
 					<template #activator="{ on }">
-						<v-button
-							v-tooltip.bottom="batchDeleteAllowed ? t('delete_label') : t('not_allowed')"
-							:disabled="batchDeleteAllowed !== true"
-							rounded
-							icon
-							class="action-delete"
-							secondary
+						<PrivateViewHeaderBarActionButton
+							:tooltip="
+								hasBookmarkPermission
+									? $t(`delete_${bookmarkScope}_bookmark`)
+									: $t(`cannot_edit_${bookmarkScope}_bookmarks`)
+							"
+							:disabled="!hasBookmarkPermission"
+							icon="bookmark"
+							icon-filled
+							variant="ghost"
+							kind="warning"
+							active
 							@click="on"
-						>
-							<v-icon name="delete" outline />
-						</v-button>
+						/>
+					</template>
+				</BookmarkDelete>
+
+				<BookmarkAdd v-else v-model="bookmarkDialogActive" :saving="creatingBookmark" @save="createBookmark">
+					<template #activator="{ on }">
+						<PrivateViewHeaderBarActionButton
+							:tooltip="$t('create_bookmark')"
+							icon="bookmark"
+							variant="ghost"
+							kind="warning"
+							@click="on"
+						/>
+					</template>
+				</BookmarkAdd>
+
+				<VDialog v-if="selection.length > 0" v-model="confirmDelete" @esc="confirmDelete = false" @apply="batchDelete">
+					<template #activator="{ on }">
+						<PrivateViewHeaderBarActionButton
+							v-tooltip.bottom="batchDeleteAllowed ? $t('delete_label') : $t('not_allowed')"
+							:disabled="batchDeleteAllowed !== true"
+							icon="delete"
+							kind="danger"
+							variant="ghost"
+							@click="on"
+						/>
 					</template>
 
-					<v-card>
-						<v-card-title>{{ t('batch_delete_confirm', selection.length) }}</v-card-title>
+					<VCard>
+						<VCardTitle>{{ $t('batch_delete_confirm', selection.length) }}</VCardTitle>
 
-						<v-card-actions>
-							<v-button secondary @click="confirmDelete = false">
-								{{ t('cancel') }}
-							</v-button>
-							<v-button kind="danger" :loading="deleting" @click="batchDelete">
-								{{ t('delete_label') }}
-							</v-button>
-						</v-card-actions>
-					</v-card>
-				</v-dialog>
+						<VCardActions>
+							<VButton secondary @click="confirmDelete = false">
+								{{ $t('cancel') }}
+							</VButton>
+							<VButton kind="danger" :loading="deleting" @click="batchDelete">
+								{{ $t('delete_label') }}
+							</VButton>
+						</VCardActions>
+					</VCard>
+				</VDialog>
 
-				<v-dialog
+				<VDialog
 					v-if="
 						selection.length > 0 &&
 						currentCollection.meta &&
 						currentCollection.meta.archive_field &&
-						archive !== 'archived'
+						archive !== 'archived' &&
+						!isVersion
 					"
 					v-model="confirmArchive"
 					@esc="confirmArchive = false"
+					@apply="archiveItems"
 				>
 					<template #activator="{ on }">
-						<v-button
-							v-tooltip.bottom="batchArchiveAllowed ? t('archive') : t('not_allowed')"
+						<PrivateViewHeaderBarActionButton
+							v-tooltip.bottom="batchArchiveAllowed ? $t('archive') : $t('not_allowed')"
 							:disabled="batchArchiveAllowed !== true"
-							rounded
-							icon
-							secondary
+							icon="archive"
+							variant="ghost"
 							@click="on"
-						>
-							<v-icon name="archive" outline />
-						</v-button>
+						/>
 					</template>
 
-					<v-card>
-						<v-card-title>{{ t('archive_confirm_count', selection.length) }}</v-card-title>
+					<VCard>
+						<VCardTitle>{{ $t('archive_confirm_count', selection.length) }}</VCardTitle>
 
-						<v-card-actions>
-							<v-button secondary @click="confirmArchive = false">
-								{{ t('cancel') }}
-							</v-button>
-							<v-button kind="warning" :loading="archiving" @click="archiveItems">
-								{{ t('archive') }}
-							</v-button>
-						</v-card-actions>
-					</v-card>
-				</v-dialog>
+						<VCardActions>
+							<VButton secondary @click="confirmArchive = false">
+								{{ $t('cancel') }}
+							</VButton>
+							<VButton kind="warning" :loading="archiving" @click="archiveItems">
+								{{ $t('archive') }}
+							</VButton>
+						</VCardActions>
+					</VCard>
+				</VDialog>
 
-				<v-button
-					v-if="selection.length > 0"
-					v-tooltip.bottom="batchEditAllowed ? t('edit') : t('not_allowed')"
-					rounded
-					icon
-					secondary
+				<PrivateViewHeaderBarActionButton
+					v-if="selection.length > 0 && !isVersion"
+					v-tooltip.bottom="batchEditAllowed ? $t('edit') : $t('not_allowed')"
+					variant="ghost"
 					:disabled="batchEditAllowed === false"
+					icon="edit"
 					@click="batchEditActive = true"
-				>
-					<v-icon name="edit" outline />
-				</v-button>
+				/>
+			</template>
 
-				<v-button
-					v-tooltip.bottom="createAllowed ? t('create_item') : t('not_allowed')"
-					rounded
-					icon
+			<template #actions:primary>
+				<PrivateViewHeaderBarActionButton
+					:tooltip="createNewAllowed ? translateShortcut(['meta', 'alt', 'n']) : $t('not_allowed')"
+					:label="$t('create')"
+					icon="add"
 					:to="addNewLink"
-					:disabled="createAllowed === false"
-				>
-					<v-icon name="add" />
-				</v-button>
+					:disabled="createNewAllowed === false"
+				/>
 			</template>
 
 			<template #navigation>
-				<content-navigation :current-collection="collection" />
+				<ContentNavigation :current-collection="collection" />
 			</template>
 
-			<v-info
+			<VInfo
 				v-if="bookmark && bookmarkExists === false"
 				type="warning"
-				:title="t('bookmark_doesnt_exist')"
+				:title="$t('bookmark_doesnt_exist')"
 				icon="bookmark"
 				center
 			>
-				{{ t('bookmark_doesnt_exist_copy') }}
+				{{ $t('bookmark_doesnt_exist_copy') }}
 
 				<template #append>
-					<v-button :to="currentCollectionLink">
-						{{ t('bookmark_doesnt_exist_cta') }}
-					</v-button>
+					<VButton :to="currentCollectionLink">
+						{{ $t('bookmark_doesnt_exist_cta') }}
+					</VButton>
 				</template>
-			</v-info>
+			</VInfo>
 
 			<component :is="`layout-${layout || 'tabular'}`" v-else v-bind="layoutState">
 				<template #no-results>
-					<v-info :title="t('no_results')" icon="search" center>
-						{{ t('no_results_copy') }}
+					<VInfo :title="$t('no_results')" icon="search" center>
+						{{ $t('no_results_copy') }}
 
 						<template #append>
-							<v-button @click="clearFilters">{{ t('clear_filters') }}</v-button>
+							<VButton @click="clearFilters">{{ $t('clear_filters') }}</VButton>
 						</template>
-					</v-info>
+					</VInfo>
 				</template>
 
 				<template #no-items>
-					<v-info :title="t('item_count', 0)" :icon="currentCollection.icon" center>
-						{{ t('no_items_copy') }}
+					<VInfo
+						:title="isVersion ? $t('no_versions', { version: versionName }) : $t('item_count', 0)"
+						:icon="currentCollection.icon"
+						center
+					>
+						{{ isVersion ? $t('no_versions_copy', { version: versionName }) : $t('no_items_copy') }}
 
 						<template v-if="createAllowed" #append>
-							<v-button :to="getItemRoute(collection, '+')">{{ t('create_item') }}</v-button>
+							<VButton :to="addNewLink">
+								{{ $t('create_item') }}
+							</VButton>
 						</template>
-					</v-info>
+					</VInfo>
 				</template>
 
 				<template #error="{ error, reset }">
-					<v-info type="danger" :title="t('unexpected_error')" icon="error" center>
-						{{ t('unexpected_error_copy') }}
+					<VInfo
+						v-if="getInactiveCollection(error)"
+						type="warning"
+						:title="$t('errors.COLLECTION_INACTIVE')"
+						icon="block"
+						center
+					>
+						{{ $t('collection_inactive_copy', { collection: getInactiveCollection(error) }) }}
 
 						<template #append>
-							<v-error :error="error" />
-
-							<v-button small class="reset-preset" @click="reset">
-								{{ t('reset_page_preferences') }}
-							</v-button>
+							<VButton small class="reset-preset" @click="reset">
+								{{ $t('reset_page_preferences') }}
+							</VButton>
 						</template>
-					</v-info>
+					</VInfo>
+
+					<VInfo v-else type="danger" :title="$t('unexpected_error')" icon="error" center>
+						{{ $t('unexpected_error_copy') }}
+
+						<template #append>
+							<VError :error="error" />
+
+							<VButton small class="reset-preset" @click="reset">
+								{{ $t('reset_page_preferences') }}
+							</VButton>
+						</template>
+					</VInfo>
 				</template>
 			</component>
 
-			<drawer-batch
+			<DrawerBatch
 				v-model:active="batchEditActive"
 				:primary-keys="selection"
 				:collection="collection"
@@ -524,19 +676,14 @@ function clearFilters() {
 			/>
 
 			<template #sidebar>
-				<sidebar-detail icon="info" :title="t('information')" close>
-					<div
-						v-md="t('page_help_collections_collection', { collection: currentCollection.name })"
-						class="page-description"
-					/>
-				</sidebar-detail>
-				<layout-sidebar-detail v-model="layout">
+				<LayoutSidebarDetail v-model="layout">
 					<component :is="`layout-options-${layout || 'tabular'}`" v-bind="layoutState" />
-				</layout-sidebar-detail>
+				</LayoutSidebarDetail>
 				<component :is="`layout-sidebar-${layout || 'tabular'}`" v-bind="layoutState" />
-				<archive-sidebar-detail v-if="hasArchive" :collection="collection" :archive="archive" />
-				<refresh-sidebar-detail v-model="refreshInterval" @refresh="refresh" />
-				<export-sidebar-detail
+				<ArchiveSidebarDetail v-if="hasArchive && !isVersion" :collection="collection" :archive="archive" />
+				<RefreshSidebarDetail v-model="refreshInterval" @refresh="refresh" />
+				<ExportSidebarDetail
+					v-if="!isVersion"
 					:collection="collection"
 					:filter="mergeFilters(filter, archiveFilter)"
 					:search="search"
@@ -544,86 +691,41 @@ function clearFilters() {
 					:on-download="downloadHandler"
 					@refresh="refresh"
 				/>
-				<flow-sidebar-detail
-					location="collection"
-					:collection="collection"
-					:selection="selection"
-					@refresh="batchRefresh"
-				/>
+				<FlowSidebarDetail v-if="!isVersion" :manual-flows="sidebarManualFlows" />
 			</template>
 
-			<v-dialog :model-value="deleteError !== null">
-				<v-card>
-					<v-card-title>{{ t('something_went_wrong') }}</v-card-title>
-					<v-card-text>
-						<v-error :error="deleteError" />
-					</v-card-text>
-					<v-card-actions>
-						<v-button @click="deleteError = null">{{ t('done') }}</v-button>
-					</v-card-actions>
-				</v-card>
-			</v-dialog>
-		</private-view>
+			<VDialog :model-value="deleteError !== null" @esc="deleteError = null">
+				<VCard>
+					<VCardTitle>{{ $t('something_went_wrong') }}</VCardTitle>
+					<VCardText>
+						<VError :error="deleteError" />
+					</VCardText>
+					<VCardActions>
+						<VButton @click="deleteError = null">{{ $t('done') }}</VButton>
+					</VCardActions>
+				</VCard>
+			</VDialog>
+
+			<FlowDialogs v-bind="flowDialogsContext" />
+		</PrivateView>
 	</component>
 </template>
 
 <style lang="scss" scoped>
-.action-delete {
-	--v-button-background-color-hover: var(--theme--danger) !important;
-	--v-button-color-hover: var(--white) !important;
-}
-
 .header-icon {
 	--v-button-color-disabled: var(--theme--foreground);
 }
 
 .reset-preset {
-	margin-top: 24px;
+	margin-block-start: 1.375rem;
 }
 
-.bookmark-controls {
-	.add,
-	.save,
-	.saved,
-	.clear {
-		display: inline-block;
-		margin-left: 8px;
-	}
-
-	.add,
-	.save,
-	.clear {
-		cursor: pointer;
-		transition: color var(--fast) var(--transition);
-	}
-
-	.add {
-		color: var(--theme--foreground-subdued);
-
-		&:hover {
-			color: var(--theme--foreground);
-		}
-	}
-
-	.save {
-		color: var(--theme--warning);
-
-		&:hover {
-			color: var(--warning-125);
-		}
-	}
-
-	.clear {
-		margin-left: 4px;
-		color: var(--theme--foreground-subdued);
-
-		&:hover {
-			color: var(--theme--warning);
-		}
-	}
-
-	.saved {
-		color: var(--theme--primary);
-	}
+.saved-bookmark {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	block-size: 2rem;
+	inline-size: 2rem;
+	min-inline-size: 2rem;
 }
 </style>

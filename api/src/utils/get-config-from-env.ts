@@ -1,30 +1,42 @@
 import { useEnv } from '@directus/env';
+import { toArray } from '@directus/utils';
 import camelcase from 'camelcase';
 import { set } from 'lodash-es';
 
-export function getConfigFromEnv(
-	prefix: string,
-	omitPrefix?: string | string[],
-	type: 'camelcase' | 'underscore' = 'camelcase',
-): Record<string, any> {
+export interface GetConfigFromEnvOptions {
+	omitPrefix?: string | string[];
+	omitKey?: string | string[];
+	omitSuffix?: string | string[];
+	type?: 'camelcase' | 'underscore';
+}
+
+export function getConfigFromEnv(prefix: string, options?: GetConfigFromEnvOptions): Record<string, any> {
 	const env = useEnv();
+	const type = options?.type ?? 'camelcase';
 
 	const config: any = {};
 
+	const lowerCasePrefix = prefix.toLowerCase();
+	const omitKeys = toArray(options?.omitKey ?? []).map((key) => key.toLowerCase());
+	const omitPrefixes = toArray(options?.omitPrefix ?? []).map((prefix) => prefix.toLowerCase());
+	const omitSuffixes = toArray(options?.omitSuffix ?? []).map((suffix) => suffix.toLowerCase());
+
 	for (const [key, value] of Object.entries(env)) {
-		if (key.toLowerCase().startsWith(prefix.toLowerCase()) === false) continue;
+		const lowerCaseKey = key.toLowerCase();
+		if (lowerCaseKey.startsWith(lowerCasePrefix) === false) continue;
 
-		if (omitPrefix) {
-			let matches = false;
-
-			if (Array.isArray(omitPrefix)) {
-				matches = omitPrefix.some((prefix) => key.toLowerCase().startsWith(prefix.toLowerCase()));
-			} else {
-				matches = key.toLowerCase().startsWith(omitPrefix.toLowerCase());
-			}
-
-			if (matches) continue;
+		if (omitKeys.length > 0) {
+			const isKeyInOmitKeys = omitKeys.some((keyToOmit) => lowerCaseKey === keyToOmit);
+			if (isKeyInOmitKeys) continue;
 		}
+
+		if (omitPrefixes.length > 0) {
+			const keyStartsWithAnyPrefix = omitPrefixes.some((prefix) => lowerCaseKey.startsWith(prefix));
+
+			if (keyStartsWithAnyPrefix) continue;
+		}
+
+		if (omitSuffixes.some((suffix) => lowerCaseKey.endsWith(suffix))) continue;
 
 		if (key.includes('__')) {
 			const path = key

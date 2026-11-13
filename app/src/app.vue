@@ -1,20 +1,42 @@
 <script setup lang="ts">
-import { useSystem } from '@/composables/use-system';
-import { useServerStore } from '@/stores/server';
-import { getAssetUrl } from '@/utils/get-asset-url';
-import { generateFavicon } from '@/utils/generate-favicon';
 import { useAppStore } from '@directus/stores';
 import { ThemeProvider } from '@directus/themes';
 import { useHead } from '@unhead/vue';
-import { computed, onMounted, onUnmounted, toRefs } from 'vue';
-import { useI18n } from 'vue-i18n';
+import { storeToRefs } from 'pinia';
+import { TooltipProvider } from 'reka-ui';
+import { computed, onMounted, onUnmounted, toRefs, watch } from 'vue';
+import { RouterView, useRouter } from 'vue-router';
 import { useThemeConfiguration } from './composables/use-theme-configuration';
 import { startIdleTracking, stopIdleTracking } from './idle';
-
-const { t } = useI18n();
+import { ALLOWED_WHILE_LOCKED } from './router';
+import { useLicenseStore } from './stores/license';
+import { useUserStore } from './stores/user';
+import AppTooltip from '@/components/app-tooltip.vue';
+import VButton from '@/components/v-button.vue';
+import VError from '@/components/v-error.vue';
+import VInfo from '@/components/v-info.vue';
+import VProgressCircular from '@/components/v-progress-circular.vue';
+import { useServerStore } from '@/stores/server';
+import { generateFavicon } from '@/utils/generate-favicon';
+import { getAssetUrl } from '@/utils/get-asset-url';
+import { getRootPath } from '@/utils/get-root-path';
 
 const appStore = useAppStore();
 const serverStore = useServerStore();
+const userStore = useUserStore();
+const licenseStore = useLicenseStore();
+const router = useRouter();
+
+const { isLocked } = storeToRefs(licenseStore);
+
+// React to the license becoming locked while the admin is browsing —
+// the router guard only fires on navigation, so we need a reactive watch here.
+watch(isLocked, (locked) => {
+	if (!locked || !userStore.isAdmin) return;
+	const currentPath = router.currentRoute.value.path;
+	if (ALLOWED_WHILE_LOCKED.includes(currentPath)) return;
+	router.push('/license-recovery');
+});
 
 const { darkMode, themeDark, themeDarkOverrides, themeLight, themeLightOverrides } = useThemeConfiguration();
 
@@ -30,6 +52,10 @@ useHead({
 	titleTemplate: '%s · %projectName',
 	templateParams: {
 		projectName: computed(() => serverStore.info?.project?.project_name ?? 'Directus'),
+	},
+	htmlAttrs: {
+		lang: computed(() => userStore.language),
+		dir: computed(() => userStore.textDirection),
 	},
 	meta: computed(() => {
 		const content = serverStore.info?.project?.project_color ?? '#6644ff';
@@ -53,7 +79,7 @@ useHead({
 		} else if (serverStore.info?.project?.project_color) {
 			href = generateFavicon(serverStore.info.project.project_color, !!serverStore.info.project.project_logo === false);
 		} else {
-			href = '/favicon.ico';
+			href = `${getRootPath()}favicon.ico`;
 		}
 
 		return [
@@ -63,7 +89,7 @@ useHead({
 			},
 		];
 	}),
-	bodyAttrs: computed(() => ({ class: [darkMode.value ? 'dark' : 'light'] })),
+	bodyAttrs: { class: [computed(() => (darkMode.value ? 'dark' : 'light'))] },
 });
 
 onMounted(() => startIdleTracking());
@@ -75,46 +101,53 @@ const customCSS = computed(() => {
 
 const error = computed(() => appStore.error);
 
-useSystem();
+const reload = () => {
+	window.location.reload();
+};
 </script>
 
 <template>
-	<ThemeProvider
-		:dark-mode="darkMode"
-		:theme-light="themeLight"
-		:theme-dark="themeDark"
-		:theme-light-overrides="themeLightOverrides"
-		:theme-dark-overrides="themeDarkOverrides"
-	/>
+	<TooltipProvider>
+		<ThemeProvider
+			:dark-mode="darkMode"
+			:theme-light="themeLight"
+			:theme-dark="themeDark"
+			:theme-light-overrides="themeLightOverrides"
+			:theme-dark-overrides="themeDarkOverrides"
+		/>
 
-	<div id="directus">
-		<transition name="fade">
-			<div v-if="hydrating" class="hydrating">
-				<v-progress-circular indeterminate />
-			</div>
-		</transition>
+		<div id="directus">
+			<Transition name="fade">
+				<div v-if="hydrating" class="hydrating">
+					<VProgressCircular indeterminate />
+				</div>
+			</Transition>
 
-		<v-info v-if="error" type="danger" :title="t('unexpected_error')" icon="error" center>
-			{{ t('unexpected_error_copy') }}
+			<VInfo v-if="error" type="danger" :title="$t('unexpected_error')" icon="error" center>
+				{{ $t('unexpected_error_copy') }}
 
-			<template #append>
-				<v-error :error="error" />
-			</template>
-		</v-info>
+				<template #append>
+					<VError class="error" :error="error" />
 
-		<router-view v-else-if="!hydrating" />
-	</div>
+					<VButton small @click="reload">{{ $t('reload_page') }}</VButton>
+				</template>
+			</VInfo>
 
-	<teleport to="#custom-css">{{ customCSS }}</teleport>
+			<RouterView v-else-if="!hydrating" />
+		</div>
+
+		<Teleport to="#custom-css">{{ customCSS }}</Teleport>
+		<AppTooltip />
+	</TooltipProvider>
 </template>
 
 <style lang="scss" scoped>
 :global(#app) {
-	height: 100%;
+	block-size: 100%;
 }
 
 #directus {
-	height: 100%;
+	block-size: 100%;
 }
 
 .hydrating {
@@ -123,9 +156,9 @@ useSystem();
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 100%;
-	height: 100%;
-	backdrop-filter: blur(10px);
+	inline-size: 100%;
+	block-size: 100%;
+	backdrop-filter: blur(0.5625rem);
 }
 
 .fade-enter-active,
@@ -136,5 +169,9 @@ useSystem();
 .fade-enter-from,
 .fade-leave-to {
 	opacity: 0;
+}
+
+.error {
+	margin-block-end: 1.375rem;
 }
 </style>

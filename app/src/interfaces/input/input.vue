@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
+import { APP_NUMERIC_TYPES } from '@/constants';
 
 const props = withDefaults(
 	defineProps<{
@@ -7,6 +10,7 @@ const props = withDefaults(
 		type?: string;
 		clear?: boolean;
 		disabled?: boolean;
+		nonEditable?: boolean;
 		placeholder?: string;
 		masked?: boolean;
 		iconLeft?: string;
@@ -56,18 +60,22 @@ const percentageRemaining = computed(() => {
 
 const inputType = computed(() => {
 	if (props.masked) return 'password';
-	if (['bigInteger', 'integer', 'float', 'decimal'].includes(props.type!)) return 'number';
+	if (APP_NUMERIC_TYPES.includes(props.type!)) return 'number';
 	return 'text';
 });
+
+const isInteger = computed(() => ['bigInteger', 'integer'].includes(props.type!));
+const isFloat = computed(() => ['float', 'decimal'].includes(props.type!));
 </script>
 
 <template>
-	<v-input
+	<VInput
 		:autofocus="autofocus"
 		:model-value="value"
 		:nullable="!clear"
 		:placeholder="placeholder"
 		:disabled="disabled"
+		:non-editable="nonEditable"
 		:trim="trim"
 		:type="inputType"
 		:class="font"
@@ -78,10 +86,12 @@ const inputType = computed(() => {
 		:max-length="length"
 		:step="step"
 		:dir="direction"
+		:integer="isInteger"
+		:float="isFloat"
 		:autocomplete="masked ? 'new-password' : 'off'"
 		@update:model-value="$emit('input', $event)"
 	>
-		<template v-if="iconLeft" #prepend><v-icon :name="iconLeft" /></template>
+		<template v-if="iconLeft" #prepend><VIcon :name="iconLeft" /></template>
 		<template v-if="(percentageRemaining !== null && percentageRemaining <= 20) || iconRight || softLength" #append>
 			<span
 				v-if="(percentageRemaining !== null && percentageRemaining <= 20) || softLength"
@@ -93,9 +103,9 @@ const inputType = computed(() => {
 			>
 				{{ charsRemaining }}
 			</span>
-			<v-icon v-if="iconRight" :class="{ hide: percentageRemaining && percentageRemaining <= 20 }" :name="iconRight" />
+			<VIcon v-if="iconRight" :class="{ hide: percentageRemaining && percentageRemaining <= 20 }" :name="iconRight" />
 		</template>
-	</v-input>
+	</VInput>
 </template>
 
 <style lang="scss" scoped>
@@ -115,10 +125,10 @@ const inputType = computed(() => {
 
 .remaining {
 	display: none;
-	width: 24px;
+	inline-size: 1.375rem;
 	color: var(--theme--form--field--input--foreground-subdued);
 	font-weight: 600;
-	text-align: right;
+	text-align: end;
 	vertical-align: middle;
 	font-feature-settings: 'tnum';
 }

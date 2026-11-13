@@ -1,6 +1,6 @@
-import { toArray } from '@directus/utils';
 import { URL } from 'url';
-import { useLogger } from '../logger.js';
+import { toArray } from '@directus/utils';
+import { useLogger } from '../logger/index.js';
 
 /**
  * Check if URL matches allow list either exactly or by origin (protocol+domain+port) + pathname
@@ -18,7 +18,7 @@ export default function isUrlAllowed(url: string, allowList: string | string[]):
 				const { origin, pathname } = new URL(allowedURL);
 				return origin + pathname;
 			} catch {
-				logger.warn(`Invalid URL used "${url}"`);
+				logger.warn(`Invalid URL used "${allowedURL}"`);
 			}
 
 			return null;

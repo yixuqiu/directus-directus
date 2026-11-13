@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { useCollectionsStore } from '@/stores/collections';
-import { orderBy } from 'lodash';
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
+import VSelect from '@/components/v-select/v-select.vue';
+import VTextOverflow from '@/components/v-text-overflow.vue';
+import { useCollectionsStore } from '@/stores/collections';
 
 const props = defineProps<{
 	modelValue?: string;
@@ -19,68 +22,52 @@ const collectionExists = computed(() => {
 });
 
 const availableCollections = computed(() => {
-	return orderBy(
-		collectionsStore.databaseCollections.filter((collection) => collection.meta),
-		['meta.sort', 'collection'],
-	);
+	return [
+		...collectionsStore.databaseCollections.filter((collection) => collection.meta),
+		{
+			divider: true,
+		},
+		{
+			collection: t('system'),
+			selectable: false,
+			children: collectionsStore.crudSafeSystemCollections,
+		},
+	];
 });
-
-const systemCollections = collectionsStore.crudSafeSystemCollections;
 </script>
 
 <template>
-	<v-input
+	<VInput
 		key="related-collection-select"
 		:model-value="modelValue"
 		:class="{ matches: collectionExists }"
 		db-safe
 		:nullable="false"
 		:disabled="disabled"
-		:placeholder="t('collection') + '...'"
+		:placeholder="$t('collection') + '...'"
 		@update:model-value="$emit('update:modelValue', $event)"
 	>
 		<template v-if="!disabled" #append>
-			<v-menu show-arrow placement="bottom-end">
-				<template #activator="{ toggle }">
-					<v-icon v-tooltip="t('select_existing')" name="list_alt" clickable :disabled="disabled" @click="toggle" />
+			<VSelect
+				:items="availableCollections"
+				:model-value="modelValue"
+				:attached="false"
+				show-arrow
+				placement="bottom-end"
+				item-value="collection"
+				item-text="collection"
+				item-disabled="meta.singleton"
+				item-label-font-family="var(--theme--fonts--monospace--font-family)"
+				@update:model-value="$emit('update:modelValue', $event)"
+			>
+				<template #preview="{ toggle }">
+					<VIcon v-tooltip="$t('select_existing')" name="list_alt" clickable :disabled="disabled" @click="toggle" />
 				</template>
-
-				<v-list class="monospace">
-					<v-list-item
-						v-for="availableCollection in availableCollections"
-						:key="availableCollection.collection"
-						:active="modelValue === availableCollection.collection"
-						:disabled="availableCollection.meta?.singleton"
-						clickable
-						@click="$emit('update:modelValue', availableCollection.collection)"
-					>
-						<v-list-item-content>
-							{{ availableCollection.collection }}
-						</v-list-item-content>
-					</v-list-item>
-
-					<v-divider />
-
-					<v-list-group>
-						<template #activator>{{ t('system') }}</template>
-						<v-list-item
-							v-for="systemCollection in systemCollections"
-							:key="systemCollection.collection"
-							:active="modelValue === systemCollection.collection"
-							clickable
-							@click="$emit('update:modelValue', systemCollection.collection)"
-						>
-							<v-list-item-content>
-								{{ systemCollection.collection }}
-							</v-list-item-content>
-						</v-list-item>
-					</v-list-group>
-				</v-list>
-			</v-menu>
+			</VSelect>
 		</template>
 
 		<template v-if="disabled" #input>
-			<v-text-overflow :text="modelValue" />
+			<VTextOverflow :text="modelValue" />
 		</template>
-	</v-input>
+	</VInput>
 </template>

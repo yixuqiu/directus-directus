@@ -1,4 +1,4 @@
-import type { ApplyQueryFields, CollectionType, Query, UnpackList } from '../../../types/index.js';
+import type { ApplyQueryFields, CollectionType, NestedPartial, Query, UnpackList } from '../../../types/index.js';
 import type { RestCommand } from '../../types.js';
 import { throwIfCoreCollection, throwIfEmpty } from '../../utils/index.js';
 
@@ -25,7 +25,7 @@ export const updateItems =
 	<Schema, Collection extends keyof Schema, const TQuery extends Query<Schema, Schema[Collection]>>(
 		collection: Collection,
 		keysOrQuery: string[] | number[] | Query<Schema, Schema[Collection]>,
-		item: Partial<UnpackList<Schema[Collection]>>,
+		item: NestedPartial<UnpackList<Schema[Collection]>>,
 		query?: TQuery,
 	): RestCommand<UpdateItemOutput<Schema, Collection, TQuery>[], Schema> =>
 	() => {
@@ -52,6 +52,35 @@ export const updateItems =
 	};
 
 /**
+ * Update multiple items as batch.
+ *
+ * @param collection The collection of the items
+ * @param items The items to update
+ * @param query Optional return data query
+ *
+ * @returns Returns the item objects for the updated items.
+ * @throws Will throw if collection is empty
+ * @throws Will throw if collection is a core collection
+ */
+export const updateItemsBatch =
+	<Schema, Collection extends keyof Schema, const TQuery extends Query<Schema, Schema[Collection]>>(
+		collection: Collection,
+		items: NestedPartial<UnpackList<Schema[Collection]>>[],
+		query?: TQuery,
+	): RestCommand<UpdateItemOutput<Schema, Collection, TQuery>[], Schema> =>
+	() => {
+		throwIfEmpty(String(collection), 'Collection cannot be empty');
+		throwIfCoreCollection(collection, 'Cannot use updateItems for core collections');
+
+		return {
+			path: `/items/${collection as string}`,
+			params: query ?? {},
+			body: JSON.stringify(items),
+			method: 'PATCH',
+		};
+	};
+
+/**
  * Update an existing item.
  *
  * @param collection The collection of the item
@@ -73,7 +102,7 @@ export const updateItem =
 	>(
 		collection: Collection,
 		key: string | number,
-		item: Partial<Item>,
+		item: NestedPartial<Item>,
 		query?: TQuery,
 	): RestCommand<UpdateItemOutput<Schema, Collection, TQuery>, Schema> =>
 	() => {

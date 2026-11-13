@@ -1,4 +1,6 @@
 ---
+first_name: Eerste naam
+last_name: Van
 identifier: Identifiseerder
 avatar: Profiel prentjie
 application: Toepassing
@@ -58,7 +60,6 @@ create_role: Skep Rol
 create_user: Skep Gebruiker
 message: Boodskap
 delete_panel: Skrap paneel
-create_webhook: Skep 'n Webhaak
 invite_users: Nooi Gebruikers
 invite: Nooi uit
 email_already_invited: E-pos "{email}" is reeds uit genooi
@@ -88,9 +89,11 @@ auto_generate: Auto-Genereer
 add_note: Voeg 'n nuttige nota vir gebruikers...
 default_value: Standaard Waarde
 title: Titel
+subtitle: Subtitels
 owner: Eienaar
 created_by: Geskep Deur
 created_on: Geskep Op
+add_existing: Mövcudlardan seçin
 comments: Kommentaar
 create_collection: Skep Versameling
 users: Gebruikers
@@ -113,6 +116,8 @@ wysiwyg_options:
   codeblock: Kode
   table: Tafel
 choices: Keuses
+licensing:
+  resolve_sso_admin_password: Wagwoord
 settings_presets: Boekmerke
 add_new: Voeg nuwe
 all: Alle
@@ -132,6 +137,7 @@ fields:
     ip: IP Adres
   directus_collections:
     collection: Versameling
+    status: Status
   directus_files:
     title: Titel
     description: Beskrywing
@@ -171,16 +177,16 @@ fields:
   directus_roles:
     name: Rol Naam
     description: Beskrywing
-  directus_webhooks:
-    status: Status
+  directus_policies:
+    description: Beskrywing
 field_options:
   directus_activity:
     create: Skep
   directus_collections:
     language: Taal
-  directus_webhooks:
-    actions_create: Skep
 comment: Kommentaar
+ai_tools:
+  files: Lêers
 description: Beskrywing
 email: E-pos
 password: Wagwoord
@@ -189,6 +195,8 @@ table: Tafel
 interfaces:
   filter:
     all: Alle
+  group-tabs:
+    fill_width: Vulbreedte
   presentation-links:
     primary: Primêre
   input-code:
@@ -226,6 +234,9 @@ layouts:
     compact: Kompak
     cozy: Snoesig
 both: Beide
+triggers:
+  webhook:
+    method: Metode
 operations:
   log:
     message: Boodskap
@@ -234,4 +245,6 @@ operations:
   notification:
     message: Boodskap
     subject: Onderwerp
+  request:
+    method: Metode
 compact: Kompak

@@ -1,23 +1,24 @@
-import { StorageClient } from '@supabase/storage-js';
+import { basename, dirname, join } from 'node:path';
+import { Readable } from 'node:stream';
+import { ReadableStream } from 'node:stream/web';
 import {
 	randAlphaNumeric,
 	randGitBranch as randBucket,
 	randDirectoryPath,
 	randDomainName,
+	randFileName,
 	randFilePath,
 	randFileType,
 	randNumber,
 	randPastDate,
 	randText,
 	randGitShortSha as randUnique,
-	randFileName,
 } from '@ngneat/falso';
-import { Response, fetch } from 'undici';
-import { Readable } from 'node:stream';
+import { StorageClient } from '@supabase/storage-js';
+import { fetch, Response } from 'undici';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { DriverSupabaseConfig } from './index.js';
 import { DriverSupabase } from './index.js';
-import { ReadableStream } from 'node:stream/web';
 
 vi.mock('@supabase/storage-js');
 vi.mock('undici');
@@ -52,6 +53,7 @@ beforeEach(() => {
 			projectId: randAlphaNumeric({ length: 10 }).join(''),
 			root: randUnique() + randDirectoryPath(),
 			endpoint: randDomainName(),
+			tus: { chunkSize: 1024 * 1024 },
 		},
 		path: {
 			input: randUnique() + randFilePath(),
@@ -264,7 +266,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting start range offset', async () => {
-		await driver.read(sample.path.input, { start: sample.range.start } as any);
+		await driver.read(sample.path.input, { range: { start: sample.range.start } } as any);
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
@@ -276,7 +278,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting end range offset', async () => {
-		await driver.read(sample.path.input, { end: sample.range.end } as any);
+		await driver.read(sample.path.input, { range: { end: sample.range.end } } as any);
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
@@ -288,7 +290,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting start and end range offset', async () => {
-		await driver.read(sample.path.input, sample.range);
+		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
@@ -303,7 +305,7 @@ describe('#read', () => {
 		vi.mocked(fetch).mockReturnValue({ status: 400, body: new ReadableStream() } as unknown as Promise<Response>);
 
 		try {
-			await driver.read(sample.path.input, sample.range);
+			await driver.read(sample.path.input, { range: sample.range });
 		} catch (err: any) {
 			expect(err).toBeInstanceOf(Error);
 			expect(err.message).toBe(`No stream returned for file "${sample.path.input}"`);
@@ -313,13 +315,26 @@ describe('#read', () => {
 	test('Throws an error when returned stream is not a readable stream', async () => {
 		vi.mocked(fetch).mockReturnValue({ status: 200, body: undefined } as unknown as Promise<Response>);
 
-		expect(driver.read(sample.path.input, sample.range)).rejects.toThrowError(
+		expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
 			new Error(`No stream returned for file "${sample.path.input}"`),
 		);
 	});
 
+	/** An unread response body holds its connection open */
+	test('Cancels the response body it never reads', async () => {
+		const cancel = vi.fn().mockResolvedValue(undefined);
+
+		vi.mocked(fetch).mockReturnValue({ status: 400, body: { cancel } } as unknown as Promise<Response>);
+
+		await expect(driver.read(sample.path.input)).rejects.toThrowError(
+			new Error(`No stream returned for file "${sample.path.input}"`),
+		);
+
+		expect(cancel).toHaveBeenCalled();
+	});
+
 	test('Returns stream', async () => {
-		const stream = await driver.read(sample.path.input, sample.range);
+		const stream = await driver.read(sample.path.input, { range: sample.range });
 
 		expect(fetch).toHaveBeenCalledWith(endpoint, {
 			headers: {
@@ -349,9 +364,9 @@ describe('#stat', () => {
 			modified: sample.file.modified,
 		});
 
-		expect(driver['bucket'].list).toHaveBeenCalledWith('', {
+		expect(driver['bucket'].list).toHaveBeenCalledWith(dirname(sample.path.input), {
 			limit: 1,
-			search: sample.path.input,
+			search: basename(sample.path.input),
 		});
 	});
 
@@ -372,9 +387,27 @@ describe('#stat', () => {
 			modified: sample.file.modified,
 		});
 
-		expect(driver['bucket'].list).toHaveBeenCalledWith('root', {
+		expect(driver['bucket'].list).toHaveBeenCalledWith(join('root', dirname(sample.path.input)), {
 			limit: 1,
-			search: sample.path.input,
+			search: basename(sample.path.input),
+		});
+	});
+
+	test('Uses empty string instead of "." when root is the empty string', async () => {
+		const filename = 'test.png';
+
+		driver['bucket'] = {
+			list: vi.fn().mockReturnValue({
+				data: [{ metadata: { contentLength: sample.file.size, lastModified: sample.file.modified } }],
+				error: null,
+			}),
+		} as any;
+
+		await driver.stat(filename);
+
+		expect(driver['bucket'].list).toHaveBeenCalledWith('', {
+			limit: 1,
+			search: filename,
 		});
 	});
 
@@ -389,37 +422,62 @@ describe('#stat', () => {
 		expect(driver.stat(sample.path.input)).rejects.toThrowError(new Error(`File not found`));
 	});
 
-	test('Throws an error if storage error is returned', async () => {
+	/**
+	 * A failed lookup is not the same answer as an empty one, so the storage error has to reach the
+	 * caller instead of being reported as a missing file.
+	 */
+	test('Throws the storage error if the lookup failed', async () => {
+		const error = new Error('Service unavailable');
+
 		driver['bucket'] = {
 			list: vi.fn().mockReturnValue({
 				data: null,
-				error: true,
+				error,
 			}),
 		} as any;
 
-		expect(driver.stat(sample.path.input)).rejects.toThrowError(new Error(`File not found`));
+		await expect(driver.stat(sample.path.input)).rejects.toThrowError(error);
 	});
 });
 
 describe('#exists', () => {
-	beforeEach(() => {
-		driver.stat = vi.fn();
-	});
-
-	test('Returns true if stat returns the stats', async () => {
-		vi.mocked(driver.stat).mockResolvedValue({ size: sample.file.size, modified: sample.file.modified });
+	test('Returns true if the file is returned by list', async () => {
+		driver['bucket'] = {
+			list: vi.fn().mockReturnValue({
+				data: [{ metadata: { contentLength: sample.file.size, lastModified: sample.file.modified } }],
+				error: null,
+			}),
+		} as any;
 
 		const exists = await driver.exists(sample.path.input);
 
 		expect(exists).toBe(true);
 	});
 
-	test('Returns false if stat throws an error', async () => {
-		vi.mocked(driver.stat).mockRejectedValue(new Error());
+	test('Returns false if no file is returned by list', async () => {
+		driver['bucket'] = {
+			list: vi.fn().mockReturnValue({
+				data: [],
+				error: null,
+			}),
+		} as any;
 
 		const exists = await driver.exists(sample.path.input);
 
 		expect(exists).toBe(false);
+	});
+
+	test('Throws the storage error if the lookup failed', async () => {
+		const error = new Error('Service unavailable');
+
+		driver['bucket'] = {
+			list: vi.fn().mockReturnValue({
+				data: null,
+				error,
+			}),
+		} as any;
+
+		await expect(driver.exists(sample.path.input)).rejects.toThrowError(error);
 	});
 });
 
@@ -448,7 +506,7 @@ describe('#copy', () => {
 describe('#write', () => {
 	beforeEach(() => {
 		driver['bucket'] = {
-			upload: vi.fn(),
+			upload: vi.fn().mockResolvedValue({ data: null, error: null }),
 		} as any;
 	});
 
@@ -479,6 +537,18 @@ describe('#write', () => {
 			duplex: 'half',
 			upsert: true,
 		});
+	});
+
+	test('Throws error when upload fails', async () => {
+		const uploadError = new Error('Upload failed');
+
+		driver['bucket'] = {
+			upload: vi.fn().mockResolvedValue({ data: null, error: uploadError }),
+		} as any;
+
+		await expect(driver.write(sample.path.input, sample.stream)).rejects.toThrow(
+			new Error(`Error uploading file "${sample.path.input}"`, { cause: uploadError }),
+		);
 	});
 });
 

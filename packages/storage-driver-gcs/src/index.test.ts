@@ -1,19 +1,19 @@
-import { normalizePath } from '@directus/utils';
-import { Bucket, Storage } from '@google-cloud/storage';
-import {
-	randDirectoryPath,
-	randFilePath,
-	randFileType,
-	randGitBranch as randBucket,
-	randGitShortSha as randUnique,
-	randNumber,
-	randPastDate,
-	randText,
-	randUrl,
-} from '@ngneat/falso';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { normalizePath } from '@directus/utils';
+import { Bucket, Storage } from '@google-cloud/storage';
+import {
+	randGitBranch as randBucket,
+	randDirectoryPath,
+	randFilePath,
+	randFileType,
+	randNumber,
+	randPastDate,
+	randText,
+	randGitShortSha as randUnique,
+	randUrl,
+} from '@ngneat/falso';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { DriverGCSConfig } from './index.js';
@@ -125,7 +125,9 @@ describe('#constructor', () => {
 			bucket: vi.fn().mockReturnValue(mockBucket),
 		} as unknown as Storage;
 
-		vi.mocked(Storage).mockReturnValue(mockStorage);
+		vi.mocked(Storage).mockImplementation(function () {
+			return mockStorage;
+		} as unknown as typeof Storage);
 
 		const driver = new DriverGCS({
 			bucket: sample.config.bucket,
@@ -198,13 +200,13 @@ describe('#read', () => {
 	});
 
 	test('Passes optional range to createReadStream', async () => {
-		await driver.read('/path/to/file', { start: sample.range.start, end: undefined });
+		await driver.read('/path/to/file', { range: { start: sample.range.start, end: undefined } });
 		expect(mockFile.createReadStream).toHaveBeenCalledWith({ start: sample.range.start, end: undefined });
 
-		await driver.read('/path/to/file', sample.range);
+		await driver.read('/path/to/file', { range: sample.range });
 		expect(mockFile.createReadStream).toHaveBeenCalledWith(sample.range);
 
-		await driver.read('/path/to/file', { start: undefined, end: sample.range.end });
+		await driver.read('/path/to/file', { range: { start: undefined, end: sample.range.end } });
 		expect(mockFile.createReadStream).toHaveBeenCalledWith({ start: undefined, end: sample.range.end });
 	});
 });
@@ -335,6 +337,17 @@ describe('#exists', () => {
 	test('Returns boolean from response array', async () => {
 		const result = await driver.exists(sample.path.input);
 		expect(result).toBe(true);
+	});
+
+	/**
+	 * The SDK only answers false for a missing object, so a failed lookup has to keep travelling. Reporting
+	 * it as a missing file makes callers act on a wrong answer.
+	 */
+	test('Throws if the lookup failed', async () => {
+		const error = new Error('Service unavailable');
+		mockFile.exists.mockRejectedValue(error);
+
+		await expect(driver.exists(sample.path.input)).rejects.toThrowError(error);
 	});
 });
 

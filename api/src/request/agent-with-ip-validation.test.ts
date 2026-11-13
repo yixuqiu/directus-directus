@@ -1,7 +1,7 @@
 import EventEmitter from 'node:events';
 import { type Agent } from 'node:http';
-import { afterEach, beforeEach, expect, test, vi, type Mock } from 'vitest';
-import { agentWithIpValidation, type _Agent } from './agent-with-ip-validation.js';
+import { afterEach, beforeEach, expect, type Mock, test, vi } from 'vitest';
+import { type _Agent, agentWithIpValidation } from './agent-with-ip-validation.js';
 import { isDeniedIp } from './is-denied-ip.js';
 
 vi.mock('./is-denied-ip.js');
@@ -25,15 +25,15 @@ afterEach(() => {
 test('Blocks request if host is missing', () => {
 	const options = {};
 
-	expect(() => mockAgent.createConnection(options, () => {})).toThrowError(
+	expect(() => mockAgent.createConnection?.(options, () => {})).toThrowError(
 		`Request cannot be verified due to missing host`,
 	);
 });
 
 test('Does not call IP check on createConnection if host is not an IP', () => {
-	const options = { host: 'directus.io' };
+	const options = { host: 'directus.example.com' };
 
-	mockAgent.createConnection(options, () => {});
+	mockAgent.createConnection?.(options, () => {});
 
 	expect(isDeniedIp).not.toHaveBeenCalled();
 });
@@ -41,7 +41,7 @@ test('Does not call IP check on createConnection if host is not an IP', () => {
 test('Calls IP check on createConnection if host is IP', async () => {
 	const options = { host: '127.0.0.1' };
 
-	mockAgent.createConnection(options, () => {});
+	mockAgent.createConnection?.(options, () => {});
 
 	expect(isDeniedIp).toHaveBeenCalled();
 });
@@ -51,7 +51,7 @@ test('Blocks on createConnection if IP is denied', async () => {
 
 	const options = { host: '127.0.0.1' };
 
-	expect(() => mockAgent.createConnection(options, () => {})).toThrowError(
+	expect(() => mockAgent.createConnection?.(options, () => {})).toThrowError(
 		`Requested domain "${options.host}" resolves to a denied IP address`,
 	);
 });
@@ -61,7 +61,7 @@ test('Blocks on resolve if IP is denied', async () => {
 
 	const options = { host: 'baddomain' };
 
-	mockAgent.createConnection(options, () => {});
+	mockAgent.createConnection?.(options, () => {});
 
 	mockSocket.emit('lookup', null, '127.0.0.1');
 
@@ -73,9 +73,9 @@ test('Blocks on resolve if IP is denied', async () => {
 test('Does not block on resolve if IP is allowed', async () => {
 	vi.mocked(isDeniedIp).mockReturnValue(false);
 
-	const options = { host: 'directus.io' };
+	const options = { host: 'directus.example.com' };
 
-	mockAgent.createConnection(options, () => {});
+	mockAgent.createConnection?.(options, () => {});
 
 	mockSocket.emit('lookup', null, '127.0.0.1');
 
@@ -88,7 +88,7 @@ test('Checks each resolved IP', async () => {
 
 	const options = { host: 'baddomain' };
 
-	mockAgent.createConnection(options, () => {});
+	mockAgent.createConnection?.(options, () => {});
 
 	mockSocket.emit('lookup', null, '192.158.1.38');
 	mockSocket.emit('lookup', null, '127.0.0.1');

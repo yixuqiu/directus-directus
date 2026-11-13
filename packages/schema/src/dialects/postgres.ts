@@ -1,8 +1,9 @@
 import type { Knex } from 'knex';
+import type { Column, TableColumn } from '../types/column.js';
+import type { ForeignKey } from '../types/foreign-key.js';
 import type { SchemaOverview } from '../types/overview.js';
 import type { SchemaInspector } from '../types/schema-inspector.js';
 import type { Table } from '../types/table.js';
-import type { Column } from '../types/column.js';
 import { stripQuotes } from '../utils/strip-quotes.js';
 
 type RawColumn = {
@@ -11,6 +12,7 @@ type RawColumn = {
 	schema: string;
 	data_type: string;
 	is_nullable: boolean;
+	index_name: null | string;
 	generation_expression: null | string;
 	default_value: null | string;
 	is_generated: boolean;
@@ -34,7 +36,7 @@ type Constraint = {
  * Converts Postgres default value to JS
  * Eg `'example'::character varying` => `example`
  */
-export function parseDefaultValue(value: string | null) {
+export function parseDefaultValue(value: string | null): string | null {
 	if (value === null) return null;
 	if (value.startsWith('nextval(')) return value;
 
@@ -72,7 +74,7 @@ export default class Postgres implements SchemaInspector {
 	/**
 	 * Set the schema to be used in other methods
 	 */
-	withSchema(schema: string) {
+	withSchema(schema: string): this {
 		this.schema = schema;
 		this.explodedSchema = [this.schema];
 		return this;
@@ -200,11 +202,28 @@ export default class Postgres implements SchemaInspector {
 		}
 
 		for (const { table_name, column_name } of primaryKeys) {
-			overview[table_name]!.primary = column_name;
+			if (overview[table_name]) {
+				overview[table_name].primary = column_name;
+			} else {
+				/* eslint-disable-next-line no-console */
+				console.error(`Could not set primary key "${column_name}" for unknown table "${table_name}"`);
+			}
 		}
 
 		for (const { table_name, column_name, data_type } of geometryColumns) {
-			overview[table_name]!.columns[column_name]!.data_type = data_type;
+			if (overview[table_name]) {
+				if (overview[table_name].columns[column_name]) {
+					overview[table_name].columns[column_name].data_type = data_type;
+				} else {
+					/* eslint-disable-next-line no-console */
+					console.error(
+						`Could not set data type "${data_type}" for unknown column "${column_name}" in table "${table_name}"`,
+					);
+				}
+			} else {
+				/* eslint-disable-next-line no-console */
+				console.error(`Could not set geometry column "${column_name}" for unknown table "${table_name}"`);
+			}
 		}
 
 		return overview;
@@ -216,7 +235,7 @@ export default class Postgres implements SchemaInspector {
 	/**
 	 * List all existing tables in the current schema/database
 	 */
-	async tables() {
+	async tables(): Promise<string[]> {
 		const schemaIn = this.explodedSchema.map((schemaName) => `${this.knex.raw('?', [schemaName])}::regnamespace`);
 
 		const result = await this.knex.raw(
@@ -272,7 +291,7 @@ export default class Postgres implements SchemaInspector {
 	/**
 	 * Check if a table exists in the current schema/database
 	 */
-	async hasTable(table: string) {
+	async hasTable(table: string): Promise<boolean> {
 		const schemaIn = this.explodedSchema.map((schemaName) => `${this.knex.raw('?', [schemaName])}::regnamespace`);
 
 		const result = await this.knex.raw(
@@ -299,7 +318,7 @@ export default class Postgres implements SchemaInspector {
 	/**
 	 * Get all the available columns in the current schema/database. Can be filtered to a specific table
 	 */
-	async columns(table?: string) {
+	async columns(table?: string): Promise<TableColumn[]> {
 		const bindings: any[] = [];
 		if (table) bindings.push(table);
 
@@ -363,10 +382,11 @@ export default class Postgres implements SchemaInspector {
 			knex.raw<{ rows: RawColumn[] }>(
 				`
 			SELECT
-				att.attname AS name,
+			  att.attname AS name,
 			  rel.relname AS table,
 			  rel.relnamespace::regnamespace::text as schema,
 			  att.atttypid::regtype::text AS data_type,
+			  ix_rel.relname as index_name,
 			  NOT att.attnotnull AS is_nullable,
 			  ${generationSelect}
 			  CASE
@@ -401,6 +421,18 @@ export default class Postgres implements SchemaInspector {
 			  LEFT JOIN pg_class rel ON att.attrelid = rel.oid
 			  LEFT JOIN pg_attrdef ad ON (att.attrelid, att.attnum) = (ad.adrelid, ad.adnum)
 			  LEFT JOIN pg_description des ON (att.attrelid, att.attnum) = (des.objoid, des.objsubid)
+			  LEFT JOIN LATERAL (
+			    SELECT
+				 indexrelid
+			    FROM
+				 pg_index ix
+			    WHERE
+				 att.attrelid = ix.indrelid
+				 AND att.attnum = ALL(ix.indkey)
+				 AND ix.indisunique = false
+			    LIMIT 1
+			  ) ix ON true
+			  LEFT JOIN pg_class ix_rel ON ix_rel.oid=ix.indexrelid
 			WHERE
 			  rel.relnamespace IN (${schemaIn})
 			  ${table ? 'AND rel.relname = ?' : ''}
@@ -449,14 +481,24 @@ export default class Postgres implements SchemaInspector {
 			const foreignKeyConstraint = constraintsForColumn.find((constraint) => constraint.type === 'f');
 
 			return {
-				...col,
+				name: col.name,
+				table: col.table,
+				data_type: col.data_type,
+				default_value: parseDefaultValue(col.default_value),
+				generation_expression: col.generation_expression,
+				max_length: col.max_length,
+				numeric_precision: col.numeric_precision,
+				numeric_scale: col.numeric_scale,
+				is_generated: col.is_generated,
+				is_nullable: col.is_nullable,
 				is_unique: constraintsForColumn.some((constraint) => ['u', 'p'].includes(constraint.type)),
+				is_indexed: !!col.index_name && col.index_name.length > 0,
 				is_primary_key: constraintsForColumn.some((constraint) => constraint.type === 'p'),
 				has_auto_increment: constraintsForColumn.some((constraint) => constraint.has_auto_increment),
-				default_value: parseDefaultValue(col.default_value),
 				foreign_key_schema: foreignKeyConstraint?.foreign_key_schema ?? null,
 				foreign_key_table: foreignKeyConstraint?.foreign_key_table ?? null,
 				foreign_key_column: foreignKeyConstraint?.foreign_key_column ?? null,
+				comment: col.comment,
 			};
 		});
 
@@ -524,7 +566,7 @@ export default class Postgres implements SchemaInspector {
 	/**
 	 * Check if the given table contains the given column
 	 */
-	async hasColumn(table: string, column: string) {
+	async hasColumn(table: string, column: string): Promise<boolean> {
 		const schemaIn = this.explodedSchema.map((schemaName) => `${this.knex.raw('?', [schemaName])}::regnamespace`);
 
 		const result = await this.knex.raw(
@@ -577,7 +619,7 @@ export default class Postgres implements SchemaInspector {
 	// Foreign Keys
 	// ===============================================================================================
 
-	async foreignKeys(table?: string) {
+	async foreignKeys(table?: string): Promise<ForeignKey[]> {
 		const schemaIn = this.explodedSchema.map((schemaName) => `${this.knex.raw('?', [schemaName])}::regnamespace`);
 
 		const bindings: any[] = [];

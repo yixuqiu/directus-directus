@@ -1,4 +1,4 @@
-import { isPlainObject, isArray } from 'lodash-es';
+import { isArray, isPlainObject } from 'lodash-es';
 
 /**
  * Calculates the depth of a given JSON structure, not counting any _ prefixed properties
@@ -44,6 +44,8 @@ export function calculateFieldDepth(obj?: Record<string, any> | null, dotNotatio
 	for (const key of keys) {
 		const nestedValue = obj[key];
 
+		if (key === '_json') continue;
+
 		if (dotNotationKeys.includes(key) && nestedValue) {
 			let sortDepth = 0;
 
@@ -59,7 +61,7 @@ export function calculateFieldDepth(obj?: Record<string, any> | null, dotNotatio
 		} else {
 			if (!isPlainObject(nestedValue) && !isArray(nestedValue)) continue;
 
-			let nestedDepth = 0;
+			let nestedDepth: number;
 
 			if (Array.isArray(nestedValue)) {
 				nestedDepth = Math.max(...nestedValue.map((val) => calculateFieldDepth(val, dotNotationKeys)));

@@ -1,6 +1,6 @@
-import { isSystemCollection } from '@directus/system-data';
-import type { ApplyQueryFields, CollectionType, Query, UnpackList } from '../../../types/index.js';
+import type { ApplyQueryFields, CollectionType, NestedPartial, Query, UnpackList } from '../../../types/index.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfCoreCollection, throwIfEmpty } from '../../utils/index.js';
 
 export type CreateItemOutput<
 	Schema,
@@ -16,22 +16,21 @@ export type CreateItemOutput<
  * @param query Optional return data query
  *
  * @returns Returns the item objects of the item that were created.
+ * @throws Will throw if collection is a core collection
+ * @throws Will throw if collection is empty
  */
 export const createItems =
 	<Schema, Collection extends keyof Schema, const TQuery extends Query<Schema, Schema[Collection]>>(
 		collection: Collection,
-		items: Partial<UnpackList<Schema[Collection]>>[],
+		items: NestedPartial<UnpackList<Schema[Collection]>>[],
 		query?: TQuery,
 	): RestCommand<CreateItemOutput<Schema, Collection, TQuery>[], Schema> =>
 	() => {
-		const _collection = String(collection);
-
-		if (isSystemCollection(_collection)) {
-			throw new Error('Cannot use createItems for core collections');
-		}
+		throwIfEmpty(String(collection), 'Collection cannot be empty');
+		throwIfCoreCollection(collection, 'Cannot use createItems for core collections');
 
 		return {
-			path: `/items/${_collection}`,
+			path: `/items/${collection as string}`,
 			params: query ?? {},
 			body: JSON.stringify(items),
 			method: 'POST',
@@ -46,22 +45,21 @@ export const createItems =
  * @param query Optional return data query
  *
  * @returns Returns the item objects of the item that were created.
+ * @throws Will throw if collection is a core collection
+ * @throws Will throw if collection is empty
  */
 export const createItem =
 	<Schema, Collection extends keyof Schema, const TQuery extends Query<Schema, Schema[Collection]>>(
 		collection: Collection,
-		item: Partial<UnpackList<Schema[Collection]>>,
+		item: NestedPartial<UnpackList<Schema[Collection]>>,
 		query?: TQuery,
 	): RestCommand<CreateItemOutput<Schema, Collection, TQuery>, Schema> =>
 	() => {
-		const _collection = String(collection);
-
-		if (isSystemCollection(_collection)) {
-			throw new Error('Cannot use createItem for core collections');
-		}
+		throwIfEmpty(String(collection), 'Collection cannot be empty');
+		throwIfCoreCollection(collection, 'Cannot use createItem for core collections');
 
 		return {
-			path: `/items/${_collection}`,
+			path: `/items/${collection as string}`,
 			params: query ?? {},
 			body: JSON.stringify(item),
 			method: 'POST',

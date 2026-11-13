@@ -18,6 +18,11 @@ export interface CacheConfigLocal extends CacheConfigAbstract {
 	 * Maximum number of keys to store in the cache
 	 */
 	maxKeys?: number;
+
+	/**
+	 * Time-to-Live expires keys after duration in milliseconds
+	 */
+	ttl?: number;
 }
 
 export interface CacheConfigRedis extends CacheConfigAbstract {
@@ -44,6 +49,24 @@ export interface CacheConfigRedis extends CacheConfigAbstract {
 	 * @default 1000
 	 */
 	compressionMinSize?: number;
+
+	/**
+	 * Time-to-Live expires keys after duration in milliseconds.
+	 *
+	 * With `hash` enabled the TTL applies to the namespace as a whole and is refreshed on every write.
+	 */
+	ttl?: number;
+
+	/**
+	 * Store the keys as fields of a single Redis hash named after the namespace, rather than as
+	 * individual `namespace:key` keys, making `clear` a single unlink instead of a keyspace scan.
+	 *
+	 * The `ttl` applies to the hash as a whole; locks are unaffected as they can't live in a hash.
+	 * When Redis 7.4+ becomes the only lts, we can improve this even further by using TTL + Hashsets
+	 *
+	 * @default false
+	 */
+	hash?: boolean;
 
 	/**
 	 * Existing or new Redis connection to use with this memory class

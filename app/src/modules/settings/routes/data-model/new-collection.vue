@@ -1,24 +1,39 @@
 <script setup lang="ts">
-import api from '@/api';
-import { useDialogRoute } from '@/composables/use-dialog-route';
-import { useCollectionsStore } from '@/stores/collections';
-import { useFieldsStore } from '@/stores/fields';
-import { useRelationsStore } from '@/stores/relations';
-import { notify } from '@/utils/notify';
-import { unexpectedError } from '@/utils/unexpected-error';
 import { DeepPartial, Field, Relation } from '@directus/types';
-import { cloneDeep } from 'lodash';
+import { cloneDeep } from 'lodash-es';
 import { reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
+import api from '@/api';
+import VCheckbox from '@/components/v-checkbox.vue';
+import VDivider from '@/components/v-divider.vue';
+import VDrawer from '@/components/v-drawer.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
+import VNotice from '@/components/v-notice.vue';
+import VSelect from '@/components/v-select/v-select.vue';
+import VTabItem from '@/components/v-tab-item.vue';
+import VTab from '@/components/v-tab.vue';
+import VTabsItems from '@/components/v-tabs-items.vue';
+import VTabs from '@/components/v-tabs.vue';
+import { useDialogRoute } from '@/composables/use-dialog-route';
+import { useCollectionsStore } from '@/stores/collections';
+import { useFieldsStore } from '@/stores/fields';
+import { useLicenseStore } from '@/stores/license';
+import { useRelationsStore } from '@/stores/relations';
+import { extractErrorCode } from '@/utils/extract-error-code';
+import { notify } from '@/utils/notify';
+import { unexpectedError } from '@/utils/unexpected-error';
+import { PrivateViewHeaderBarActionButton } from '@/views/private';
+import EntitlementLimitModal from '@/views/private/components/license/entitlement-limit-modal.vue';
 
 const defaultSystemFields = {
-	status: {
+	archived: {
 		enabled: false,
 		inputDisabled: false,
-		name: 'status',
-		label: 'status',
-		icon: 'flag',
+		name: 'archived',
+		label: 'archived',
+		icon: 'archive',
 	},
 	sort: {
 		enabled: false,
@@ -63,6 +78,7 @@ const router = useRouter();
 
 const collectionsStore = useCollectionsStore();
 const fieldsStore = useFieldsStore();
+const licenseStore = useLicenseStore();
 const relationsStore = useRelationsStore();
 
 const isOpen = useDialogRoute();
@@ -83,6 +99,7 @@ const unarchiveValue = ref<string>();
 const systemFields = reactive(cloneDeep(defaultSystemFields));
 
 const saving = ref(false);
+const limitModalOpen = ref(false);
 
 watch(() => singleton.value, setOptionsForSingleton);
 
@@ -95,7 +112,7 @@ async function save() {
 	saving.value = true;
 
 	try {
-		await api.post(`/collections`, {
+		const response = await api.post(`/collections`, {
 			collection: collectionName.value,
 			fields: [getPrimaryKeyField(), ...getSystemFields()],
 			schema: {},
@@ -108,6 +125,8 @@ async function save() {
 			},
 		});
 
+		const createdCollectionName = response.data.data.collection;
+
 		const storeHydrations: Promise<void>[] = [];
 
 		const relations = getSystemRelations();
@@ -118,16 +137,20 @@ async function save() {
 			storeHydrations.push(relationsStore.hydrate());
 		}
 
-		storeHydrations.push(collectionsStore.hydrate(), fieldsStore.hydrate());
+		storeHydrations.push(collectionsStore.hydrate(), fieldsStore.hydrate(), licenseStore.hydrate());
 		await Promise.all(storeHydrations);
 
 		notify({
 			title: t('collection_created'),
 		});
 
-		router.replace(`/settings/data-model/${collectionName.value}`);
-	} catch (error) {
-		unexpectedError(error);
+		router.replace({ name: 'settings-fields', params: { collection: createdCollectionName } });
+	} catch (error: any) {
+		if (extractErrorCode(error) === 'LIMIT_EXCEEDED') {
+			limitModalOpen.value = true;
+		} else {
+			unexpectedError(error);
+		}
 	} finally {
 		saving.value = false;
 	}
@@ -185,70 +208,33 @@ function getPrimaryKeyField() {
 function getSystemFields() {
 	const fields: DeepPartial<Field>[] = [];
 
-	// Status
-	if (systemFields.status.enabled === true) {
+	// Archived
+	if (systemFields.archived.enabled === true) {
 		fields.push({
-			field: systemFields.status.name,
-			type: 'string',
+			field: systemFields.archived.name,
+			type: 'boolean',
 			meta: {
-				width: 'full',
-				options: {
-					choices: [
-						{
-							text: '$t:published',
-							value: 'published',
-							color: 'var(--theme--primary)',
-						},
-						{
-							text: '$t:draft',
-							value: 'draft',
-							color: 'var(--theme--foreground)',
-						},
-						{
-							text: '$t:archived',
-							value: 'archived',
-							color: 'var(--theme--warning)',
-						},
-					],
-				},
-				interface: 'select-dropdown',
-				display: 'labels',
+				special: ['cast-boolean'],
+				interface: 'boolean',
+				display: 'boolean',
 				display_options: {
-					showAsDot: true,
-					choices: [
-						{
-							text: '$t:published',
-							value: 'published',
-							color: 'var(--theme--primary)',
-							foreground: 'var(--theme--primary)',
-							background: 'var(--theme--primary-background)',
-						},
-						{
-							text: '$t:draft',
-							value: 'draft',
-							color: 'var(--theme--foreground)',
-							foreground: 'var(--theme--foreground)',
-							background: 'var(--theme--background-normal)',
-						},
-						{
-							text: '$t:archived',
-							value: 'archived',
-							color: 'var(--theme--warning)',
-							foreground: 'var(--theme--warning)',
-							background: 'var(--theme--warning-background)',
-						},
-					],
+					iconOn: 'archive',
+					colorOn: 'var(--theme--foreground-subdued)',
+					labelOn: '$t:archived',
+					iconOff: 'unarchive',
+					colorOff: 'transparent',
+					labelOff: '$t:not_archived',
 				},
 			},
 			schema: {
-				default_value: 'draft',
+				default_value: false,
 				is_nullable: false,
 			},
 		});
 
-		archiveField.value = systemFields.status.name;
-		archiveValue.value = 'archived';
-		unarchiveValue.value = 'draft';
+		archiveField.value = systemFields.archived.name;
+		archiveValue.value = 'true';
+		unarchiveValue.value = 'false';
 	}
 
 	// Sort
@@ -274,7 +260,7 @@ function getSystemFields() {
 				special: ['user-created'],
 				interface: 'select-dropdown-m2o',
 				options: {
-					template: '{{avatar.$thumbnail}} {{first_name}} {{last_name}}',
+					template: '{{avatar}} {{first_name}} {{last_name}}',
 				},
 				display: 'user',
 				readonly: true,
@@ -312,7 +298,7 @@ function getSystemFields() {
 				special: ['user-updated'],
 				interface: 'select-dropdown-m2o',
 				options: {
-					template: '{{avatar.$thumbnail}} {{first_name}} {{last_name}}',
+					template: '{{avatar}} {{first_name}} {{last_name}}',
 				},
 				display: 'user',
 				readonly: true,
@@ -368,82 +354,95 @@ function getSystemRelations() {
 
 	return relations;
 }
+
+function onApply() {
+	if (currentTab.value[0] === 'optional_system_fields') {
+		if (saving.value) return;
+		save();
+		return;
+	}
+
+	if (!collectionName.value?.length) return;
+
+	currentTab.value = ['optional_system_fields'];
+}
 </script>
 
 <template>
-	<v-drawer
-		:title="t('creating_new_collection')"
+	<VDrawer
+		:title="$t('creating_new_collection')"
 		:model-value="isOpen"
 		class="new-collection"
 		persistent
-		:sidebar-label="currentTab[0] && t(currentTab[0])"
-		@cancel="router.push('/settings/data-model')"
+		:sidebar-label="currentTab[0] && $t(currentTab[0])"
+		@cancel="router.push({ name: 'settings-collections' })"
+		@apply="onApply"
 	>
 		<template #sidebar>
-			<v-tabs v-model="currentTab" vertical>
-				<v-tab value="collection_setup">{{ t('collection_setup') }}</v-tab>
-				<v-tab value="optional_system_fields" :disabled="!collectionName">
-					{{ t('optional_system_fields') }}
-				</v-tab>
-			</v-tabs>
+			<VTabs v-model="currentTab" vertical>
+				<VTab value="collection_setup">{{ $t('collection_setup') }}</VTab>
+				<VTab value="optional_system_fields" :disabled="!collectionName">
+					{{ $t('optional_system_fields') }}
+				</VTab>
+			</VTabs>
 		</template>
 
-		<v-tabs-items v-model="currentTab" class="content">
-			<v-tab-item value="collection_setup">
-				<v-notice>{{ t('creating_collection_info') }}</v-notice>
+		<VTabsItems v-model="currentTab" class="content">
+			<VTabItem value="collection_setup">
+				<VNotice>{{ $t('creating_collection_info') }}</VNotice>
 
 				<div class="grid">
 					<div class="field half">
 						<div class="type-label">
-							{{ t('name') }}
-							<v-icon v-tooltip="t('required')" class="required" name="star" sup filled />
+							{{ $t('name') }}
+							<VIcon v-tooltip="$t('required')" class="required" name="star" sup filled />
 						</div>
-						<v-input
+						<VInput
 							v-model="collectionName"
 							autofocus
 							class="monospace"
 							db-safe
-							:placeholder="t('a_unique_table_name')"
+							:placeholder="$t('a_unique_table_name')"
 						/>
-						<small class="type-note">{{ t('collection_names_are_case_sensitive') }}</small>
+						<small class="type-note">{{ $t('collection_names_are_case_sensitive') }}</small>
 					</div>
 					<div class="field half">
-						<div class="type-label">{{ t('singleton') }}</div>
-						<v-checkbox v-model="singleton" block :label="t('singleton_label')" />
+						<div class="type-label">{{ $t('singleton') }}</div>
+						<VCheckbox v-model="singleton" block :label="$t('singleton_label')" />
 					</div>
-					<v-divider class="full" />
+					<VDivider class="full" />
 					<div class="field half">
-						<div class="type-label">{{ t('primary_key_field') }}</div>
-						<v-input v-model="primaryKeyFieldName" class="monospace" db-safe :placeholder="t('a_unique_column_name')" />
+						<div class="type-label">{{ $t('primary_key_field') }}</div>
+						<VInput v-model="primaryKeyFieldName" class="monospace" db-safe :placeholder="$t('a_unique_column_name')" />
 					</div>
 					<div class="field half">
-						<div class="type-label">{{ t('type') }}</div>
-						<v-select
+						<div class="type-label">{{ $t('type') }}</div>
+						<VSelect
 							v-model="primaryKeyFieldType"
 							:items="[
 								{
-									text: t('auto_increment_integer'),
+									text: $t('auto_increment_integer'),
 									value: 'auto_int',
 								},
 								{
-									text: t('auto_increment_big_integer'),
+									text: $t('auto_increment_big_integer'),
 									value: 'auto_big_int',
 								},
 								{
-									text: t('generated_uuid'),
+									text: $t('generated_uuid'),
 									value: 'uuid',
 								},
 								{
-									text: t('manual_string'),
+									text: $t('manual_string'),
 									value: 'manual',
 								},
 							]"
 						/>
 					</div>
 				</div>
-			</v-tab-item>
-			<v-tab-item value="optional_system_fields">
-				<v-notice>{{ t('creating_collection_system') }}</v-notice>
+			</VTabItem>
+			<VTabItem value="optional_system_fields">
+				<VNotice>{{ $t('creating_collection_system') }}</VNotice>
 
 				<div class="grid system">
 					<div
@@ -452,8 +451,8 @@ function getSystemRelations() {
 						class="field"
 						:class="index % 2 === 0 ? 'half' : 'half-right'"
 					>
-						<div class="type-label">{{ t(info.label) }}</div>
-						<v-input
+						<div class="type-label">{{ $t(info.label) }}</div>
+						<VInput
 							v-model="info.name"
 							db-safe
 							class="monospace"
@@ -462,52 +461,49 @@ function getSystemRelations() {
 							@focus="info.enabled = true"
 						>
 							<template #prepend>
-								<v-checkbox v-model="info.enabled" :disabled="info.inputDisabled" />
+								<VCheckbox v-model="info.enabled" :disabled="info.inputDisabled" />
 							</template>
 
 							<template #append>
-								<v-icon :name="info.icon" />
+								<VIcon :name="info.icon" />
 							</template>
-						</v-input>
+						</VInput>
 					</div>
 				</div>
-			</v-tab-item>
-		</v-tabs-items>
+			</VTabItem>
+		</VTabsItems>
 
-		<template #actions>
-			<v-button
+		<template #actions:primary>
+			<PrivateViewHeaderBarActionButton
 				v-if="currentTab[0] === 'collection_setup'"
-				v-tooltip.bottom="t('next')"
+				:label="$t('next')"
 				:disabled="!collectionName || collectionName.length === 0"
-				icon
-				rounded
+				icon="arrow_forward"
 				@click="currentTab = ['optional_system_fields']"
-			>
-				<v-icon name="arrow_forward" />
-			</v-button>
-			<v-button
+			/>
+
+			<PrivateViewHeaderBarActionButton
 				v-if="currentTab[0] === 'optional_system_fields'"
-				v-tooltip.bottom="t('finish_setup')"
+				:label="$t('finish_setup')"
 				:loading="saving"
-				icon
-				rounded
+				icon="check"
 				@click="save"
-			>
-				<v-icon name="check" />
-			</v-button>
+			/>
 		</template>
-	</v-drawer>
+	</VDrawer>
+
+	<EntitlementLimitModal v-model="limitModalOpen" entitlement-key="collections" is-admin />
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
 
 .type-title {
-	margin-bottom: 48px;
+	margin-block-end: 2.6875rem;
 }
 
 .grid {
-	@include form-grid;
+	@include mixins.form-grid;
 }
 
 .system :deep(.v-input .input) {
@@ -536,18 +532,17 @@ function getSystemRelations() {
 
 .content {
 	padding: var(--content-padding);
-	padding-top: 0;
-	padding-bottom: var(--content-padding);
+	padding-block-end: var(--content-padding);
 }
 
 .v-notice {
-	margin-bottom: 36px;
+	margin-block-end: 2rem;
 }
 
 .type-note {
 	position: relative;
 	display: block;
-	max-width: 520px;
-	margin-top: 4px;
+	max-inline-size: 29.25rem;
+	margin-block-start: 0.25rem;
 }
 </style>

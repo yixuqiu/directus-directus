@@ -1,5 +1,5 @@
 import type { Knex } from 'knex';
-import type { Column } from '../types/column.js';
+import type { Column, TableColumn } from '../types/column.js';
 import type { ForeignKey } from '../types/foreign-key.js';
 import type { SchemaOverview } from '../types/overview.js';
 import type { SchemaInspector } from '../types/schema-inspector.js';
@@ -33,6 +33,7 @@ type RawColumn = {
 	EXTRA: 'auto_increment' | 'STORED GENERATED' | 'VIRTUAL GENERATED' | null;
 	CONSTRAINT_NAME: 'PRIMARY' | null;
 	GENERATION_EXPRESSION: string;
+	INDEX_NAME: string | null;
 };
 
 export function rawColumnToColumn(rawColumn: RawColumn): Column {
@@ -54,6 +55,7 @@ export function rawColumnToColumn(rawColumn: RawColumn): Column {
 		is_generated: !!rawColumn.EXTRA?.endsWith('GENERATED'),
 		is_nullable: rawColumn.IS_NULLABLE === 'YES',
 		is_unique: rawColumn.COLUMN_KEY === 'UNI',
+		is_indexed: !!rawColumn.INDEX_NAME && rawColumn.INDEX_NAME.length > 0,
 		is_primary_key: rawColumn.CONSTRAINT_NAME === 'PRIMARY' || rawColumn.COLUMN_KEY === 'PRI',
 		has_auto_increment: rawColumn.EXTRA === 'auto_increment',
 		foreign_key_column: rawColumn.REFERENCED_COLUMN_NAME,
@@ -62,7 +64,7 @@ export function rawColumnToColumn(rawColumn: RawColumn): Column {
 	};
 }
 
-export function parseDefaultValue(value: string | null) {
+export function parseDefaultValue(value: string | null): string | null {
 	if (value === null || value.trim().toLowerCase() === 'null') return null;
 
 	return stripQuotes(value);
@@ -140,7 +142,7 @@ export default class MySQL implements SchemaInspector {
 	/**
 	 * List all existing tables in the current schema/database
 	 */
-	async tables() {
+	async tables(): Promise<string[]> {
 		const records = await this.knex
 			.select<{ TABLE_NAME: string }[]>('TABLE_NAME')
 			.from('INFORMATION_SCHEMA.TABLES')
@@ -214,7 +216,7 @@ export default class MySQL implements SchemaInspector {
 	/**
 	 * Get all the available columns in the current schema/database. Can be filtered to a specific table
 	 */
-	async columns(table?: string) {
+	async columns(table?: string): Promise<TableColumn[]> {
 		const query = this.knex
 			.select<{ TABLE_NAME: string; COLUMN_NAME: string }[]>('TABLE_NAME', 'COLUMN_NAME')
 			.from('INFORMATION_SCHEMA.COLUMNS')
@@ -260,6 +262,7 @@ export default class MySQL implements SchemaInspector {
 				'rc.UPDATE_RULE',
 				'rc.DELETE_RULE',
 				'rc.MATCH_OPTION',
+				'stats.INDEX_NAME',
 			)
 			.from('INFORMATION_SCHEMA.COLUMNS as c')
 			.leftJoin('INFORMATION_SCHEMA.KEY_COLUMN_USAGE as fk', function () {
@@ -271,6 +274,13 @@ export default class MySQL implements SchemaInspector {
 				this.on('rc.TABLE_NAME', '=', 'fk.TABLE_NAME')
 					.andOn('rc.CONSTRAINT_NAME', '=', 'fk.CONSTRAINT_NAME')
 					.andOn('rc.CONSTRAINT_SCHEMA', '=', 'fk.CONSTRAINT_SCHEMA');
+			})
+			.leftJoin('INFORMATION_SCHEMA.STATISTICS as stats', function () {
+				this.on('stats.TABLE_SCHEMA', '=', 'c.TABLE_SCHEMA')
+					.andOn('stats.TABLE_NAME', '=', 'c.TABLE_NAME')
+					.andOn('stats.COLUMN_NAME', '=', 'c.COLUMN_NAME')
+					.andOnVal('stats.NON_UNIQUE', 1)
+					.andOnVal('stats.SEQ_IN_INDEX', 1);
 			})
 			.where({
 				'c.TABLE_SCHEMA': this.knex.client.database(),
@@ -320,7 +330,7 @@ export default class MySQL implements SchemaInspector {
 	/**
 	 * Get the primary key column for the given table
 	 */
-	async primary(table: string) {
+	async primary(table: string): Promise<string | null> {
 		const results = await this.knex.raw(`SHOW KEYS FROM ?? WHERE Key_name = 'PRIMARY'`, table);
 
 		if (results && results.length && results[0].length) {
@@ -333,7 +343,7 @@ export default class MySQL implements SchemaInspector {
 	// Foreign Keys
 	// ===============================================================================================
 
-	async foreignKeys(table?: string) {
+	async foreignKeys(table?: string): Promise<ForeignKey[]> {
 		const result = await this.knex.raw<[ForeignKey[]]>(
 			`
 		 SELECT DISTINCT
@@ -349,6 +359,7 @@ export default class MySQL implements SchemaInspector {
 		 JOIN information_schema.key_column_usage AS kcu ON
 			rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
 			AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+			AND kcu.TABLE_NAME = rc.TABLE_NAME
 		 WHERE
 			rc.CONSTRAINT_SCHEMA = ?;
 	  `,

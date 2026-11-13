@@ -1,37 +1,49 @@
-import { useEnv } from '@directus/env';
-import { ContentTooLargeError, ForbiddenError, InvalidPayloadError, ServiceUnavailableError } from '@directus/errors';
-import formatTitle from '@directus/format-title';
-import type { BusboyFileStream, File, PrimaryKey } from '@directus/types';
-import { toArray } from '@directus/utils';
-import type { AxiosResponse } from 'axios';
-import encodeURL from 'encodeurl';
-import exif, { type GPSInfoTags, type ImageTags, type IopTags, type PhotoTags } from 'exif-reader';
-import type { IccProfile } from 'icc';
-import { parse as parseIcc } from 'icc';
-import { clone, pick } from 'lodash-es';
-import { extension } from 'mime-types';
 import type { Readable } from 'node:stream';
 import { PassThrough as PassThroughStream, Transform as TransformStream } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import zlib from 'node:zlib';
 import path from 'path';
-import sharp from 'sharp';
-import url from 'url';
-import { SUPPORTED_IMAGE_METADATA_FORMATS } from '../constants.js';
+import { useEnv } from '@directus/env';
+import {
+	ContentTooLargeError,
+	ForbiddenError,
+	InternalServerError,
+	InvalidPayloadError,
+	ServiceUnavailableError,
+} from '@directus/errors';
+import formatTitle from '@directus/format-title';
+import type {
+	AbstractServiceOptions,
+	BusboyFileStream,
+	File,
+	MutationOptions,
+	PrimaryKey,
+	Query,
+	QueryOptions,
+} from '@directus/types';
+import { normalizePath } from '@directus/utils';
+import type { AxiosResponse } from 'axios';
+import encodeURL from 'encodeurl';
+import { clone, cloneDeep } from 'lodash-es';
+import { extension } from 'mime-types';
+import { RESUMABLE_UPLOADS } from '../constants.js';
 import emitter from '../emitter.js';
-import { useLogger } from '../logger.js';
+import { useLogger } from '../logger/index.js';
+import { validateAccess } from '../permissions/modules/validate-access/validate-access.js';
 import { getAxios } from '../request/index.js';
 import { getStorage } from '../storage/index.js';
-import type { AbstractServiceOptions, MutationOptions } from '../types/index.js';
-import { parseIptc, parseXmp } from '../utils/parse-image-metadata.js';
+import { transaction } from '../utils/transaction.js';
+import { assertUniqueFilename } from './files/lib/assert-unique-filename.js';
+import { assertValidStorageLocation } from './files/lib/assert-valid-storage-location.js';
+import { assertValidStoragePath } from './files/lib/assert-valid-storage-path.js';
+import { extractMetadata } from './files/lib/extract-metadata.js';
+import { isMimeTypeAllowed } from './files/lib/is-mime-type-allowed.js';
+import { sanitizeFilepath } from './files/lib/sanitize-filepath.js';
 import { ItemsService } from './items.js';
 
 const env = useEnv();
 const logger = useLogger();
 
-type Metadata = Partial<Pick<File, 'height' | 'width' | 'description' | 'title' | 'tags' | 'metadata'>>;
-
-export class FilesService extends ItemsService {
+export class FilesService extends ItemsService<File> {
 	constructor(options: AbstractServiceOptions) {
 		super('directus_files', options);
 	}
@@ -41,7 +53,7 @@ export class FilesService extends ItemsService {
 	 */
 	async uploadOne(
 		stream: BusboyFileStream | Readable,
-		data: Partial<File> & { storage: string },
+		data: Partial<File>,
 		primaryKey?: PrimaryKey,
 		opts?: MutationOptions,
 	): Promise<PrimaryKey> {
@@ -54,14 +66,27 @@ export class FilesService extends ItemsService {
 			// If the file you're uploading already exists, we'll consider this upload a replace so we'll fetch the existing file's folder and filename_download
 			existingFile =
 				(await this.knex
-					.select('folder', 'filename_download', 'filename_disk', 'title', 'description', 'metadata')
+					.select('folder', 'filename_download', 'filename_disk', 'title', 'description', 'metadata', 'storage')
 					.from('directus_files')
 					.where({ id: primaryKey })
 					.first()) ?? null;
 		}
 
 		// Merge the existing file's folder and filename_download with the new payload
-		const payload = { ...(existingFile ?? {}), ...clone(data) };
+		const payload = {
+			storage: env.STORAGE_LOCATIONS[0]!,
+			...(existingFile ?? {}),
+			...clone(data),
+		};
+
+		assertValidStorageLocation(payload.storage);
+
+		if (payload.filename_disk) {
+			payload.filename_disk = sanitizeFilepath(payload.filename_disk);
+
+			assertValidStoragePath(payload.filename_disk, payload.storage);
+			// assertUniqueFilename is handled by creatOne, updateMany
+		}
 
 		const disk = storage.location(payload.storage);
 
@@ -85,11 +110,18 @@ export class FilesService extends ItemsService {
 		const fileExtension =
 			path.extname(payload.filename_download!) || (payload.type && '.' + extension(payload.type)) || '';
 
+		const filenameDisk = primaryKey + (fileExtension || '');
+
 		// The filename_disk is the FINAL filename on disk
-		payload.filename_disk = primaryKey + (fileExtension || '');
+		payload.filename_disk ||= filenameDisk;
+
+		// If the filename_disk extension doesn't match the new mimetype, update it
+		if (isReplacement === true && path.extname(payload.filename_disk!) !== fileExtension) {
+			payload.filename_disk = filenameDisk;
+		}
 
 		// Temp filename is used for replacements
-		const tempFilenameDisk = 'temp_' + payload.filename_disk;
+		const tempFilenameDisk = 'temp_' + filenameDisk;
 
 		if (!payload.type) {
 			payload.type = 'application/octet-stream';
@@ -141,6 +173,8 @@ export class FilesService extends ItemsService {
 
 			if (err instanceof ContentTooLargeError) {
 				throw err;
+			} else if (err?.code && ['EROFS', 'EACCES', 'EPERM'].includes(err.code)) {
+				throw new InternalServerError();
 			} else {
 				throw new ServiceUnavailableError({ service: 'files', reason: `Couldn't save file ${payload.filename_disk}` });
 			}
@@ -148,60 +182,47 @@ export class FilesService extends ItemsService {
 
 		// If the file is a replacement, we need to update the DB record with the new payload, delete the old files, and upgrade the temp file
 		if (isReplacement === true) {
-			await this.updateOne(primaryKey, payload, { emitEvents: false });
+			try {
+				await this.updateOne(primaryKey, payload, { emitEvents: false });
 
-			// delete the previously saved file and thumbnails to ensure they're generated fresh
-			for await (const filepath of disk.list(String(primaryKey))) {
-				await disk.delete(filepath);
+				// delete the previously saved file and thumbnails to ensure they're generated fresh
+				for await (const filepath of disk.list(String(primaryKey))) {
+					await disk.delete(filepath);
+				}
+
+				// Upgrade the temp file to the final filename
+				await disk.move(tempFilenameDisk, payload.filename_disk);
+			} catch (err: any) {
+				await cleanUp();
+				throw err;
 			}
-
-			// Upgrade the temp file to the final filename
-			await disk.move(tempFilenameDisk, payload.filename_disk);
 		}
 
-		const { size } = await storage.location(data.storage).stat(payload.filename_disk);
+		const { size } = await storage.location(payload.storage).stat(payload.filename_disk);
 		payload.filesize = size;
 
-		if (SUPPORTED_IMAGE_METADATA_FORMATS.includes(payload.type)) {
-			const stream = await storage.location(data.storage).read(payload.filename_disk);
-			const { height, width, description, title, tags, metadata } = await this.getMetadata(stream);
+		const metadata = await extractMetadata(payload.storage, payload as Parameters<typeof extractMetadata>[1]);
 
-			if (!payload.height && height) {
-				payload.height = height;
-			}
-
-			if (!payload.width && width) {
-				payload.width = width;
-			}
-
-			if (!payload.metadata && metadata) {
-				payload.metadata = metadata;
-			}
-
-			// Note that if this is a replace file upload, the below properties are fetched and included in the payload above
-			// in the `existingFile` variable... so this will ONLY set the values if they're not already set
-
-			if (!payload.description && description) {
-				payload.description = description;
-			}
-
-			if (!payload.title && title) {
-				payload.title = title;
-			}
-
-			if (!payload.tags && tags) {
-				payload.tags = tags;
-			}
-		}
+		payload.uploaded_on = new Date().toISOString();
 
 		// We do this in a service without accountability. Even if you don't have update permissions to the file,
 		// we still want to be able to set the extracted values from the file on create
-		const sudoService = new ItemsService('directus_files', {
+		const sudoFilesItemsService = new ItemsService('directus_files', {
 			knex: this.knex,
 			schema: this.schema,
 		});
 
-		await sudoService.updateOne(primaryKey, payload, { emitEvents: false });
+		// Do not spread user payload or include non-calculated fields here
+		await sudoFilesItemsService.updateOne(
+			primaryKey,
+			{
+				...metadata,
+				filename_disk: payload.filename_disk,
+				filesize: payload.filesize,
+				uploaded_on: payload.uploaded_on,
+			},
+			{ emitEvents: false },
+		);
 
 		if (opts?.emitEvents !== false) {
 			emitter.emitAction(
@@ -225,143 +246,27 @@ export class FilesService extends ItemsService {
 	/**
 	 * Extract metadata from a buffer's content
 	 */
-	async getMetadata(
-		stream: Readable,
-		allowList: string | string[] = env['FILE_METADATA_ALLOW_LIST'] as string[],
-	): Promise<Metadata> {
-		return new Promise((resolve, reject) => {
-			pipeline(
-				stream,
-				sharp().metadata(async (err, sharpMetadata) => {
-					if (err) {
-						reject(err);
-						return;
-					}
-
-					const metadata: Metadata = {};
-
-					if (sharpMetadata.orientation && sharpMetadata.orientation >= 5) {
-						metadata.height = sharpMetadata.width ?? null;
-						metadata.width = sharpMetadata.height ?? null;
-					} else {
-						metadata.width = sharpMetadata.width ?? null;
-						metadata.height = sharpMetadata.height ?? null;
-					}
-
-					// Backward-compatible layout as it used to be with 'exifr'
-					const fullMetadata: {
-						ifd0?: Partial<ImageTags>;
-						ifd1?: Partial<ImageTags>;
-						exif?: Partial<PhotoTags>;
-						gps?: Partial<GPSInfoTags>;
-						interop?: Partial<IopTags>;
-						icc?: IccProfile;
-						iptc?: Record<string, unknown>;
-						xmp?: Record<string, unknown>;
-					} = {};
-
-					if (sharpMetadata.exif) {
-						try {
-							const { Image, ThumbnailTags, Iop, GPSInfo, Photo } = (exif as unknown as typeof exif.default)(
-								sharpMetadata.exif,
-							);
-
-							if (Image) {
-								fullMetadata.ifd0 = Image;
-							}
-
-							if (ThumbnailTags) {
-								fullMetadata.ifd1 = ThumbnailTags;
-							}
-
-							if (Iop) {
-								fullMetadata.interop = Iop;
-							}
-
-							if (GPSInfo) {
-								fullMetadata.gps = GPSInfo;
-							}
-
-							if (Photo) {
-								fullMetadata.exif = Photo;
-							}
-						} catch (err) {
-							logger.warn(`Couldn't extract Exif metadata from file`);
-							logger.warn(err);
-						}
-					}
-
-					if (sharpMetadata.icc) {
-						try {
-							fullMetadata.icc = parseIcc(sharpMetadata.icc);
-						} catch (err) {
-							logger.warn(`Couldn't extract ICC profile data from file`);
-							logger.warn(err);
-						}
-					}
-
-					if (sharpMetadata.iptc) {
-						try {
-							fullMetadata.iptc = parseIptc(sharpMetadata.iptc);
-						} catch (err) {
-							logger.warn(`Couldn't extract IPTC Photo Metadata from file`);
-							logger.warn(err);
-						}
-					}
-
-					if (sharpMetadata.xmp) {
-						try {
-							fullMetadata.xmp = parseXmp(sharpMetadata.xmp);
-						} catch (err) {
-							logger.warn(`Couldn't extract XMP data from file`);
-							logger.warn(err);
-						}
-					}
-
-					if (fullMetadata?.iptc?.['Caption'] && typeof fullMetadata.iptc['Caption'] === 'string') {
-						metadata.description = fullMetadata.iptc?.['Caption'];
-					}
-
-					if (fullMetadata?.iptc?.['Headline'] && typeof fullMetadata.iptc['Headline'] === 'string') {
-						metadata.title = fullMetadata.iptc['Headline'];
-					}
-
-					if (fullMetadata?.iptc?.['Keywords']) {
-						metadata.tags = fullMetadata.iptc['Keywords'] as string;
-					}
-
-					if (allowList === '*' || allowList?.[0] === '*') {
-						metadata.metadata = fullMetadata;
-					} else {
-						metadata.metadata = pick(fullMetadata, allowList);
-					}
-
-					// Fix (incorrectly parsed?) values starting / ending with spaces,
-					// limited to one level and string values only
-					for (const section of Object.keys(metadata.metadata)) {
-						for (const [key, value] of Object.entries(metadata.metadata[section])) {
-							if (typeof value === 'string') {
-								metadata.metadata[section][key] = value.trim();
-							}
-						}
-					}
-
-					resolve(metadata);
-				}),
-			);
-		});
-	}
 
 	/**
 	 * Import a single file from an external URL
 	 */
-	async importOne(importURL: string, body: Partial<File>): Promise<PrimaryKey> {
-		const fileCreatePermissions = this.accountability?.permissions?.find(
-			(permission) => permission.collection === 'directus_files' && permission.action === 'create',
-		);
-
-		if (this.accountability && this.accountability?.admin !== true && !fileCreatePermissions) {
-			throw new ForbiddenError();
+	async importOne(
+		importURL: string,
+		body: Partial<File>,
+		options: { filterMimeType?: string[] } = {},
+	): Promise<PrimaryKey> {
+		if (this.accountability) {
+			await validateAccess(
+				{
+					accountability: this.accountability,
+					action: 'create',
+					collection: 'directus_files',
+				},
+				{
+					knex: this.knex,
+					schema: this.schema,
+				},
+			);
 		}
 
 		let fileResponse;
@@ -383,13 +288,40 @@ export class FilesService extends ItemsService {
 			});
 		}
 
-		const parsedURL = url.parse(fileResponse.request.res.responseUrl);
-		const filename = decodeURI(path.basename(parsedURL.pathname as string));
+		let filename: string;
+		let mimeType: string;
+
+		try {
+			const parsedURL = new URL(fileResponse.request.res.responseUrl);
+			filename = decodeURI(path.basename(parsedURL.pathname));
+
+			mimeType = fileResponse.headers['content-type']?.split(';')[0]?.trim() || 'application/octet-stream';
+
+			// Check against global MIME type allow list from env
+			if (isMimeTypeAllowed(mimeType, env.FILES_MIME_TYPE_ALLOW_LIST) === false) {
+				throw new InvalidPayloadError({
+					reason: `File content type "${mimeType}" is not allowed for upload by your global file type restrictions`,
+				});
+			}
+
+			const { filterMimeType } = options;
+
+			// Check against interface-level MIME type restrictions if provided
+			if (filterMimeType && filterMimeType.length > 0 && isMimeTypeAllowed(mimeType, filterMimeType) === false) {
+				throw new InvalidPayloadError({
+					reason: `File content type "${mimeType}" is not allowed for upload by this field's file type restrictions`,
+				});
+			}
+		} catch (error) {
+			// Nothing reads the response body once the import is rejected, so it would hold its connection open
+			fileResponse.data.destroy();
+
+			throw error;
+		}
 
 		const payload = {
 			filename_download: filename,
-			storage: toArray(env['STORAGE_LOCATIONS'] as string)[0]!,
-			type: fileResponse.headers['content-type'],
+			type: mimeType,
 			title: formatTitle(filename),
 			...(body || {}),
 		};
@@ -398,12 +330,27 @@ export class FilesService extends ItemsService {
 	}
 
 	/**
-	 * Create a file (only applicable when it is not a multipart/data POST request)
-	 * Useful for associating metadata with existing file in storage
+	 * Create a file
 	 */
-	override async createOne(data: Partial<File>, opts?: MutationOptions): Promise<PrimaryKey> {
+	override async createOne(data: Partial<File>, opts: MutationOptions = {}): Promise<PrimaryKey> {
 		if (!data.type) {
 			throw new InvalidPayloadError({ reason: `"type" is required` });
+		}
+
+		try {
+			if (data.storage !== undefined) {
+				assertValidStorageLocation(data.storage);
+			}
+
+			if (data.filename_disk) {
+				data.filename_disk = sanitizeFilepath(data.filename_disk);
+
+				assertValidStoragePath(data.filename_disk, data.storage);
+				await assertUniqueFilename(this.knex, data.filename_disk);
+			}
+		} catch (err: any) {
+			// Defer the error to be thrown until after permission checks
+			opts.preMutationError = err;
 		}
 
 		const key = await super.createOne(data, opts);
@@ -411,11 +358,159 @@ export class FilesService extends ItemsService {
 	}
 
 	/**
-	 * Delete a file
+	 * Update many files
 	 */
-	override async deleteOne(key: PrimaryKey): Promise<PrimaryKey> {
-		await this.deleteMany([key]);
-		return key;
+	override async updateMany(
+		keys: PrimaryKey[],
+		data: Partial<File>,
+		opts: MutationOptions = {},
+	): Promise<PrimaryKey[]> {
+		// Fetch existing records to have data prior to change, dont require read permissions.
+		// In progress uploads TUS are hidden from FilesService reads, so they're missing from the results.
+		const sudoFilesItemsService = new FilesService({
+			knex: this.knex,
+			schema: this.schema,
+		});
+
+		if (keys.length === 1 && data.filename_disk) {
+			data.filename_disk = sanitizeFilepath(data.filename_disk);
+
+			const updatedFiles: Map<PrimaryKey, File> = new Map();
+
+			const changedFiles = await sudoFilesItemsService.readMany(keys, {
+				fields: ['id', 'storage', 'filename_disk'],
+			});
+
+			for (const file of changedFiles) {
+				updatedFiles.set(file.id, file);
+			}
+
+			try {
+				const currentFile = changedFiles[0];
+
+				// In progress uploads and non-existent files can't be renamed
+				if (!currentFile) {
+					throw new ForbiddenError();
+				}
+
+				// A file is currently only renamed within the storage location it's currently stored in, we never
+				// move files between storages. Changing "data.storage" has no effect on where the file data is,
+				// which is why the new path is validated against the current location instead.
+				assertValidStoragePath(data.filename_disk, currentFile['storage']);
+
+				// If the the storage is updated the record ends up pointing at this path in the new location without
+				// actually moving the file between storages, later reads and renames act on the newly stored storage
+				if (data.storage !== undefined) {
+					assertValidStorageLocation(data.storage);
+					assertValidStoragePath(data.filename_disk, data.storage);
+				}
+
+				await assertUniqueFilename(this.knex, data.filename_disk, keys[0]);
+			} catch (err: any) {
+				opts.preMutationError = err;
+			}
+
+			for (const key of keys) {
+				// Transaction per file to ensure we only rollback changes related to that file on error
+				await transaction(this.knex, async (trx) => {
+					const filesItemService = new ItemsService(this.collection, {
+						knex: trx,
+						schema: this.schema,
+						accountability: this.accountability,
+					});
+
+					await filesItemService.updateMany([key], data, opts);
+
+					// if filename is present and was updated rename files it was changed
+					if (data.filename_disk) {
+						const storage = await getStorage();
+						const file = updatedFiles.get(key);
+
+						if (!file || !file.filename_disk) return;
+
+						// For backwards compatibility it must be resolved first to ensure consistent path
+						const existingFilePath = sanitizeFilepath(file.filename_disk);
+
+						if (existingFilePath === data.filename_disk) return;
+
+						const disk = storage.location(file['storage']);
+
+						const { name: filePrefix, dir: fileDir } = path.parse(existingFilePath);
+						const updatedFilePath = sanitizeFilepath(data.filename_disk);
+
+						let remoteFileExists: boolean;
+
+						try {
+							remoteFileExists = await disk.exists(data.filename_disk);
+						} catch (error) {
+							// A failed lookup is not the same answer as a missing file, and both branches below act on it
+							throw new ServiceUnavailableError(
+								{ service: 'files', reason: `Couldn't reach the storage location` },
+								{ cause: error },
+							);
+						}
+
+						const filePrefixPath = fileDir ? normalizePath(path.join(fileDir, filePrefix)) : filePrefix;
+
+						for await (const filePath of disk.list(filePrefixPath)) {
+							/**
+							 * If the remote file exists, repoint the primary asset to it (i.e. db update only).
+							 * If the remote file does not exist, move the primary asset to location.
+							 *
+							 * NOTE
+							 * - On repoint the original asset will be deleted if `FILES_DELETE_ORIGINAL_ON_MOVE` is true.
+							 * - Any associated generated assets are deleted.
+							 */
+							if (filePath === existingFilePath) {
+								if (!remoteFileExists) {
+									await disk.move(filePath, updatedFilePath);
+									continue;
+								} else if (!env.FILES_DELETE_ORIGINAL_ON_MOVE) {
+									continue;
+								}
+							}
+
+							// always delete generated assets
+							await disk.delete(filePath);
+						}
+					}
+				});
+			}
+
+			return keys;
+		}
+
+		if (keys.length > 1 && data.filename_disk) {
+			// Defer the error to be thrown until after permission checks
+			opts.preMutationError = new InvalidPayloadError({
+				reason: '"filename_disk" cannot be modified in bulk operations',
+			});
+		} else if (data.storage !== undefined) {
+			// Changing the storage only repoints the records, so their existing paths have to be valid in the new location
+			try {
+				assertValidStorageLocation(data.storage);
+
+				const files = await sudoFilesItemsService.readMany(keys, { fields: ['filename_disk'], limit: -1 });
+
+				// In progress uploads and non-existent files can't be repointed
+				if (files.length !== new Set(keys).size) {
+					throw new ForbiddenError();
+				}
+
+				for (const file of files) {
+					if (file.filename_disk) {
+						assertValidStoragePath(file.filename_disk, data.storage);
+					}
+				}
+			} catch (err: any) {
+				// Defer the error to be thrown until after permission checks
+				opts.preMutationError = err;
+			}
+		}
+
+		await super.updateMany(keys, data, opts);
+
+		return keys;
 	}
 
 	/**
@@ -423,11 +518,13 @@ export class FilesService extends ItemsService {
 	 */
 	override async deleteMany(keys: PrimaryKey[]): Promise<PrimaryKey[]> {
 		const storage = await getStorage();
-		const files = await super.readMany(keys, { fields: ['id', 'storage', 'filename_disk'], limit: -1 });
 
-		if (!files) {
-			throw new ForbiddenError();
-		}
+		const sudoFilesItemsService = new FilesService({
+			knex: this.knex,
+			schema: this.schema,
+		});
+
+		const files = await sudoFilesItemsService.readMany(keys, { fields: ['id', 'storage', 'filename_disk'], limit: -1 });
 
 		await super.deleteMany(keys);
 
@@ -442,6 +539,26 @@ export class FilesService extends ItemsService {
 		}
 
 		return keys;
+	}
+
+	override async readByQuery(query: Query, opts?: QueryOptions | undefined) {
+		const filteredQuery = cloneDeep(query);
+
+		if (RESUMABLE_UPLOADS.ENABLED === true) {
+			const filterPartialUploads = { tus_id: { _null: true } };
+
+			if (!filteredQuery.filter) {
+				filteredQuery.filter = filterPartialUploads;
+			} else if ('_and' in filteredQuery.filter && Array.isArray(filteredQuery.filter['_and'])) {
+				filteredQuery.filter['_and'].push(filterPartialUploads);
+			} else {
+				filteredQuery.filter = {
+					_and: [filteredQuery.filter, filterPartialUploads],
+				};
+			}
+		}
+
+		return super.readByQuery(filteredQuery, opts);
 	}
 }
 

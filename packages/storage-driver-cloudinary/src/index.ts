@@ -1,13 +1,16 @@
-import type { Driver, Range } from '@directus/storage';
-import { normalizePath } from '@directus/utils';
 import { Blob, Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { extname, join, parse } from 'node:path';
 import { Readable } from 'node:stream';
+import type { TusDriver } from '@directus/storage';
+import type { ChunkedUploadContext, ReadOptions } from '@directus/types';
+import { normalizePath } from '@directus/utils';
 import PQueue from 'p-queue';
 import type { RequestInit } from 'undici';
-import { FormData, fetch } from 'undici';
-import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from './constants.js';
+import { fetch, FormData } from 'undici';
+import { IMAGE_EXTENSIONS, MINIMUM_CHUNK_SIZE, VIDEO_EXTENSIONS } from './constants.js';
+import { toFormUrlEncoded } from './utils/to-form-url-encoded.js';
+import { toSignatureString } from './utils/to-signature-string.js';
 
 export type DriverCloudinaryConfig = {
 	root?: string;
@@ -15,9 +18,13 @@ export type DriverCloudinaryConfig = {
 	apiKey: string;
 	apiSecret: string;
 	accessMode: 'public' | 'authenticated';
+	tus?: {
+		enabled: boolean;
+		chunkSize?: number;
+	};
 };
 
-export class DriverCloudinary implements Driver {
+export class DriverCloudinary implements TusDriver {
 	private root: string;
 	private apiKey: string;
 	private apiSecret: string;
@@ -30,20 +37,15 @@ export class DriverCloudinary implements Driver {
 		this.apiSecret = config.apiSecret;
 		this.cloudName = config.cloudName;
 		this.accessMode = config.accessMode;
+
+		// must be at least 5mb
+		if (config.tus?.enabled && config.tus.chunkSize && config.tus?.chunkSize < MINIMUM_CHUNK_SIZE) {
+			throw new Error('Invalid chunkSize provided');
+		}
 	}
 
 	private fullPath(filepath: string) {
 		return normalizePath(join(this.root, filepath), { removeLeading: true });
-	}
-
-	private toFormUrlEncoded(obj: Record<string, string>, options?: { sort: boolean }) {
-		let entries = Object.entries(obj);
-
-		if (options?.sort) {
-			entries = entries.sort(([keyA], [keyB]) => keyA.localeCompare(keyB));
-		}
-
-		return decodeURIComponent(new URLSearchParams(entries).toString());
 	}
 
 	/**
@@ -57,7 +59,7 @@ export class DriverCloudinary implements Driver {
 			Object.entries(payload).filter(([key]) => denylist.includes(key) === false),
 		);
 
-		const signaturePayloadString = this.toFormUrlEncoded(signaturePayload, { sort: true });
+		const signaturePayloadString = toSignatureString(signaturePayload);
 
 		return createHash('sha256')
 			.update(signaturePayloadString + this.apiSecret)
@@ -84,7 +86,7 @@ export class DriverCloudinary implements Driver {
 	 * @see https://cloudinary.com/documentation/image_transformations#image_upload_note
 	 */
 	private getResourceType(filepath: string) {
-		const fileExtension = extname(filepath);
+		const fileExtension = extname(filepath)?.toLowerCase();
 		if (IMAGE_EXTENSIONS.includes(fileExtension)) return 'image';
 		if (VIDEO_EXTENSIONS.includes(fileExtension)) return 'video';
 		return 'raw';
@@ -119,11 +121,20 @@ export class DriverCloudinary implements Driver {
 		return `Basic ${base64}`;
 	}
 
-	async read(filepath: string, range?: Range) {
+	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
+		const { range, version } = options ?? {};
+
 		const resourceType = this.getResourceType(filepath);
 		const fullPath = this.fullPath(filepath);
 		const signature = this.getParameterSignature(fullPath);
-		const url = `https://res.cloudinary.com/${this.cloudName}/${resourceType}/upload/${signature}/${fullPath}`;
+
+		let url = `https://res.cloudinary.com/${this.cloudName}/${resourceType}/upload/${signature}`;
+
+		if (version) {
+			url += `/v${version}`;
+		}
+
+		url += `/${fullPath}`;
 
 		const requestInit: RequestInit = { method: 'GET' };
 
@@ -136,20 +147,23 @@ export class DriverCloudinary implements Driver {
 		const response = await fetch(url, requestInit);
 
 		if (response.status >= 400 || !response.body) {
+			// An unread body holds its connection open
+			await response.body?.cancel();
+
 			throw new Error(`No stream returned for file "${filepath}"`);
 		}
 
 		return Readable.fromWeb(response.body);
 	}
 
-	async stat(filepath: string) {
+	private async requestResource(filepath: string) {
 		const fullPath = this.fullPath(filepath);
 		const resourceType = this.getResourceType(fullPath);
 		const publicId = this.getPublicId(fullPath);
 		const folder = this.getFolderPath(fullPath);
 
 		const parameters = {
-			public_id: join(folder, publicId),
+			public_id: normalizePath(join(folder, publicId), { removeLeading: true }),
 			type: 'upload',
 			api_key: this.apiKey,
 			timestamp: this.getTimestamp(),
@@ -157,22 +171,32 @@ export class DriverCloudinary implements Driver {
 
 		const signature = this.getFullSignature(parameters);
 
-		const body = this.toFormUrlEncoded({
+		const body = toFormUrlEncoded({
 			signature,
 			...parameters,
 		});
 
 		const url = `https://api.cloudinary.com/v1_1/${this.cloudName}/${resourceType}/explicit`;
 
-		const response = await fetch(url, {
+		return await fetch(url, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
 			},
 			body,
 		});
+	}
+
+	async stat(filepath: string): Promise<{
+		size: number;
+		modified: Date;
+	}> {
+		const response = await this.requestResource(filepath);
 
 		if (response.status >= 400) {
+			// An unread body holds its connection open
+			await response.body?.cancel();
+
 			throw new Error(`No stat returned for file "${filepath}"`);
 		}
 
@@ -180,32 +204,43 @@ export class DriverCloudinary implements Driver {
 		return { size: bytes, modified: new Date(created_at) };
 	}
 
-	async exists(filepath: string) {
-		try {
-			await this.stat(filepath);
-			return true;
-		} catch {
-			return false;
+	async exists(filepath: string): Promise<boolean> {
+		const response = await this.requestResource(filepath);
+
+		// Nothing here reads the body, and an unread body holds its connection open
+		await response.body?.cancel();
+
+		if (response.status === 404) return false;
+
+		if (response.status >= 400) {
+			throw new Error(`Couldn't check whether file "${filepath}" exists (${response.status})`);
 		}
+
+		return true;
 	}
 
-	async move(src: string, dest: string) {
+	async move(src: string, dest: string): Promise<void> {
 		const fullSrc = this.fullPath(src);
 		const fullDest = this.fullPath(dest);
+		const srcPublicId = this.getPublicId(fullSrc);
+		const destPublicId = this.getPublicId(fullDest);
+		const srcFolderPath = this.getFolderPath(fullSrc);
+		const destFolderPath = this.getFolderPath(fullDest);
+
 		const resourceType = this.getResourceType(fullSrc);
 
 		const url = `https://api.cloudinary.com/v1_1/${this.cloudName}/${resourceType}/rename`;
 
 		const parameters = {
-			from_public_id: this.getPublicId(fullSrc),
-			to_public_id: this.getPublicId(fullDest),
+			from_public_id: join(srcFolderPath, srcPublicId),
+			to_public_id: join(destFolderPath, destPublicId),
 			api_key: this.apiKey,
 			timestamp: this.getTimestamp(),
 		};
 
 		const signature = this.getFullSignature(parameters);
 
-		const body = this.toFormUrlEncoded({
+		const body = toFormUrlEncoded({
 			...parameters,
 			signature,
 		});
@@ -224,12 +259,12 @@ export class DriverCloudinary implements Driver {
 		}
 	}
 
-	async copy(src: string, dest: string) {
+	async copy(src: string, dest: string): Promise<void> {
 		const stream = await this.read(src);
 		await this.write(dest, stream);
 	}
 
-	async write(filepath: string, content: Readable) {
+	async write(filepath: string, content: Readable): Promise<void> {
 		const fullPath = this.fullPath(filepath);
 		const resourceType = this.getResourceType(fullPath);
 		const folderPath = this.getFolderPath(fullPath);
@@ -244,7 +279,7 @@ export class DriverCloudinary implements Driver {
 				? {
 						asset_folder: folderPath,
 						use_asset_folder_as_public_id_prefix: 'true',
-				  }
+					}
 				: {}),
 		};
 
@@ -257,18 +292,25 @@ export class DriverCloudinary implements Driver {
 
 		const queue = new PQueue({ concurrency: 10 });
 
-		const chunks: Buffer[] = [];
+		const chunkSize = 5.5e6;
+		let chunks = Buffer.alloc(0);
 
-		for await (const chunk of content) {
-			chunks.push(chunk);
-			currentChunkSize += chunk.length;
+		for await (let chunk of content) {
+			if (!Buffer.isBuffer(chunk)) chunk = Buffer.from(chunk);
 
 			// Cloudinary requires each chunk to be at least 5MB. We'll submit the chunk as soon as we
 			// reach 5.5MB to be safe
-			if (currentChunkSize >= 5.5e6) {
+			if (chunks.length + chunk.length <= chunkSize) {
+				currentChunkSize = chunks.length + chunk.length;
+				chunks = Buffer.concat([chunks, chunk], currentChunkSize);
+			} else {
+				const grab = chunkSize - chunks.length;
+				currentChunkSize = chunks.length + grab;
+				chunks = Buffer.concat([chunks, chunk.slice(0, grab)], currentChunkSize);
+
 				const uploadChunkParams: Parameters<typeof this.uploadChunk>[0] = {
 					resourceType,
-					blob: new Blob(chunks),
+					blob: new Blob([chunks]),
 					bytesOffset: uploaded,
 					bytesTotal: -1,
 					parameters: {
@@ -285,7 +327,7 @@ export class DriverCloudinary implements Driver {
 
 				uploaded += currentChunkSize;
 				currentChunkSize = 0;
-				chunks.length = 0; // empty the array of chunks
+				chunks = chunk.slice(grab);
 			}
 
 			totalSize += chunk.length;
@@ -295,7 +337,7 @@ export class DriverCloudinary implements Driver {
 			.add(() =>
 				this.uploadChunk({
 					resourceType,
-					blob: new Blob(chunks),
+					blob: new Blob([chunks]),
 					bytesOffset: uploaded,
 					bytesTotal: totalSize,
 					parameters: {
@@ -355,7 +397,7 @@ export class DriverCloudinary implements Driver {
 		}
 	}
 
-	async delete(filepath: string) {
+	async delete(filepath: string): Promise<void> {
 		const fullPath = this.fullPath(filepath);
 		const resourceType = this.getResourceType(fullPath);
 		const publicId = this.getPublicId(fullPath);
@@ -366,14 +408,14 @@ export class DriverCloudinary implements Driver {
 			timestamp: this.getTimestamp(),
 			api_key: this.apiKey,
 			resource_type: resourceType,
-			public_id: join(folderPath, publicId),
+			public_id: normalizePath(join(folderPath, publicId), { removeLeading: true }),
 		};
 
 		const signature = this.getFullSignature(parameters);
 
 		await fetch(url, {
 			method: 'POST',
-			body: this.toFormUrlEncoded({
+			body: toFormUrlEncoded({
 				...parameters,
 				signature,
 			}),
@@ -383,7 +425,7 @@ export class DriverCloudinary implements Driver {
 		});
 	}
 
-	async *list(prefix = '') {
+	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
 		const fullPath = this.fullPath(prefix);
 
 		let nextCursor = '';
@@ -422,6 +464,71 @@ export class DriverCloudinary implements Driver {
 				else yield filename;
 			}
 		} while (nextCursor);
+	}
+
+	get tusExtensions(): string[] {
+		return ['creation', 'termination', 'expiration'];
+	}
+
+	async createChunkedUpload(_filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
+		context.metadata!['timestamp'] = this.getTimestamp();
+
+		return context;
+	}
+
+	async writeChunk(
+		filepath: string,
+		content: Readable,
+		offset: number,
+		context: ChunkedUploadContext,
+	): Promise<number> {
+		const fullPath = this.fullPath(filepath);
+		const folderPath = this.getFolderPath(fullPath);
+		const resourceType = this.getResourceType(filepath);
+
+		const uploadParameters = {
+			timestamp: context.metadata!['timestamp'] as string,
+			api_key: this.apiKey,
+			type: 'upload',
+			access_mode: this.accessMode,
+			public_id: this.getPublicId(fullPath),
+			...(folderPath
+				? {
+						asset_folder: folderPath,
+						use_asset_folder_as_public_id_prefix: 'true',
+					}
+				: {}),
+		};
+
+		let bytesUploaded = offset || 0;
+		let currentChunkSize = 0;
+		let chunks = Buffer.alloc(0);
+
+		for await (const chunk of content) {
+			currentChunkSize += chunk.length;
+			chunks = Buffer.concat([chunks, chunk], currentChunkSize);
+		}
+
+		bytesUploaded += currentChunkSize;
+
+		await this.uploadChunk({
+			resourceType,
+			blob: new Blob([chunks]),
+			bytesOffset: offset || 0,
+			bytesTotal: context.size && bytesUploaded === context.size ? context.size : -1,
+			parameters: {
+				signature: this.getFullSignature(uploadParameters),
+				...uploadParameters,
+			},
+		});
+
+		return bytesUploaded;
+	}
+
+	async finishChunkedUpload(_filepath: string, _context: ChunkedUploadContext): Promise<void> {}
+
+	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
+		await this.delete(filepath);
 	}
 }
 

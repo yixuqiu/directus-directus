@@ -1,8 +1,13 @@
 import { defineInterface } from '@directus/extensions';
+import type { AppField, DeepPartial, Field } from '@directus/types';
 import { defineAsyncComponent } from 'vue';
 import PreviewSVG from './preview.svg?raw';
+import toolbarDefault from './toolbar-default';
+import { configurableRichTexts, contributedKey, enabledRichTexts, useRichTexts } from '@/rich-text/register';
 
 const InterfaceWYSIWYG = defineAsyncComponent(() => import('./input-rich-text-html.vue'));
+
+const enabledIds = (field: DeepPartial<Field>) => field.meta?.options?.['extensions'] as string[] | undefined;
 
 export default defineInterface({
 	id: 'input-rich-text-html',
@@ -13,31 +18,38 @@ export default defineInterface({
 	types: ['text'],
 	group: 'standard',
 	preview: PreviewSVG,
-	options: {
+	options: ({ field }) => ({
 		standard: [
+			// Only rendered when something is installed: an empty multi-select would confuse every
+			// other project.
+			...(useRichTexts().value.length > 0
+				? [
+						{
+							field: 'extensions',
+							name: '$t:interfaces.input-rich-text-html.extensions',
+							type: 'json',
+							schema: {
+								// nothing is on by default: installing an extension must not change an existing field
+								default_value: [],
+							},
+							meta: {
+								width: 'half',
+								interface: 'select-multiple-dropdown',
+								note: '$t:interfaces.input-rich-text-html.extensions_note',
+								options: {
+									choices: useRichTexts().value.map(({ id, name }) => ({ value: id, text: name })),
+									placeholder: '$t:interfaces.input-rich-text-html.extensions_placeholder',
+								},
+							},
+						} satisfies DeepPartial<AppField>,
+					]
+				: []),
 			{
 				field: 'toolbar',
 				name: '$t:interfaces.input-rich-text-html.toolbar',
 				type: 'json',
 				schema: {
-					default_value: [
-						'bold',
-						'italic',
-						'underline',
-						'h1',
-						'h2',
-						'h3',
-						'numlist',
-						'bullist',
-						'removeformat',
-						'blockquote',
-						'customLink',
-						'customImage',
-						'customMedia',
-						'hr',
-						'code',
-						'fullscreen',
-					],
+					default_value: toolbarDefault,
 				},
 				meta: {
 					width: 'half',
@@ -107,6 +119,10 @@ export default defineInterface({
 							{
 								value: 'h6',
 								text: '$t:wysiwyg_options.h6',
+							},
+							{
+								value: 'customPre',
+								text: '$t:wysiwyg_options.pre',
 							},
 							{
 								value: 'alignleft',
@@ -181,6 +197,10 @@ export default defineInterface({
 								text: '$t:wysiwyg_options.blockquote',
 							},
 							{
+								value: 'customInlineCode',
+								text: '$t:wysiwyg_options.codeblock',
+							},
+							{
 								value: 'customLink',
 								text: '$t:wysiwyg_options.link',
 							},
@@ -204,9 +224,14 @@ export default defineInterface({
 								value: 'hr',
 								text: '$t:wysiwyg_options.hr',
 							},
+							// `preview` intentionally dropped — no content footprint, editor is already live-WYSIWYG.
 							{
-								value: 'code',
-								text: '$t:wysiwyg_options.source_code',
+								value: 'pagebreak',
+								text: '$t:wysiwyg_options.pagebreak',
+							},
+							{
+								value: 'insertdatetime',
+								text: '$t:wysiwyg_options.insertdatetime',
 							},
 							{
 								value: 'fullscreen',
@@ -220,10 +245,37 @@ export default defineInterface({
 								value: 'ltr rtl',
 								text: '$t:wysiwyg_options.directionality',
 							},
+							{
+								value: 'code',
+								text: '$t:wysiwyg_options.source_code',
+							},
+							// Only the extensions this field switched on: a button whose node is not in
+							// the field's schema would do nothing. `options` is a function the app
+							// re-runs as the admin edits, so this list follows the picker above.
+							...enabledRichTexts(enabledIds(field), field.meta?.options?.['extensionOptions']).flatMap((config) =>
+								config.buttons.map((button) => ({
+									value: contributedKey(config, button),
+									text: button.label,
+								})),
+							),
 						],
 					},
 				},
 			},
+			...(configurableRichTexts(enabledIds(field)).length > 0
+				? [
+						{
+							field: 'extensionOptions',
+							name: '$t:interfaces.input-rich-text-html.extension_options',
+							type: 'json',
+							meta: {
+								width: 'full',
+								interface: 'system-richtext-extension-options',
+								options: { extensions: enabledIds(field) },
+							},
+						} satisfies DeepPartial<AppField>,
+					]
+				: []),
 			{
 				field: 'font',
 				name: '$t:font',
@@ -279,6 +331,19 @@ export default defineInterface({
 				},
 			},
 			{
+				field: 'linkProtocols',
+				name: '$t:interfaces.input-rich-text-html.link_protocols',
+				type: 'csv',
+				meta: {
+					width: 'full',
+					interface: 'system-link-protocols',
+					note: '$t:interfaces.input-rich-text-html.link_protocols_note',
+					options: {
+						placeholder: '$t:interfaces.input-rich-text-html.link_protocols_placeholder',
+					},
+				},
+			},
+			{
 				field: 'customFormats',
 				name: '$t:interfaces.input-rich-text-html.custom_formats',
 				type: 'json',
@@ -296,6 +361,15 @@ export default defineInterface({
 									styles: { color: '#00ff00', 'font-size': '20px' },
 									attributes: { title: 'My Custom Wrapper' },
 								},
+								{
+									title: 'My Custom Block',
+									block: 'p',
+									classes: 'lead-paragraph',
+								},
+								{
+									title: 'My Custom Group',
+									items: [{ title: 'Subheading', selector: 'h2', classes: 'subheading' }],
+								},
 							],
 							null,
 							4,
@@ -303,26 +377,23 @@ export default defineInterface({
 					},
 				},
 			},
-			{
-				field: 'tinymceOverrides',
-				name: '$t:interfaces.input-rich-text-html.options_override',
-				type: 'json',
-				meta: {
-					interface: 'code',
-					note: '$t:interfaces.input-rich-text-html.options_override_note',
-					options: {
-						language: 'json',
-						template: JSON.stringify(
-							{
-								font_size_formats: '8pt 10pt 12pt 14pt 16pt 18pt 24pt 36pt 48pt',
-								font_family_formats: 'Arial=arial,helvetica,sans-serif; Courier New=courier new,courier,monospace;',
+			// deprecated + inert; only rendered for fields that still carry a stored value
+			...(field.meta?.options?.['tinymceOverrides'] != null
+				? [
+						{
+							field: 'tinymceOverrides',
+							name: '$t:interfaces.input-rich-text-html.options_override',
+							type: 'json',
+							meta: {
+								interface: 'code',
+								note: '$t:interfaces.input-rich-text-html.options_override_note',
+								options: {
+									language: 'json',
+								},
 							},
-							null,
-							4,
-						),
-					},
-				},
-			},
+						} satisfies DeepPartial<AppField>,
+					]
+				: []),
 		],
-	},
+	}),
 });

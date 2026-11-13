@@ -1,7 +1,7 @@
 import type { DirectusNotification } from '../../../schema/notification.js';
 import type { ApplyQueryFields, Query } from '../../../types/index.js';
-import { throwIfEmpty } from '../../utils/index.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfEmpty } from '../../utils/index.js';
 
 export type ReadNotificationOutput<
 	Schema,
@@ -37,7 +37,7 @@ export const readNotification =
 		query?: TQuery,
 	): RestCommand<ReadNotificationOutput<Schema, TQuery>, Schema> =>
 	() => {
-		throwIfEmpty(String(key), 'Key cannot be empty');
+		throwIfEmpty(key, 'Key cannot be empty');
 
 		return {
 			path: `/notifications/${key}`,

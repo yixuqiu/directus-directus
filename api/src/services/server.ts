@@ -1,24 +1,39 @@
+import { Readable } from 'node:stream';
+import { performance } from 'perf_hooks';
 import { useEnv } from '@directus/env';
-import type { Accountability, SchemaOverview } from '@directus/types';
-import { toArray, toBoolean } from '@directus/utils';
+import { ForbiddenError } from '@directus/errors';
+import { createKv } from '@directus/memory';
+import type {
+	AbstractServiceOptions,
+	Accountability,
+	SchemaOverview,
+	ServerHealth,
+	ServerHealthCheck,
+} from '@directus/types';
 import { version } from 'directus/version';
 import type { Knex } from 'knex';
 import { merge } from 'lodash-es';
-import { Readable } from 'node:stream';
-import { performance } from 'perf_hooks';
-import { getCache } from '../cache.js';
+import { buildProviderConfigs } from '../ai/providers/registry.js';
+import { FILE_UPLOADS, RESUMABLE_UPLOADS } from '../constants.js';
 import getDatabase, { hasDatabaseConnection } from '../database/index.js';
-import { useLogger } from '../logger.js';
+import { getEntitlementManager, getLicenseManager } from '../license/index.js';
+import { useLogger } from '../logger/index.js';
 import getMailer from '../mailer.js';
-import { rateLimiterGlobal } from '../middleware/rate-limiter-global.js';
-import { rateLimiter } from '../middleware/rate-limiter-ip.js';
+import { redisConfigAvailable, useRedis } from '../redis/index.js';
 import { SERVER_ONLINE } from '../server.js';
 import { getStorage } from '../storage/index.js';
-import type { AbstractServiceOptions } from '../types/index.js';
+import { getAllowedLogLevels } from '../utils/get-allowed-log-levels.js';
+import { isUnauthenticated } from '../utils/is-unauthenticated.js';
+import { useStore } from '../utils/store.js';
 import { SettingsService } from './settings.js';
 
 const env = useEnv();
 const logger = useLogger();
+const HEALTHCHECK_CACHE_TTL = env.HEALTHCHECK_CACHE_TTL;
+
+const store = useStore<{ health: ServerHealth }>(env.HEALTHCHECK_NAMESPACE, {
+	ttl: HEALTHCHECK_CACHE_TTL,
+});
 
 export class ServerService {
 	knex: Knex;
@@ -33,12 +48,19 @@ export class ServerService {
 		this.settingsService = new SettingsService({ knex: this.knex, schema: this.schema });
 	}
 
+	async isSetupCompleted(): Promise<boolean> {
+		return Boolean(await this.knex('directus_users').first());
+	}
+
 	async serverInfo(): Promise<Record<string, any>> {
 		const info: Record<string, any> = {};
+		const licenseManager = getLicenseManager();
+		const isSetupCompleted = await this.isSetupCompleted();
 
-		const projectInfo = await this.settingsService.readSingleton({
+		const { project_owner, ...projectInfo } = await this.settingsService.readSingleton({
 			fields: [
 				'project_name',
+				'project_owner',
 				'project_descriptor',
 				'project_logo',
 				'project_color',
@@ -61,102 +83,165 @@ export class ServerService {
 
 		info['project'] = projectInfo;
 
+		if (!isSetupCompleted) {
+			info['setup'] = {
+				license_complete: licenseManager.getSource() !== null,
+				owner_complete: Boolean(project_owner),
+			};
+		}
+
 		if (this.accountability?.user) {
-			if (env['RATE_LIMITER_ENABLED']) {
+			info['project_owner_enabled'] = env.PROJECT_OWNER_ENABLED;
+
+			info['mcp_enabled'] = env.MCP_ENABLED;
+			info['ai_enabled'] = env.AI_ENABLED;
+			info['mcp_oauth_enabled'] = env.MCP_OAUTH_ENABLED;
+			info['mcp_oauth_dcr_enabled'] = env.MCP_OAUTH_DCR_ENABLED;
+			info['mcp_oauth_cimd_enabled'] = env.MCP_OAUTH_CIMD_ENABLED;
+
+			info['autoSave'] = {
+				revisionInterval: env.AUTOSAVE_REVISION_INTERVAL,
+			};
+
+			if (info['ai_enabled']) {
+				// Expose which AI providers are configured so the app can render the model picker,
+				// without granting non-admin users read access to the underlying credentials.
+				const aiSettings = await this.settingsService.readSingleton({
+					fields: [
+						'ai_openai_api_key',
+						'ai_anthropic_api_key',
+						'ai_google_api_key',
+						'ai_openrouter_api_key',
+						'ai_openai_compatible_api_key',
+						'ai_openai_compatible_base_url',
+					],
+				});
+
+				const providerConfigs = buildProviderConfigs(aiSettings);
+
+				info['ai_providers'] = providerConfigs.map((config) => config.type);
+			}
+
+			info['files'] = {
+				mimeTypeAllowList: env.FILES_MIME_TYPE_ALLOW_LIST,
+			};
+
+			if (env.RATE_LIMITER_ENABLED) {
 				info['rateLimit'] = {
-					points: env['RATE_LIMITER_POINTS'],
-					duration: env['RATE_LIMITER_DURATION'],
+					points: env.RATE_LIMITER_POINTS,
+					duration: env.RATE_LIMITER_DURATION,
 				};
 			} else {
 				info['rateLimit'] = false;
 			}
 
-			if (env['RATE_LIMITER_GLOBAL_ENABLED']) {
+			if (env.RATE_LIMITER_GLOBAL_ENABLED) {
 				info['rateLimitGlobal'] = {
-					points: env['RATE_LIMITER_GLOBAL_POINTS'],
-					duration: env['RATE_LIMITER_GLOBAL_DURATION'],
+					points: env.RATE_LIMITER_GLOBAL_POINTS,
+					duration: env.RATE_LIMITER_GLOBAL_DURATION,
 				};
 			} else {
 				info['rateLimitGlobal'] = false;
 			}
 
 			info['extensions'] = {
-				limit: env['EXTENSIONS_LIMIT'] ?? null,
+				// `0` means no limit
+				limit: env.EXTENSIONS_LIMIT || null,
 			};
 
 			info['queryLimit'] = {
-				default: env['QUERY_LIMIT_DEFAULT'],
-				max: Number.isFinite(env['QUERY_LIMIT_MAX']) ? env['QUERY_LIMIT_MAX'] : -1,
+				default: env.QUERY_LIMIT_DEFAULT,
+				max: env.QUERY_LIMIT_MAX !== undefined && Number.isFinite(env.QUERY_LIMIT_MAX) ? env.QUERY_LIMIT_MAX : -1,
 			};
 
-			if (toBoolean(env['WEBSOCKETS_ENABLED'])) {
+			if (env.WEBSOCKETS_ENABLED) {
 				info['websocket'] = {};
 
-				info['websocket'].rest = toBoolean(env['WEBSOCKETS_REST_ENABLED'])
+				info['websocket'].rest = env.WEBSOCKETS_REST_ENABLED
 					? {
-							authentication: env['WEBSOCKETS_REST_AUTH'],
-							path: env['WEBSOCKETS_REST_PATH'],
-					  }
+							authentication: env.WEBSOCKETS_REST_AUTH,
+							path: env.WEBSOCKETS_REST_PATH,
+						}
 					: false;
 
-				info['websocket'].graphql = toBoolean(env['WEBSOCKETS_GRAPHQL_ENABLED'])
+				info['websocket'].graphql = env.WEBSOCKETS_GRAPHQL_ENABLED
 					? {
-							authentication: env['WEBSOCKETS_GRAPHQL_AUTH'],
-							path: env['WEBSOCKETS_GRAPHQL_PATH'],
-					  }
+							authentication: env.WEBSOCKETS_GRAPHQL_AUTH,
+							path: env.WEBSOCKETS_GRAPHQL_PATH,
+						}
 					: false;
 
-				info['websocket'].heartbeat = toBoolean(env['WEBSOCKETS_HEARTBEAT_ENABLED'])
-					? env['WEBSOCKETS_HEARTBEAT_PERIOD']
-					: false;
+				info['websocket'].heartbeat = env.WEBSOCKETS_HEARTBEAT_ENABLED ? env.WEBSOCKETS_HEARTBEAT_PERIOD : false;
+
+				info['websocket'].collaborativeEditing = env.WEBSOCKETS_COLLAB_ENABLED;
+
+				info['websocket'].logs =
+					env.WEBSOCKETS_LOGS_ENABLED && this.accountability.admin
+						? {
+								allowedLogLevels: getAllowedLogLevels(env.WEBSOCKETS_LOGS_LEVEL || 'info'),
+							}
+						: false;
 			} else {
 				info['websocket'] = false;
 			}
 
+			if (FILE_UPLOADS.MAX_CONCURRENCY && FILE_UPLOADS.MAX_CONCURRENCY !== Infinity) {
+				info['uploads'] = {
+					maxConcurrency: FILE_UPLOADS.MAX_CONCURRENCY,
+				};
+			}
+
+			if (RESUMABLE_UPLOADS.ENABLED) {
+				info['uploads'] = {
+					...info['uploads'],
+					tus: true,
+					chunkSize: RESUMABLE_UPLOADS.CHUNK_SIZE,
+				};
+			}
+		}
+
+		if (this.accountability?.user || !isSetupCompleted) {
 			info['version'] = version;
 		}
+
+		info['license'] = {
+			source: licenseManager.getSource(),
+			entitlements: getEntitlementManager().getAppEntitlements(),
+		};
 
 		return info;
 	}
 
-	async health(): Promise<Record<string, any>> {
+	async health(): Promise<ServerHealth | Pick<ServerHealth, 'status'>> {
+		if (isUnauthenticated(this.accountability)) {
+			throw new ForbiddenError();
+		}
+
+		const healthResult = await store(async (store) => {
+			try {
+				return await store.get('health');
+			} catch (err) {
+				logger.warn(err, 'Failed to read health check cache');
+			}
+
+			return;
+		});
+
+		if (healthResult) {
+			return this.accountability?.admin === true ? healthResult : { status: healthResult['status'] };
+		}
+
 		const { nanoid } = await import('nanoid');
 
 		const checkID = nanoid(5);
 
-		// Based on https://tools.ietf.org/id/draft-inadarei-api-health-check-05.html#name-componenttype
-		type HealthData = {
-			status: 'ok' | 'warn' | 'error';
-			releaseId: string;
-			serviceId: string;
-			checks: {
-				[service: string]: HealthCheck[];
-			};
-		};
+		const enabledServices = env.HEALTHCHECK_SERVICES;
 
-		type HealthCheck = {
-			componentType: 'system' | 'datastore' | 'objectstore' | 'email' | 'cache' | 'ratelimiter';
-			observedValue?: number | string | boolean;
-			observedUnit?: string;
-			status: 'ok' | 'warn' | 'error';
-			output?: any;
-			threshold?: number;
-		};
-
-		const data: HealthData = {
+		const data: ServerHealth = {
 			status: 'ok',
 			releaseId: version,
-			serviceId: env['PUBLIC_URL'] as string,
-			checks: merge(
-				...(await Promise.all([
-					testDatabase(),
-					testCache(),
-					testRateLimiter(),
-					testRateLimiterGlobal(),
-					testStorage(),
-					testEmail(),
-				])),
-			),
+			serviceId: env.PUBLIC_URL,
+			checks: merge(...(await Promise.all([testDatabase(), testRedis(), testStorage(), testEmail()]))),
 		};
 
 		if (SERVER_ONLINE === false) {
@@ -185,17 +270,23 @@ export class ServerService {
 			if (data.status === 'error') break;
 		}
 
-		if (this.accountability?.admin !== true) {
-			return { status: data.status };
-		} else {
-			return data;
-		}
+		await store(async (store) => {
+			await store.set('health', data).catch((err) => {
+				logger.warn(err, 'Failed to write health check cache');
+			});
+		});
 
-		async function testDatabase(): Promise<Record<string, HealthCheck[]>> {
+		return this.accountability?.admin === true ? data : { status: data.status };
+
+		async function testDatabase(): Promise<Record<string, ServerHealthCheck[]>> {
+			if (enabledServices.includes('database') === false) {
+				return {};
+			}
+
 			const database = getDatabase();
 			const client = env['DB_CLIENT'];
 
-			const checks: Record<string, HealthCheck[]> = {};
+			const checks: Record<string, ServerHealthCheck[]> = {};
 
 			// Response time
 			// ----------------------------------------------------------------------------------------
@@ -248,15 +339,21 @@ export class ServerService {
 			return checks;
 		}
 
-		async function testCache(): Promise<Record<string, HealthCheck[]>> {
-			if (env['CACHE_ENABLED'] !== true) {
+		async function testRedis(): Promise<Record<string, ServerHealthCheck[]>> {
+			if (enabledServices.includes('redis') === false || redisConfigAvailable() !== true) {
 				return {};
 			}
 
-			const { cache } = getCache();
+			// Use createKV as redis check to avoid using redlock specific commands
+			const redis = createKv({
+				type: 'redis',
+				redis: useRedis(),
+				namespace: env.HEALTHCHECK_NAMESPACE,
+				ttl: HEALTHCHECK_CACHE_TTL,
+			});
 
-			const checks: Record<string, HealthCheck[]> = {
-				'cache:responseTime': [
+			const checks: Record<string, ServerHealthCheck[]> = {
+				'redis:responseTime': [
 					{
 						status: 'ok',
 						componentType: 'cache',
@@ -270,115 +367,36 @@ export class ServerService {
 			const startTime = performance.now();
 
 			try {
-				await cache!.set(`health-${checkID}`, true, 5);
-				await cache!.delete(`health-${checkID}`);
+				await redis.set(`directus-health-${checkID}`, 1);
+				await redis.delete(`directus-health-${checkID}`);
 			} catch (err: any) {
-				checks['cache:responseTime']![0]!.status = 'error';
-				checks['cache:responseTime']![0]!.output = err;
+				checks['redis:responseTime']![0]!.status = 'error';
+				checks['redis:responseTime']![0]!.output = err;
 			} finally {
 				const endTime = performance.now();
-				checks['cache:responseTime']![0]!.observedValue = +(endTime - startTime).toFixed(3);
+				checks['redis:responseTime']![0]!.observedValue = +(endTime - startTime).toFixed(3);
 
 				if (
-					checks['cache:responseTime']![0]!.observedValue > checks['cache:responseTime']![0]!.threshold! &&
-					checks['cache:responseTime']![0]!.status !== 'error'
+					checks['redis:responseTime']![0]!.observedValue > checks['redis:responseTime']![0]!.threshold! &&
+					checks['redis:responseTime']![0]!.status !== 'error'
 				) {
-					checks['cache:responseTime']![0]!.status = 'warn';
+					checks['redis:responseTime']![0]!.status = 'warn';
 				}
 			}
 
 			return checks;
 		}
 
-		async function testRateLimiter(): Promise<Record<string, HealthCheck[]>> {
-			if (env['RATE_LIMITER_ENABLED'] !== true) {
+		async function testStorage(): Promise<Record<string, ServerHealthCheck[]>> {
+			if (enabledServices.includes('storage') === false) {
 				return {};
 			}
 
-			const checks: Record<string, HealthCheck[]> = {
-				'rateLimiter:responseTime': [
-					{
-						status: 'ok',
-						componentType: 'ratelimiter',
-						observedValue: 0,
-						observedUnit: 'ms',
-						threshold: env['RATE_LIMITER_HEALTHCHECK_THRESHOLD'] ? +env['RATE_LIMITER_HEALTHCHECK_THRESHOLD'] : 150,
-					},
-				],
-			};
-
-			const startTime = performance.now();
-
-			try {
-				await rateLimiter.consume(`health-${checkID}`, 1);
-				await rateLimiter.delete(`health-${checkID}`);
-			} catch (err: any) {
-				checks['rateLimiter:responseTime']![0]!.status = 'error';
-				checks['rateLimiter:responseTime']![0]!.output = err;
-			} finally {
-				const endTime = performance.now();
-				checks['rateLimiter:responseTime']![0]!.observedValue = +(endTime - startTime).toFixed(3);
-
-				if (
-					checks['rateLimiter:responseTime']![0]!.observedValue > checks['rateLimiter:responseTime']![0]!.threshold! &&
-					checks['rateLimiter:responseTime']![0]!.status !== 'error'
-				) {
-					checks['rateLimiter:responseTime']![0]!.status = 'warn';
-				}
-			}
-
-			return checks;
-		}
-
-		async function testRateLimiterGlobal(): Promise<Record<string, HealthCheck[]>> {
-			if (env['RATE_LIMITER_GLOBAL_ENABLED'] !== true) {
-				return {};
-			}
-
-			const checks: Record<string, HealthCheck[]> = {
-				'rateLimiterGlobal:responseTime': [
-					{
-						status: 'ok',
-						componentType: 'ratelimiter',
-						observedValue: 0,
-						observedUnit: 'ms',
-						threshold: env['RATE_LIMITER_GLOBAL_HEALTHCHECK_THRESHOLD']
-							? +env['RATE_LIMITER_GLOBAL_HEALTHCHECK_THRESHOLD']
-							: 150,
-					},
-				],
-			};
-
-			const startTime = performance.now();
-
-			try {
-				await rateLimiterGlobal.consume(`health-${checkID}`, 1);
-				await rateLimiterGlobal.delete(`health-${checkID}`);
-			} catch (err: any) {
-				checks['rateLimiterGlobal:responseTime']![0]!.status = 'error';
-				checks['rateLimiterGlobal:responseTime']![0]!.output = err;
-			} finally {
-				const endTime = performance.now();
-				checks['rateLimiterGlobal:responseTime']![0]!.observedValue = +(endTime - startTime).toFixed(3);
-
-				if (
-					checks['rateLimiterGlobal:responseTime']![0]!.observedValue >
-						checks['rateLimiterGlobal:responseTime']![0]!.threshold! &&
-					checks['rateLimiterGlobal:responseTime']![0]!.status !== 'error'
-				) {
-					checks['rateLimiterGlobal:responseTime']![0]!.status = 'warn';
-				}
-			}
-
-			return checks;
-		}
-
-		async function testStorage(): Promise<Record<string, HealthCheck[]>> {
 			const storage = await getStorage();
 
-			const checks: Record<string, HealthCheck[]> = {};
+			const checks: Record<string, ServerHealthCheck[]> = {};
 
-			for (const location of toArray(env['STORAGE_LOCATIONS'] as string)) {
+			for (const location of env.STORAGE_LOCATIONS) {
 				const disk = storage.location(location);
 				const envThresholdKey = `STORAGE_${location}_HEALTHCHECK_THRESHOLD`.toUpperCase();
 
@@ -395,13 +413,7 @@ export class ServerService {
 				const startTime = performance.now();
 
 				try {
-					await disk.write(`health-${checkID}`, Readable.from(['check']));
-					const fileStream = await disk.read(`health-${checkID}`);
-
-					fileStream.on('data', async () => {
-						fileStream.destroy();
-						await disk.delete(`health-${checkID}`);
-					});
+					await disk.write('directus-health-file', Readable.from([checkID]));
 				} catch (err: any) {
 					checks[`storage:${location}:responseTime`]![0]!.status = 'error';
 					checks[`storage:${location}:responseTime`]![0]!.output = err;
@@ -422,8 +434,12 @@ export class ServerService {
 			return checks;
 		}
 
-		async function testEmail(): Promise<Record<string, HealthCheck[]>> {
-			const checks: Record<string, HealthCheck[]> = {
+		async function testEmail(): Promise<Record<string, ServerHealthCheck[]>> {
+			if (enabledServices.includes('email') === false || !env.EMAIL_VERIFY_SETUP) {
+				return {};
+			}
+
+			const checks: Record<string, ServerHealthCheck[]> = {
 				'email:connection': [
 					{
 						status: 'ok',
@@ -432,10 +448,9 @@ export class ServerService {
 				],
 			};
 
-			const mailer = getMailer();
-
 			try {
-				await mailer.verify();
+				// Building the mailer can throw on a misconfigured transport.
+				await getMailer().verify();
 			} catch (err: any) {
 				checks['email:connection']![0]!.status = 'error';
 				checks['email:connection']![0]!.output = err;

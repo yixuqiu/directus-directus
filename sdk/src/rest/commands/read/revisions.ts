@@ -1,7 +1,7 @@
 import type { DirectusRevision } from '../../../schema/revision.js';
 import type { ApplyQueryFields, Query } from '../../../types/index.js';
-import { throwIfEmpty } from '../../utils/index.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfEmpty } from '../../utils/index.js';
 
 export type ReadRevisionOutput<
 	Schema,
@@ -37,7 +37,7 @@ export const readRevision =
 		query?: TQuery,
 	): RestCommand<ReadRevisionOutput<Schema, TQuery>, Schema> =>
 	() => {
-		throwIfEmpty(String(key), 'Key cannot be empty');
+		throwIfEmpty(key, 'Key cannot be empty');
 
 		return {
 			path: `/revisions/${key}`,

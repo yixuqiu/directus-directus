@@ -16,6 +16,7 @@ beforeEach(() => {
 		set: vi.fn(),
 		delete: vi.fn(),
 		has: vi.fn(),
+		clear: vi.fn(),
 	} as unknown as LRUCache<string, Uint8Array, unknown>;
 });
 
@@ -35,6 +36,18 @@ describe('constructor', () => {
 		kv = new KvLocal({});
 		expect(LRUCache).not.toHaveBeenCalled();
 		expect(kv['store']).toBeInstanceOf(Map);
+	});
+
+	test.each([{ maxKeys: 10 }, { ttl: 5000 }])('Instantiates LRU cache if ttl OR maxKeys are provided', (config) => {
+		vi.mocked(LRUCache).mockClear();
+		kv = new KvLocal(config);
+		expect(LRUCache).toHaveBeenCalled();
+	});
+
+	test('Instantiates LRU cache with ttl + auto purge to prevent stale cache', () => {
+		vi.mocked(LRUCache).mockClear();
+		kv = new KvLocal({ ttl: 5000 });
+		expect(LRUCache).toHaveBeenCalledWith({ ttl: 5000, ttlAutopurge: true });
 	});
 });
 
@@ -85,7 +98,6 @@ describe('increment', () => {
 	test('Sets value to 1 if no value exists', async () => {
 		const mockKey = 'kv-key';
 
-		kv.get = vi.fn().mockReturnValue(undefined);
 		kv.set = vi.fn();
 
 		await kv.increment(mockKey);
@@ -97,7 +109,6 @@ describe('increment', () => {
 		const mockKey = 'kv-key';
 		const mockAmount = 15;
 
-		kv.get = vi.fn().mockReturnValue(undefined);
 		kv.set = vi.fn();
 
 		await kv.increment(mockKey, mockAmount);
@@ -110,7 +121,8 @@ describe('increment', () => {
 		const mockValue = 42;
 		const mockAmount = 15;
 
-		kv.get = vi.fn().mockReturnValue(mockValue);
+		vi.mocked(kv['store'].get).mockReturnValue(new Uint8Array([1]));
+		vi.mocked(deserialize).mockReturnValue(mockValue);
 		kv.set = vi.fn();
 
 		await kv.increment(mockKey, mockAmount);
@@ -122,9 +134,12 @@ describe('increment', () => {
 		const mockKey = 'kv-key';
 		const mockStoredValue = 'not-a-number';
 
-		kv.get = vi.fn().mockReturnValue(mockStoredValue);
+		vi.mocked(kv['store'].get).mockReturnValue(new Uint8Array([1]));
+		vi.mocked(deserialize).mockReturnValue(mockStoredValue);
 
-		expect(kv.increment(mockKey)).rejects.toMatchInlineSnapshot('[Error: The value for key "kv-key" is not a number.]');
+		expect(() => kv.increment(mockKey)).toThrowErrorMatchingInlineSnapshot(
+			'[Error: The value for key "kv-key" is not a number.]',
+		);
 	});
 });
 
@@ -134,9 +149,10 @@ describe('setMax', () => {
 		const mockValue = 42;
 		const mockStoredValue = 'not-a-number';
 
-		kv.get = vi.fn().mockReturnValue(mockStoredValue);
+		vi.mocked(kv['store'].get).mockReturnValue(new Uint8Array([1]));
+		vi.mocked(deserialize).mockReturnValue(mockStoredValue);
 
-		expect(kv.setMax(mockKey, mockValue)).rejects.toMatchInlineSnapshot(
+		expect(() => kv.setMax(mockKey, mockValue)).toThrowErrorMatchingInlineSnapshot(
 			'[Error: The value for key "kv-key" is not a number.]',
 		);
 	});
@@ -144,9 +160,7 @@ describe('setMax', () => {
 	test('Defaults to 0 if current value does not exist', async () => {
 		const mockKey = 'kv-key';
 		const mockValue = 42;
-		const mockStoredValue = undefined;
 
-		kv.get = vi.fn().mockReturnValue(mockStoredValue);
 		kv.set = vi.fn();
 
 		await kv.setMax(mockKey, mockValue);
@@ -159,7 +173,22 @@ describe('setMax', () => {
 		const mockValue = 42;
 		const mockStoredValue = 500;
 
-		kv.get = vi.fn().mockReturnValue(mockStoredValue);
+		vi.mocked(kv['store'].get).mockReturnValue(new Uint8Array([1]));
+		vi.mocked(deserialize).mockReturnValue(mockStoredValue);
+		kv.set = vi.fn();
+
+		const result = await kv.setMax(mockKey, mockValue);
+
+		expect(kv.set).not.toHaveBeenCalled();
+		expect(result).toBe(false);
+	});
+
+	test('Returns false if existing value equals passed value', async () => {
+		const mockKey = 'kv-key';
+		const mockValue = 42;
+
+		vi.mocked(kv['store'].get).mockReturnValue(new Uint8Array([1]));
+		vi.mocked(deserialize).mockReturnValue(mockValue);
 		kv.set = vi.fn();
 
 		const result = await kv.setMax(mockKey, mockValue);
@@ -173,7 +202,8 @@ describe('setMax', () => {
 		const mockValue = 500;
 		const mockStoredValue = 42;
 
-		kv.get = vi.fn().mockReturnValue(mockStoredValue);
+		vi.mocked(kv['store'].get).mockReturnValue(new Uint8Array([1]));
+		vi.mocked(deserialize).mockReturnValue(mockStoredValue);
 		kv.set = vi.fn();
 
 		const result = await kv.setMax(mockKey, mockValue);
@@ -210,5 +240,41 @@ describe('has', () => {
 
 		expect(kv['store'].has).toHaveBeenCalledWith(mockKey);
 		expect(res2).toBe(true);
+	});
+});
+
+describe('acquireLock', () => {
+	test('Returns no-op lock', async () => {
+		const lock = await kv.acquireLock('key');
+		expect(lock).toHaveProperty('release');
+		expect(lock).toHaveProperty('extend');
+		await expect(lock.release()).resolves.toBeUndefined();
+		await expect(lock.extend(100)).resolves.toBeUndefined();
+	});
+});
+
+describe('usingLock', () => {
+	test('Executes callback directly', async () => {
+		const callback = vi.fn().mockResolvedValue('result');
+		const result = await kv.usingLock('key', callback);
+		expect(callback).toHaveBeenCalled();
+		expect(result).toBe('result');
+	});
+
+	test('Hands the callback a signal that never aborts', async () => {
+		const callback = vi.fn().mockResolvedValue('result');
+
+		await kv.usingLock('key', callback, { duration: 1000, retryCount: 0 });
+
+		const [signal] = callback.mock.calls[0]!;
+		expect(signal).toBeInstanceOf(AbortSignal);
+		expect(signal.aborted).toBe(false);
+	});
+});
+
+describe('clear', () => {
+	test('Clears the store', async () => {
+		await kv.clear();
+		expect(kv['store'].clear).toHaveBeenCalled();
 	});
 });

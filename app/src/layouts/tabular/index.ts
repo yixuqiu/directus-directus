@@ -1,23 +1,27 @@
-import { HeaderRaw, Item, Sort } from '@/components/v-table/types';
-import { useAliasFields } from '@/composables/use-alias-fields';
-import { useFieldsStore } from '@/stores/fields';
-import { adjustFieldsForDisplays } from '@/utils/adjust-fields-for-displays';
-import { formatCollectionItemsCount } from '@/utils/format-collection-items-count';
-import { getDefaultDisplayForType } from '@/utils/get-default-display-for-type';
-import { getItemRoute } from '@/utils/get-route';
-import { hideDragImage } from '@/utils/hide-drag-image';
-import { saveAsCSV } from '@/utils/save-as-csv';
-import { syncRefProperty } from '@/utils/sync-ref-property';
 import { useCollection, useItems, useSync } from '@directus/composables';
+import { isPublishedVersionKey } from '@directus/constants';
 import { defineLayout } from '@directus/extensions';
 import { Field } from '@directus/types';
-import { debounce } from 'lodash';
+import { debounce, flatten } from 'lodash-es';
 import { computed, ref, toRefs, unref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import TabularActions from './actions.vue';
 import TabularOptions from './options.vue';
 import TabularLayout from './tabular.vue';
 import { LayoutOptions, LayoutQuery } from './types';
+import { useAiToolsStore } from '@/ai/stores/use-ai-tools';
+import { HeaderRaw, Sort } from '@/components/v-table/types';
+import { useAliasFields } from '@/composables/use-alias-fields';
+import { useLayoutClickHandler } from '@/composables/use-layout-click-handler';
+import { useVersionQuery } from '@/composables/use-version-query';
+import { useFieldsStore } from '@/stores/fields';
+import { adjustFieldsForDisplays } from '@/utils/adjust-fields-for-displays';
+import { isFieldCollectionInactive } from '@/utils/collection-status';
+import { formatItemsCountPaginated } from '@/utils/format-items-count';
+import { getDefaultDisplayForType } from '@/utils/get-default-display-for-type';
+import { hideDragImage } from '@/utils/hide-drag-image';
+import { saveAsCSV } from '@/utils/save-as-csv';
+import { syncRefProperty } from '@/utils/sync-ref-property';
 
 export default defineLayout<LayoutOptions, LayoutQuery>({
 	id: 'tabular',
@@ -29,17 +33,23 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 		sidebar: () => undefined,
 		actions: TabularActions,
 	},
-	headerShadow: false,
 	setup(props, { emit }) {
-		const router = useRouter();
-
+		const { t, n } = useI18n();
 		const fieldsStore = useFieldsStore();
+
+		const toolsStore = useAiToolsStore();
+
+		toolsStore.onSystemToolResult((tool, input) => {
+			if (tool === 'items' && input.collection === collection.value) {
+				refresh();
+			}
+		});
 
 		const selection = useSync(props, 'selection', emit);
 		const layoutOptions = useSync(props, 'layoutOptions', emit);
 		const layoutQuery = useSync(props, 'layoutQuery', emit);
 
-		const { collection, filter, filterUser, search } = toRefs(props);
+		const { collection, filter, filterSystem, filterUser, search } = toRefs(props);
 
 		const { info, primaryKeyField, fields: fieldsInCollection, sortField } = useCollection(collection);
 
@@ -47,15 +57,19 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 
 		const { aliasedFields, aliasQuery, aliasedKeys } = useAliasFields(fields, collection);
 
-		const fieldsWithRelationalAliased = computed(() => {
-			return Object.values(aliasedFields.value).reduce<string[]>((acc, value) => {
-				return [...acc, ...value.fields];
-			}, []);
-		});
+		const fieldsWithRelationalAliased = computed(() =>
+			flatten(Object.values(aliasedFields.value).map(({ fields }) => fields)),
+		);
+
+		const routeVersionKey = useVersionQuery();
+		const versionKey = computed(() => (props.selectMode ? null : routeVersionKey.value));
+
+		const { onClick } = useLayoutClickHandler({ props, selection, primaryKeyField, versionKey });
 
 		const {
 			items,
 			loading,
+			loadingItemCount,
 			error,
 			totalPages,
 			itemCount,
@@ -72,32 +86,47 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 			alias: aliasQuery,
 			filter,
 			search,
+			filterSystem,
+			version: versionKey,
 		});
 
-		const {
-			tableSort,
-			tableHeaders,
-			tableRowHeight,
-			onRowClick,
-			onSortChange,
-			onAlignChange,
-			activeFields,
-			tableSpacing,
-		} = useTable();
+		const { tableSort, tableHeaders, tableRowHeight, onSortChange, onAlignChange, activeFields, tableSpacing } =
+			useTable();
 
 		const showingCount = computed(() => {
-			const filtering = Boolean((itemCount.value || 0) < (totalCount.value || 0) && filterUser.value);
-			return formatCollectionItemsCount(itemCount.value || 0, page.value, limit.value, filtering);
+			// Don't show count if there are no items
+			if (!totalCount.value || !itemCount.value) return;
+
+			return formatItemsCountPaginated({
+				currentItems: itemCount.value,
+				currentPage: page.value,
+				perPage: limit.value,
+				isFiltered: !!filterUser.value,
+				totalItems: totalCount.value,
+				i18n: { t, n },
+			});
+		});
+
+		const isVersion = computed(() => !!versionKey.value && !isPublishedVersionKey(versionKey.value));
+
+		const itemsOrVersions = computed(() => {
+			if (!isVersion.value) return items.value;
+
+			return items.value.map((item: Record<string, any>) => ({
+				...item,
+				_versionId: item.$meta?.version_id ?? null,
+			}));
 		});
 
 		return {
 			tableHeaders,
-			items,
+			items: itemsOrVersions,
 			loading,
+			loadingItemCount,
 			error,
 			totalPages,
 			tableSort,
-			onRowClick,
+			onRowClick: onClick,
 			onSortChange,
 			onAlignChange,
 			tableRowHeight,
@@ -125,6 +154,7 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 			fieldsWithRelationalAliased,
 			aliasedFields,
 			aliasedKeys,
+			versionKey,
 		};
 
 		async function resetPresetAndRefresh() {
@@ -134,8 +164,8 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 
 		function refresh() {
 			getItems();
-			getTotalCount();
-			getItemCount();
+			getTotalCount(true);
+			getItemCount(true);
 		}
 
 		function download() {
@@ -148,6 +178,12 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 		}
 
 		function selectAll() {
+			if (isVersion.value) {
+				selection.value = items.value.map((item) => item.$meta?.version_id).filter((id): id is string => !!id);
+
+				return;
+			}
+
 			if (!primaryKeyField.value) return;
 			const pk = primaryKeyField.value;
 			selection.value = items.value.map((item) => item[pk.field]);
@@ -166,9 +202,9 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 
 			const fieldsDefaultValue = computed(() => {
 				return fieldsInCollection.value
-					.filter((field: Field) => !field.meta?.hidden)
+					.filter((field) => !field.meta?.hidden && !field.meta?.special?.includes('no-data'))
 					.slice(0, 4)
-					.map(({ field }: Field) => field)
+					.map(({ field }) => field)
 					.sort();
 			});
 
@@ -249,11 +285,16 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 							description = fieldNames.join(' -> ');
 						}
 
+						const width = localWidths.value[field.key] || layoutOptions.value?.widths?.[field.key] || 144;
+
+						const inactive = isFieldCollectionInactive(field);
+
 						return {
 							text: field.name,
 							value: field.key,
 							description,
-							width: localWidths.value[field.key] || layoutOptions.value?.widths?.[field.key] || null,
+							width,
+							inactive,
 							align: layoutOptions.value?.align?.[field.key] || 'left',
 							field: {
 								display: field.meta?.display || getDefaultDisplayForType(field.type),
@@ -264,7 +305,8 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 								field: field.field,
 								collection: field.collection,
 							},
-							sortable: ['json', 'alias', 'presentation', 'translations'].includes(field.type) === false,
+							sortable:
+								inactive === false && ['json', 'alias', 'presentation', 'translations'].includes(field.type) === false,
 						} as HeaderRaw;
 					});
 				},
@@ -272,9 +314,7 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 					const widths = {} as { [field: string]: number };
 
 					val.forEach((header) => {
-						if (header.width) {
-							widths[header.value] = header.width;
-						}
+						widths[header.value] = header.width ?? 144;
 					});
 
 					localWidths.value = widths;
@@ -290,12 +330,12 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 			const tableRowHeight = computed<number>(() => {
 				switch (tableSpacing.value) {
 					case 'compact':
-						return 32;
+						return 29;
 					case 'cozy':
 					default:
-						return 48;
+						return 43;
 					case 'comfortable':
-						return 64;
+						return 58;
 				}
 			});
 
@@ -304,31 +344,11 @@ export default defineLayout<LayoutOptions, LayoutQuery>({
 				tableHeaders,
 				tableSpacing,
 				tableRowHeight,
-				onRowClick,
 				onSortChange,
 				onAlignChange,
 				activeFields,
 				getFieldDisplay,
 			};
-
-			function onRowClick({ item, event }: { item: Item; event: PointerEvent }) {
-				if (props.readonly === true || !primaryKeyField.value) return;
-
-				const primaryKey = item[primaryKeyField.value.field];
-
-				if (props.selectMode || selection.value?.length > 0) {
-					if (selection.value?.includes(primaryKey) === false) {
-						selection.value = selection.value.concat(primaryKey);
-					} else {
-						selection.value = selection.value.filter((item) => item !== primaryKey);
-					}
-				} else {
-					const route = getItemRoute(unref(collection), primaryKey);
-
-					if (event.ctrlKey || event.metaKey) window.open(router.resolve(route).href, '_blank');
-					else router.push(route);
-				}
-			}
 
 			function onSortChange(newSort: Sort | null) {
 				if (!newSort?.by) {

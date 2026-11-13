@@ -1,6 +1,5 @@
 import { useEnv } from '@directus/env';
 import { InvalidProviderConfigError } from '@directus/errors';
-import { toArray } from '@directus/utils';
 import type { AuthDriver } from './auth/auth.js';
 import {
 	LDAPAuthDriver,
@@ -11,10 +10,10 @@ import {
 } from './auth/drivers/index.js';
 import { DEFAULT_AUTH_PROVIDER } from './constants.js';
 import getDatabase from './database/index.js';
-import { useLogger } from './logger.js';
+import { getEntitlementManager } from './license/index.js';
+import { useLogger } from './logger/index.js';
 import type { AuthDriverOptions } from './types/index.js';
 import { getConfigFromEnv } from './utils/get-config-from-env.js';
-import { getSchema } from './utils/get-schema.js';
 
 const providers: Map<string, AuthDriver> = new Map();
 
@@ -32,17 +31,25 @@ export function getAuthProvider(provider: string): AuthDriver {
 export async function registerAuthProviders(): Promise<void> {
 	const env = useEnv();
 	const logger = useLogger();
-	const options = { knex: getDatabase(), schema: await getSchema() };
+	const options = { knex: getDatabase() };
 
-	const providerNames = toArray(env['AUTH_PROVIDERS'] as string);
+	const providerNames = env.AUTH_PROVIDERS;
 
-	// Register default provider if not disabled
-	if (!env['AUTH_DISABLE_DEFAULT']) {
-		const defaultProvider = getProviderInstance('local', options)!;
-		providers.set(DEFAULT_AUTH_PROVIDER, defaultProvider);
+	const sso_allowed = getEntitlementManager().isEntitled('sso_enabled');
+
+	if (sso_allowed === false && providerNames.length > 0) {
+		logger.warn('you have SSO providers configured these will be unavailable under the current license tier');
 	}
 
-	if (!env['AUTH_PROVIDERS']) {
+	if (sso_allowed === false && env.AUTH_DISABLE_DEFAULT) {
+		logger.warn('you cannot disable the default auth provider under the current license tier');
+	}
+
+	// Always register default provider
+	const defaultProvider = getProviderInstance('local', options)!;
+	providers.set(DEFAULT_AUTH_PROVIDER, defaultProvider);
+
+	if (env.AUTH_PROVIDERS.length === 0) {
 		return;
 	}
 

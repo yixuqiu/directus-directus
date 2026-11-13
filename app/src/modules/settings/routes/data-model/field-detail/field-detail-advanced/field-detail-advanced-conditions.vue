@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { useExtension } from '@/composables/use-extension';
 import { DeepPartial, Field } from '@directus/types';
-import { isVueComponent } from '@directus/utils';
 import { storeToRefs } from 'pinia';
-import { computed, unref } from 'vue';
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { syncFieldDetailStoreProperty, useFieldDetailStore } from '../store';
+import VForm from '@/components/v-form/v-form.vue';
+import { isPresentationField } from '@/utils/field-utils';
 
 const { t } = useI18n();
 
@@ -13,27 +13,16 @@ const fieldDetailStore = useFieldDetailStore();
 
 const { loading, field, collection } = storeToRefs(fieldDetailStore);
 
-const conditions = syncFieldDetailStoreProperty('field.meta.conditions');
 const interfaceId = computed(() => field.value.meta?.interface ?? null);
+const isPresentation = computed(() => isPresentationField(field.value));
+const conditions = syncFieldDetailStoreProperty('field.meta.conditions');
 
 const conditionsSync = computed({
 	get() {
 		return { conditions: conditions.value };
 	},
 	set(value) {
-		if (!value.conditions) {
-			conditions.value = value.conditions;
-			return;
-		}
-
-		const conditionsWithDefaults = value.conditions.map((condition: any) => {
-			const conditionOptions = condition.options ?? {};
-			const defaultValues = unref(optionDefaults);
-			condition.options = { ...defaultValues, ...conditionOptions };
-			return condition;
-		});
-
-		conditions.value = conditionsWithDefaults;
+		conditions.value = value.conditions;
 	},
 });
 
@@ -61,6 +50,9 @@ const repeaterFields = computed<DeepPartial<Field>[]>(() => [
 			options: {
 				collectionName: collection.value,
 				includeRelations: false,
+				// conditions are evaluated with generate-joi, which does not support `_json`
+				includeJsonFunction: false,
+				injectVersionField: true,
 			},
 		},
 	},
@@ -70,8 +62,22 @@ const repeaterFields = computed<DeepPartial<Field>[]>(() => [
 		type: 'boolean',
 		meta: {
 			interface: 'boolean',
+			hidden: isPresentation.value,
 			options: {
-				label: t('disabled_editing_value'),
+				label: t('readonly_field_label'),
+			},
+			width: 'half',
+		},
+	},
+	{
+		field: 'required',
+		name: t('required'),
+		type: 'boolean',
+		meta: {
+			interface: 'boolean',
+			hidden: isPresentation.value,
+			options: {
+				label: t('require_value_to_be_set'),
 			},
 			width: 'half',
 		},
@@ -89,15 +95,24 @@ const repeaterFields = computed<DeepPartial<Field>[]>(() => [
 		},
 	},
 	{
-		field: 'required',
-		name: t('required'),
+		field: 'clear_hidden_value_on_save',
+		name: t('clear_hidden_field'),
 		type: 'boolean',
 		meta: {
 			interface: 'boolean',
+			readonly: true,
 			options: {
-				label: t('require_value_to_be_set'),
+				label: t('clear_value_on_save_when_hidden'),
 			},
 			width: 'half',
+			conditions: [
+				{
+					rule: {
+						hidden: { _eq: true },
+					},
+					readonly: false, // enable the field when hidden is true
+				},
+			],
 		},
 	},
 	{
@@ -108,59 +123,13 @@ const repeaterFields = computed<DeepPartial<Field>[]>(() => [
 		meta: {
 			interface: 'system-interface-options',
 			options: {
+				isConditionOptions: true,
 				interface: interfaceId.value,
 				context: useFieldDetailStore,
 			},
 		},
 	},
 ]);
-
-const selectedInterface = useExtension('interface', interfaceId);
-
-const optionDefaults = computed(() => {
-	if (!selectedInterface.value?.options || isVueComponent(selectedInterface.value.options)) return [];
-
-	let optionsObjectOrArray;
-
-	if (typeof selectedInterface.value.options === 'function') {
-		optionsObjectOrArray = selectedInterface.value.options({
-			field: {
-				type: 'unknown',
-			},
-			editing: '+',
-			collection: collection.value,
-			relations: {
-				o2m: undefined,
-				m2o: undefined,
-				m2a: undefined,
-			},
-			collections: {
-				related: undefined,
-				junction: undefined,
-			},
-			fields: {
-				corresponding: undefined,
-				junctionCurrent: undefined,
-				junctionRelated: undefined,
-				sort: undefined,
-			},
-			items: {},
-			localType: 'standard',
-			autoGenerateJunctionRelation: false,
-			saving: false,
-		});
-	} else {
-		optionsObjectOrArray = selectedInterface.value.options;
-	}
-
-	const optionsArray = Array.isArray(optionsObjectOrArray)
-		? optionsObjectOrArray
-		: [...optionsObjectOrArray.standard, ...optionsObjectOrArray.advanced];
-
-	return optionsArray
-		.filter((option) => option.schema?.default_value !== undefined)
-		.reduce((result, option) => ({ ...result, [option.field]: option.schema.default_value }), {});
-});
 
 const fields = computed<DeepPartial<Field>[]>(() => [
 	{
@@ -179,5 +148,5 @@ const fields = computed<DeepPartial<Field>[]>(() => [
 </script>
 
 <template>
-	<v-form v-model="conditionsSync" :initial-values="conditionsInitial" :fields="fields" :loading="loading" />
+	<VForm v-model="conditionsSync" :initial-values="conditionsInitial" :fields="fields" :loading="loading" />
 </template>

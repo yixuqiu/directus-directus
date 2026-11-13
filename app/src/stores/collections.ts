@@ -1,46 +1,81 @@
+import formatTitle from '@directus/format-title';
+import { isSystemCollection } from '@directus/system-data';
+import { Collection as CollectionRaw, DeepPartial, Field } from '@directus/types';
+import { getCollectionType } from '@directus/utils';
+import { isEqual, isNil, omit } from 'lodash-es';
+import { defineStore } from 'pinia';
+import { computed, ref } from 'vue';
+import { useLicenseStore } from './license';
+import { useRelationsStore } from './relations';
+import { useAiToolsStore } from '@/ai/stores/use-ai-tools';
 import api from '@/api';
 import { COLLECTIONS_DENY_LIST } from '@/constants';
 import { i18n } from '@/lang';
 import { Collection } from '@/types/collections';
+import { flattenGroupedCollections } from '@/utils/flatten-grouped-collections';
 import { getLiteralInterpolatedTranslation } from '@/utils/get-literal-interpolated-translation';
 import { notify } from '@/utils/notify';
 import { unexpectedError } from '@/utils/unexpected-error';
-import formatTitle from '@directus/format-title';
-import { Collection as CollectionRaw, DeepPartial, Field } from '@directus/types';
-import { getCollectionType } from '@directus/utils';
-import { isEqual, isNil, omit, orderBy } from 'lodash';
-import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
-import { useRelationsStore } from './relations';
-import { isSystemCollection } from '@directus/system-data';
 
 export const useCollectionsStore = defineStore('collectionsStore', () => {
+	const toolsStore = useAiToolsStore();
+
+	toolsStore.onSystemToolResult(async (toolName) => {
+		if (toolName === 'collections') {
+			await hydrate();
+		}
+	});
+
 	const collections = ref<Collection[]>([]);
 
-	const visibleCollections = computed(() =>
-		collections.value
-			.filter(({ collection }) => isSystemCollection(collection) === false)
-			.filter((collection) => collection.meta && collection.meta?.hidden !== true),
+	const sortedCollections = computed(() => flattenGroupedCollections(collections.value));
+
+	/**
+	 * All system collections
+	 */
+	const systemCollections = computed(() =>
+		sortedCollections.value.filter(({ collection }) => isSystemCollection(collection)),
 	);
 
+	/**
+	 * All collections excluding system collections
+	 */
 	const allCollections = computed(() =>
-		collections.value.filter(({ collection }) => isSystemCollection(collection) === false),
+		sortedCollections.value.filter(({ collection }) => isSystemCollection(collection) === false),
 	);
 
+	/**
+	 * All non-system collections that have a meta object, i.e. are configured in Directus
+	 */
+	const configuredCollections = computed(() => allCollections.value.filter((collection) => collection.meta));
+
+	/**
+	 * All non-system collections that are configured and visible (not hidden)
+	 */
+	const visibleCollections = computed(() =>
+		configuredCollections.value.filter((collection) => collection.meta?.hidden !== true),
+	);
+
+	/**
+	 * All non-system collections that are configured and have a corresponding database table
+	 */
 	const databaseCollections = computed(() => allCollections.value.filter((collection) => collection.schema));
 
+	/**
+	 * All system collections that are safe to CRUD
+	 */
 	const crudSafeSystemCollections = computed(() =>
-		orderBy(
-			collections.value.filter((collection) => isSystemCollection(collection.collection)),
-			'collection',
-		).filter((collection) => COLLECTIONS_DENY_LIST.includes(collection.collection) === false),
+		systemCollections.value.filter((collection) => !COLLECTIONS_DENY_LIST.includes(collection.collection)),
 	);
 
 	return {
 		collections,
-		visibleCollections,
+		sortedCollections,
 		allCollections,
+		visibleCollections,
+		configuredCollections,
 		databaseCollections,
+		systemCollections,
 		crudSafeSystemCollections,
 		hydrate,
 		dehydrate,
@@ -89,21 +124,21 @@ export const useCollectionsStore = defineStore('collectionsStore', () => {
 								collection_names: {
 									[collection.collection]: getLiteralInterpolatedTranslation(translation),
 								},
-						  }
+							}
 						: {}),
 					...(singular
 						? {
 								collection_names_singular: {
 									[collection.collection]: getLiteralInterpolatedTranslation(singular),
 								},
-						  }
+							}
 						: {}),
 					...(plural
 						? {
 								collection_names_plural: {
 									[collection.collection]: getLiteralInterpolatedTranslation(plural),
 								},
-						  }
+							}
 						: {}),
 				});
 			}
@@ -138,29 +173,25 @@ export const useCollectionsStore = defineStore('collectionsStore', () => {
 		// Strip out any fields the app might've auto-generated at some point
 		const rawValues = omit(values, ['name', 'type', 'icon', 'color']);
 
-		try {
-			if (existing) {
-				if (isEqual(existing, values)) return;
+		if (existing) {
+			if (isEqual(existing, values)) return;
 
-				const updatedCollectionResponse = await api.patch<{ data: CollectionRaw }>(
-					`/collections/${collection}`,
-					rawValues,
-				);
+			const updatedCollectionResponse = await api.patch<{ data: CollectionRaw }>(
+				`/collections/${collection}`,
+				rawValues,
+			);
 
-				collections.value = collections.value.map((existingCollection: Collection) => {
-					if (existingCollection.collection === collection) {
-						return prepareCollectionForApp(updatedCollectionResponse.data.data);
-					}
+			collections.value = collections.value.map((existingCollection: Collection) => {
+				if (existingCollection.collection === collection) {
+					return prepareCollectionForApp(updatedCollectionResponse.data.data);
+				}
 
-					return existingCollection;
-				});
-			} else {
-				const createdCollectionResponse = await api.post<{ data: CollectionRaw }>('/collections', rawValues);
+				return existingCollection;
+			});
+		} else {
+			const createdCollectionResponse = await api.post<{ data: CollectionRaw }>('/collections', rawValues);
 
-				collections.value = [...collections.value, prepareCollectionForApp(createdCollectionResponse.data.data)];
-			}
-		} catch (error) {
-			unexpectedError(error);
+			collections.value = [...collections.value, prepareCollectionForApp(createdCollectionResponse.data.data)];
 		}
 	}
 
@@ -179,10 +210,11 @@ export const useCollectionsStore = defineStore('collectionsStore', () => {
 
 	async function deleteCollection(collection: string) {
 		const relationsStore = useRelationsStore();
+		const licenseStore = useLicenseStore();
 
 		try {
 			await api.delete(`/collections/${collection}`);
-			await Promise.all([hydrate(), relationsStore.hydrate()]);
+			await Promise.all([hydrate(), relationsStore.hydrate(), licenseStore.hydrate()]);
 
 			notify({
 				title: i18n.global.t('delete_collection_success'),

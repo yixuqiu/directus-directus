@@ -1,15 +1,15 @@
 import { existsSync } from 'node:fs';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { getFileExtension } from '../utils/get-file-extension.js';
-import { readConfigurationFromDotEnv } from '../utils/read-configuration-from-dotenv.js';
+import { readConfigurationFromEnv } from '../utils/read-configuration-from-env.js';
 import { readConfigurationFromJavaScript } from '../utils/read-configuration-from-javascript.js';
 import { readConfigurationFromJson } from '../utils/read-configuration-from-json.js';
 import { readConfigurationFromYaml } from '../utils/read-configuration-from-yaml.js';
 import { readConfigurationFromFile } from './read-configuration-from-file.js';
-import { test, afterEach, beforeEach, vi, expect } from 'vitest';
 
 vi.mock('node:fs');
 vi.mock('../utils/get-file-extension.js');
-vi.mock('../utils/read-configuration-from-dotenv.js');
+vi.mock('../utils/read-configuration-from-env.js');
 vi.mock('../utils/read-configuration-from-javascript.js');
 vi.mock('../utils/read-configuration-from-json.js');
 vi.mock('../utils/read-configuration-from-yaml.js');
@@ -18,7 +18,7 @@ beforeEach(() => {
 	vi.mocked(readConfigurationFromJavaScript).mockReturnValue({ JS: true });
 	vi.mocked(readConfigurationFromJson).mockReturnValue({ JSON: true });
 	vi.mocked(readConfigurationFromYaml).mockReturnValue({ YAML: true });
-	vi.mocked(readConfigurationFromDotEnv).mockReturnValue({ DOTENV: 'true' });
+	vi.mocked(readConfigurationFromEnv).mockReturnValue({ DOTENV: 'true' });
 });
 
 afterEach(() => {

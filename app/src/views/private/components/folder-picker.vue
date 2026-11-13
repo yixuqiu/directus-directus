@@ -1,9 +1,16 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue';
+import FolderPickerListItem from './FolderPickerListItem.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VItemGroup from '@/components/v-item-group.vue';
+import VListGroup from '@/components/v-list-group.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VList from '@/components/v-list.vue';
+import VSkeletonLoader from '@/components/v-skeleton-loader.vue';
+import type { FolderType } from '@/composables/use-folders';
 import { fetchAll } from '@/utils/fetch-all';
 import { unexpectedError } from '@/utils/unexpected-error';
-import { computed, ref } from 'vue';
-import { useI18n } from 'vue-i18n';
-import FolderPickerListItem from './folder-picker-list-item.vue';
 
 type FolderRaw = {
 	id: string;
@@ -19,14 +26,14 @@ type Folder = {
 
 const props = defineProps<{
 	modelValue: string | null;
+	type: FolderType;
 	disabledFolders?: string[];
+	rootLabel?: string;
 }>();
 
 defineEmits<{
 	'update:modelValue': [value: string | null];
 }>();
-
-const { t } = useI18n();
 
 const loading = ref(false);
 const folders = ref<FolderRaw[]>([]);
@@ -85,6 +92,7 @@ async function fetchFolders() {
 			params: {
 				limit: -1,
 				sort: 'name',
+				filter: { type: { _eq: props.type } },
 			},
 		});
 	} catch (error) {
@@ -107,11 +115,11 @@ function parseFolder(id: string) {
 </script>
 
 <template>
-	<v-skeleton-loader v-if="loading" />
+	<VSkeletonLoader v-if="loading" />
 	<div v-else class="folder-picker">
-		<v-list>
-			<v-item-group v-model="openFolders" scope="folder-picker" multiple>
-				<v-list-group
+		<VList>
+			<VItemGroup v-model="openFolders" scope="folder-picker" multiple>
+				<VListGroup
 					disable-groupable-parent
 					clickable
 					:active="modelValue === null"
@@ -120,13 +128,13 @@ function parseFolder(id: string) {
 					@click="$emit('update:modelValue', null)"
 				>
 					<template #activator>
-						<v-list-item-icon>
-							<v-icon name="folder_special" outline />
-						</v-list-item-icon>
-						<v-list-item-content>{{ t('file_library') }}</v-list-item-content>
+						<VListItemIcon>
+							<VIcon name="folder_special" outline />
+						</VListItemIcon>
+						<VListItemContent>{{ rootLabel ?? $t('file_library') }}</VListItemContent>
 					</template>
 
-					<folder-picker-list-item
+					<FolderPickerListItem
 						v-for="folder in tree"
 						:key="folder.id"
 						:folder="folder"
@@ -135,9 +143,9 @@ function parseFolder(id: string) {
 						:disabled="disabledFolders?.includes(folder.id)"
 						:disabled-folders="disabledFolders"
 					/>
-				</v-list-group>
-			</v-item-group>
-		</v-list>
+				</VListGroup>
+			</VItemGroup>
+		</VList>
 	</div>
 </template>
 
@@ -155,10 +163,10 @@ function parseFolder(id: string) {
 	--v-list-item-background-color-hover: var(--folder-picker-color, var(--theme--background-accent));
 	--v-list-item-background-color-active: var(--folder-picker-color, var(--theme--background-accent));
 
-	padding: 12px;
+	padding: 0.6875rem;
 	background-color: var(--folder-picker-background-color, var(--theme--background-normal));
 	border-radius: var(--theme--border-radius);
-	max-height: calc(var(--input-height-tall) * 2);
+	max-block-size: calc(var(--input-height-md) * 2);
 	overflow: auto;
 }
 </style>

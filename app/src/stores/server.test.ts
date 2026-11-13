@@ -1,11 +1,8 @@
-import api, * as apiFunctions from '@/api';
-import * as setLanguageDefault from '@/lang/set-language';
-import { User } from '@directus/types';
 import { createTestingPinia } from '@pinia/testing';
 import { setActivePinia } from 'pinia';
-import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } from 'vitest';
-import { Auth, Info, useServerStore } from './server';
-import { useUserStore } from './user';
+import { afterEach, beforeEach, describe, expect, type MockInstance, test, vi } from 'vitest';
+import { Auth, useServerStore } from './server';
+import api, * as apiFunctions from '@/api';
 
 beforeEach(() => {
 	setActivePinia(
@@ -16,7 +13,7 @@ beforeEach(() => {
 	);
 });
 
-const mockServerInfo: Info = {
+const mockServerInfo = {
 	project: {
 		project_name: 'Directus',
 		project_descriptor: null,
@@ -33,7 +30,17 @@ const mockServerInfo: Info = {
 		public_favicon: null,
 		public_note: null,
 		custom_css: null,
+		public_registration: null,
+		public_registration_verify_email: null,
 	},
+	ai_providers: [],
+	license: null,
+	mcp_enabled: true,
+	ai_enabled: true,
+	mcp_oauth_enabled: true,
+	mcp_oauth_dcr_enabled: false,
+	mcp_oauth_cimd_enabled: true,
+	setupCompleted: true,
 };
 
 const mockAuthProviders: Auth['providers'] = [
@@ -44,21 +51,12 @@ const mockAuthProviders: Auth['providers'] = [
 	},
 ];
 
-const mockAdminUser = { id: 'e7f7a94d-5b38-4978-8450-de0e38859fec' } as User;
-
-const mockAdminUserWithLanguage = {
-	id: 'e7f7a94d-5b38-4978-8450-de0e38859fec',
-	language: 'zh-CN',
-} as User;
-
 let apiGetSpy: MockInstance;
 let replaceQueueSpy: MockInstance;
-let setLanguageSpy: MockInstance;
 
 beforeEach(() => {
 	apiGetSpy = vi.spyOn(api, 'get');
 	replaceQueueSpy = vi.spyOn(apiFunctions, 'replaceQueue').mockResolvedValue();
-	setLanguageSpy = vi.spyOn(setLanguageDefault, 'setLanguage').mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -87,7 +85,37 @@ describe('hydrate action', async () => {
 		const serverStore = useServerStore();
 		await serverStore.hydrate();
 
-		expect(serverStore.info).toEqual(mockServerInfo);
+		expect(serverStore.info.project).toEqual(mockServerInfo.project);
+		expect(serverStore.info.license).toEqual(mockServerInfo.license);
+	});
+
+	test('should hydrate MCP OAuth env capability flags', async () => {
+		apiGetSpy.mockImplementation((path: string) => {
+			if (path === '/server/info') {
+				return Promise.resolve({
+					data: {
+						data: {
+							mcp_oauth_enabled: true,
+							mcp_oauth_dcr_enabled: false,
+							mcp_oauth_cimd_enabled: true,
+						},
+					},
+				});
+			}
+
+			if (path.startsWith('/auth')) {
+				return Promise.resolve({ data: {} });
+			}
+
+			return;
+		});
+
+		const serverStore = useServerStore();
+		await serverStore.hydrate();
+
+		expect(serverStore.info.mcp_oauth_enabled).toBe(true);
+		expect(serverStore.info.mcp_oauth_dcr_enabled).toBe(false);
+		expect(serverStore.info.mcp_oauth_cimd_enabled).toBe(true);
 	});
 
 	test('should hydrate auth', async () => {
@@ -119,132 +147,6 @@ describe('hydrate action', async () => {
 
 		expect(serverStore.auth.providers).toEqual(mockAuthProviders);
 		expect(serverStore.auth.disableDefault).toEqual(true);
-	});
-
-	test('should set default language en-US when there is no logged in user', async () => {
-		apiGetSpy.mockImplementation((path: string) => {
-			if (path === '/server/info') {
-				// stub as server info is not tested here
-				return Promise.resolve({ data: {} });
-			}
-
-			if (path.startsWith('/auth')) {
-				// stub as auth is not tested here
-				return Promise.resolve({ data: {} });
-			}
-
-			return;
-		});
-
-		const serverStore = useServerStore();
-		await serverStore.hydrate();
-
-		expect(setLanguageSpy).toHaveBeenCalledWith('en-US');
-	});
-
-	test('should set configured default language when there is no logged in user', async () => {
-		apiGetSpy.mockImplementation((path: string) => {
-			if (path === '/server/info') {
-				return Promise.resolve({
-					data: {
-						data: mockServerInfo,
-					},
-				});
-			}
-
-			if (path.startsWith('/auth')) {
-				// stub as auth is not tested here
-				return Promise.resolve({ data: {} });
-			}
-
-			return;
-		});
-
-		const serverStore = useServerStore();
-		await serverStore.hydrate();
-
-		expect(setLanguageSpy).toHaveBeenCalledWith(mockServerInfo.project?.default_language);
-	});
-
-	test('should set updated default language for admin user', async () => {
-		apiGetSpy.mockImplementation((path: string) => {
-			if (path === '/server/info') {
-				return Promise.resolve({
-					data: {
-						data: mockServerInfo,
-					},
-				});
-			}
-
-			if (path.startsWith('/auth')) {
-				// stub as auth is not tested here
-				return Promise.resolve({ data: {} });
-			}
-
-			return;
-		});
-
-		const userStore = useUserStore();
-		userStore.currentUser = mockAdminUser;
-
-		const serverStore = useServerStore();
-		await serverStore.hydrate({ isLanguageUpdated: true });
-
-		expect(setLanguageSpy).toHaveBeenCalledOnce();
-	});
-
-	test('should not set updated default language for admin user', async () => {
-		apiGetSpy.mockImplementation((path: string) => {
-			if (path === '/server/info') {
-				return Promise.resolve({
-					data: {
-						data: mockServerInfo,
-					},
-				});
-			}
-
-			if (path.startsWith('/auth')) {
-				// stub as auth is not tested here
-				return Promise.resolve({ data: {} });
-			}
-
-			return;
-		});
-
-		const userStore = useUserStore();
-		userStore.currentUser = mockAdminUser;
-
-		const serverStore = useServerStore();
-		await serverStore.hydrate();
-
-		expect(setLanguageSpy).not.toHaveBeenCalled();
-	});
-
-	test('should not set updated default language for admin user with configured language', async () => {
-		apiGetSpy.mockImplementation((path: string) => {
-			if (path === '/server/info') {
-				return Promise.resolve({
-					data: {
-						data: mockServerInfo,
-					},
-				});
-			}
-
-			if (path.startsWith('/auth')) {
-				// stub as auth is not tested here
-				return Promise.resolve({ data: {} });
-			}
-
-			return;
-		});
-
-		const userStore = useUserStore();
-		userStore.currentUser = mockAdminUserWithLanguage;
-
-		const serverStore = useServerStore();
-		await serverStore.hydrate();
-
-		expect(setLanguageSpy).not.toHaveBeenCalled();
 	});
 
 	test('should not call replaceQueue when there is no rateLimit', async () => {
@@ -328,6 +230,48 @@ describe('hydrate action', async () => {
 			// Interval for 1 point (duration * 1000(ms) / points)
 			interval: 500,
 		});
+	});
+
+	test('setupCompleted is true when /info response has no setup key', async () => {
+		apiGetSpy.mockImplementation((path: string) => {
+			if (path === '/server/info') {
+				return Promise.resolve({ data: { data: { ...mockServerInfo } } });
+			}
+
+			if (path.startsWith('/auth')) {
+				return Promise.resolve({ data: {} });
+			}
+
+			return;
+		});
+
+		const serverStore = useServerStore();
+		await serverStore.hydrate();
+
+		expect(serverStore.info.setupCompleted).toBe(true);
+	});
+
+	test('setupCompleted is false when /info response has a setup key', async () => {
+		apiGetSpy.mockImplementation((path: string) => {
+			if (path === '/server/info') {
+				return Promise.resolve({
+					data: {
+						data: { ...mockServerInfo, setup: { license_complete: false, owner_complete: false } },
+					},
+				});
+			}
+
+			if (path.startsWith('/auth')) {
+				return Promise.resolve({ data: {} });
+			}
+
+			return;
+		});
+
+		const serverStore = useServerStore();
+		await serverStore.hydrate();
+
+		expect(serverStore.info.setupCompleted).toBe(false);
 	});
 });
 

@@ -1,12 +1,18 @@
-import type { DirectusField, MergeCoreCollection, NestedPartial } from '../index.js';
+import type {
+	CollectionName,
+	DirectusField,
+	MergeCoreCollection,
+	NestedPartial,
+	StringLiteralUnion,
+} from '../index.js';
 
-export type DirectusCollection<Schema> = {
-	collection: string; // TODO keyof complete schema
+export type DirectusCollection<Schema = any> = {
+	collection: CollectionName<Schema>;
 	meta: MergeCoreCollection<
 		Schema,
 		'directus_collections',
 		{
-			collection: string; // TODO keyof complete schema
+			collection: CollectionName<Schema>;
 			icon: string | null;
 			note: string | null;
 			display_template: string | null;
@@ -18,14 +24,18 @@ export type DirectusCollection<Schema> = {
 			archive_value: string | null;
 			unarchive_value: string | null;
 			sort_field: string | null;
-			accountability: string | null;
+			accountability: StringLiteralUnion<'all' | 'activity'> | null;
 			color: string | null;
 			item_duplication_fields: string[] | null;
 			sort: number | null;
 			group: string | null;
-			collapse: string;
+			collapse: StringLiteralUnion<'open' | 'closed' | 'locked'>;
 			preview_url: string | null;
 			versioning: boolean;
+			status: StringLiteralUnion<'active' | 'inactive'>;
+			autosave_revision_interval: number | null;
+			// Only true for injected system-collection rows, all others exclude the field
+			system?: true;
 		}
 	>;
 	schema:

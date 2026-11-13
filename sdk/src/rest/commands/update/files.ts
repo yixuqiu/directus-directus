@@ -1,7 +1,8 @@
 import type { DirectusFile } from '../../../schema/file.js';
-import type { ApplyQueryFields, Query } from '../../../types/index.js';
-import { throwIfEmpty } from '../../utils/index.js';
+import type { ApplyQueryFields, NestedPartial, Query } from '../../../types/index.js';
+import { isFormData } from '../../../utils/is-form-data.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfEmpty } from '../../utils/index.js';
 
 export type UpdateFileOutput<
 	Schema,
@@ -20,7 +21,7 @@ export type UpdateFileOutput<
 export const updateFiles =
 	<Schema, const TQuery extends Query<Schema, DirectusFile<Schema>>>(
 		keys: DirectusFile<Schema>['id'][],
-		item: Partial<DirectusFile<Schema>>,
+		item: NestedPartial<DirectusFile<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateFileOutput<Schema, TQuery>[], Schema> =>
 	() => {
@@ -35,6 +36,24 @@ export const updateFiles =
 	};
 
 /**
+ * Update multiple files as batch.
+ * @param items
+ * @param query
+ * @returns Returns the file objects for the updated files.
+ */
+export const updateFilesBatch =
+	<Schema, const TQuery extends Query<Schema, DirectusFile<Schema>>>(
+		items: NestedPartial<DirectusFile<Schema>>[],
+		query?: TQuery,
+	): RestCommand<UpdateFileOutput<Schema, TQuery>[], Schema> =>
+	() => ({
+		path: `/files`,
+		params: query ?? {},
+		body: JSON.stringify(items),
+		method: 'PATCH',
+	});
+
+/**
  * Update an existing file, and/or replace it's file contents.
  * @param key
  * @param item
@@ -45,13 +64,13 @@ export const updateFiles =
 export const updateFile =
 	<Schema, const TQuery extends Query<Schema, DirectusFile<Schema>>>(
 		key: DirectusFile<Schema>['id'],
-		item: Partial<DirectusFile<Schema>> | FormData,
+		item: NestedPartial<DirectusFile<Schema>> | FormData,
 		query?: TQuery,
 	): RestCommand<UpdateFileOutput<Schema, TQuery>, Schema> =>
 	() => {
 		throwIfEmpty(key, 'Key cannot be empty');
 
-		if (item instanceof FormData) {
+		if (isFormData(item)) {
 			return {
 				path: `/files/${key}`,
 				params: query ?? {},

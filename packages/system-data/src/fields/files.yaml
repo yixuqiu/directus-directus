@@ -100,6 +100,14 @@ fields:
     display: filesize
     readonly: true
 
+  - field: created_on
+    interface: datetime
+    display: datetime
+    width: half
+    special:
+      - date-created
+    readonly: true
+
   - field: modified_by
     interface: select-dropdown-m2o
     special:
@@ -113,6 +121,7 @@ fields:
   - field: modified_on
     interface: datetime
     special:
+      - date-created
       - date-updated
     width: half
     display: datetime
@@ -158,3 +167,13 @@ fields:
   - field: duration
     width: half
     readonly: true
+
+  - field: tus_id
+    width: half
+    hidden: true
+
+  - field: tus_data
+    width: half
+    hidden: true
+    special:
+      - cast-json

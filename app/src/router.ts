@@ -1,23 +1,55 @@
+import { useAppStore } from '@directus/stores';
+import { useLocalStorage } from '@vueuse/core';
+import { createRouter, createWebHistory, NavigationGuard, NavigationHookAfter, RouteRecordRaw } from 'vue-router';
 import { refresh } from '@/auth';
 import { hydrate } from '@/hydrate';
 import AcceptInviteRoute from '@/routes/accept-invite.vue';
+import LicenseRecoveryRoute from '@/routes/license-recovery.vue';
 import LoginRoute from '@/routes/login/login.vue';
 import LogoutRoute from '@/routes/logout.vue';
 import PrivateNotFoundRoute from '@/routes/private-not-found.vue';
 import RegisterRoute from '@/routes/register/register.vue';
 import ResetPasswordRoute from '@/routes/reset-password/reset-password.vue';
+import Setup from '@/routes/setup/setup.vue';
 import ShareRoute from '@/routes/shared/shared.vue';
 import TFASetup from '@/routes/tfa-setup.vue';
+import { useLicenseStore } from '@/stores/license';
 import { useServerStore } from '@/stores/server';
 import { useUserStore } from '@/stores/user';
 import { getRootPath } from '@/utils/get-root-path';
-import { useAppStore } from '@directus/stores';
-import { createRouter, createWebHistory, NavigationGuard, NavigationHookAfter, RouteRecordRaw } from 'vue-router';
+
+/** Routes an admin can still reach while the license is locked. */
+export const ALLOWED_WHILE_LOCKED: string[] = ['/license-recovery', '/logout', '/settings/license'];
 
 export const defaultRoutes: RouteRecordRaw[] = [
 	{
 		path: '/',
-		redirect: '/login',
+		redirect: () => {
+			const serverStore = useServerStore();
+
+			if (serverStore.info.setupCompleted) {
+				return '/login';
+			} else {
+				return '/setup';
+			}
+		},
+	},
+	{
+		name: 'setup',
+		path: '/setup',
+		component: Setup,
+		beforeEnter: async (_from, _to, next) => {
+			const serverStore = useServerStore();
+
+			if (serverStore.info.setupCompleted) {
+				return next('/login');
+			}
+
+			return next();
+		},
+		meta: {
+			public: true,
+		},
 	},
 	{
 		name: 'login',
@@ -80,6 +112,11 @@ export const defaultRoutes: RouteRecordRaw[] = [
 		},
 	},
 	{
+		name: 'license-recovery',
+		path: '/license-recovery',
+		component: LicenseRecoveryRoute,
+	},
+	{
 		name: 'private-404',
 		path: '/:_(.+)+',
 		component: PrivateNotFoundRoute,
@@ -93,10 +130,19 @@ export const router = createRouter({
 
 let firstLoad = true;
 
+/**
+ * Reset internal state for testing purposes only.
+ * @internal
+ */
+export function _resetState() {
+	firstLoad = true;
+}
+
 export const onBeforeEach: NavigationGuard = async (to) => {
 	const appStore = useAppStore();
 	const serverStore = useServerStore();
 	const userStore = useUserStore();
+	const requireTfaSetup = useLocalStorage<string | null>('directus-require_tfa_setup', null);
 
 	// First load
 	if (firstLoad) {
@@ -116,6 +162,11 @@ export const onBeforeEach: NavigationGuard = async (to) => {
 		} catch (error: any) {
 			appStore.error = error;
 		}
+	}
+
+	if (!serverStore.info.setupCompleted) {
+		if (to.fullPath === '/setup') return;
+		return '/setup';
 	}
 
 	if (to.meta?.public !== true) {
@@ -144,9 +195,19 @@ export const onBeforeEach: NavigationGuard = async (to) => {
 			}
 		}
 
-		if (userStore.currentUser && !('share' in userStore.currentUser) && userStore.currentUser.role) {
+		if (userStore.currentUser && !('share' in userStore.currentUser)) {
 			if (to.path !== '/tfa-setup') {
-				if (userStore.currentUser.role.enforce_tfa && userStore.currentUser.tfa_secret === null) {
+				// Check for role-based enforcement
+				if (userStore.currentUser.enforce_tfa && userStore.currentUser.tfa_secret === null) {
+					if (userStore.currentUser.last_page === to.fullPath) {
+						return '/tfa-setup';
+					} else {
+						return '/tfa-setup?redirect=' + encodeURIComponent(to.fullPath);
+					}
+				}
+
+				// Check for user-initiated TFA setup request in localStorage
+				if (requireTfaSetup.value === userStore.currentUser.id && userStore.currentUser.tfa_secret === null) {
 					if (userStore.currentUser.last_page === to.fullPath) {
 						return '/tfa-setup';
 					} else {
@@ -155,6 +216,15 @@ export const onBeforeEach: NavigationGuard = async (to) => {
 				}
 			} else if (userStore.currentUser.tfa_secret !== null) {
 				return userStore.currentUser.last_page || '/login';
+			}
+		}
+
+		// License lockdown: admin must resolve before accessing the app.
+		if (!ALLOWED_WHILE_LOCKED.includes(to.path)) {
+			const licenseStore = useLicenseStore();
+
+			if (userStore.isAdmin && licenseStore.isLocked) {
+				return '/license-recovery';
 			}
 		}
 	}

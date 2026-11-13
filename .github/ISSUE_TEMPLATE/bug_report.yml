@@ -1,3 +1,4 @@
+# Please ensure the link in the Directus Studio is updated when renaming this file!
 name: Report a bug
 description: Create a report to help us improve
 body:
@@ -7,10 +8,10 @@ body:
         Hi, thank you for taking the time to create an issue! Before you get started, please ensure the following are correct:
 
         - I'm using the [latest version of Directus](https://github.com/directus/directus/releases)
-        - I've completed all [Troubleshooting Steps](https://docs.directus.io/getting-started/support/#troubleshooting-steps).
+        - I've completed all [Troubleshooting Steps](https://directus.com/docs/community/reporting-and-support/troubleshooting-steps).
         - There's [no other issue](https://github.com/directus/directus/issues?q=is%3Aissue) that already describes the problem.
 
-        _For issues specific to Directus Cloud projects, please reach out through the Live Chat in our Cloud Dashboard._
+        _For issues specific to Directus Cloud projects, please reach out through support@directus.io._
   - type: textarea
     attributes:
       label: Describe the Bug
@@ -22,13 +23,14 @@ body:
       label: To Reproduce
       description:
         Steps to reproduce the behavior. Contributors should be able to follow the steps provided in order to reproduce
-        the bug.
+        the bug. Please include any relevant details that could help with reproduction, such as browser/server/database
+        logs, permission setup, schema snapshot (exported from **Settings > Data Model**) etc.
     validations:
       required: true
   - type: input
     attributes:
       label: Directus Version
-      placeholder: v10.x.x
+      placeholder: v11.x.x
     validations:
       required: true
   - type: dropdown
@@ -41,3 +43,7 @@ body:
         - Directus Cloud
     validations:
       required: true
+  - type: input
+    attributes:
+      label: Database
+      description: If applicable, the vendor and version of the database being used. For example, PostgreSQL 16.

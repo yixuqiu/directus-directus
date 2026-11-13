@@ -7,16 +7,27 @@ export class KvLocal implements Kv {
 	private store: LRUCache<string, Uint8Array, unknown> | Map<string, Uint8Array>;
 
 	constructor(config: Omit<KvConfigLocal, 'type'>) {
-		if ('maxKeys' in config) {
-			this.store = new LRUCache({
-				max: config.maxKeys,
-			});
+		// LRUCache requires maxKeys or ttl — fall back to Map when neither is set
+		if (config.maxKeys || config.ttl) {
+			const options: Record<string, unknown> = {};
+
+			if (config.maxKeys) {
+				options['max'] = config.maxKeys;
+			}
+
+			if (config.ttl) {
+				options['ttl'] = config.ttl;
+				// Enable automatic cleanup of expired entries (disabled by default)
+				options['ttlAutopurge'] = true;
+			}
+
+			this.store = new LRUCache(options as any);
 		} else {
 			this.store = new Map();
 		}
 	}
 
-	async get<T = unknown>(key: string) {
+	get<T = unknown>(key: string): T | undefined {
 		const value = this.store.get(key);
 
 		if (value !== undefined) {
@@ -26,21 +37,21 @@ export class KvLocal implements Kv {
 		return undefined;
 	}
 
-	async set(key: string, value: unknown) {
+	set(key: string, value: unknown): void {
 		const serialized = serialize(value);
 		this.store.set(key, serialized);
 	}
 
-	async delete(key: string) {
+	delete(key: string): void {
 		this.store.delete(key);
 	}
 
-	async has(key: string) {
+	has(key: string): boolean {
 		return this.store.has(key);
 	}
 
-	async increment(key: string, amount: number = 1) {
-		const currentVal = (await this.get(key)) ?? 0;
+	increment(key: string, amount: number = 1): number {
+		const currentVal = this.get(key) ?? 0;
 
 		if (typeof currentVal !== 'number') {
 			throw new Error(`The value for key "${key}" is not a number.`);
@@ -48,24 +59,42 @@ export class KvLocal implements Kv {
 
 		const newVal = currentVal + amount;
 
-		await this.set(key, newVal);
+		this.set(key, newVal);
 
 		return newVal;
 	}
 
-	async setMax(key: string, value: number) {
-		const currentVal = (await this.get(key)) ?? 0;
+	setMax(key: string, value: number): boolean {
+		const currentVal = this.get(key) ?? 0;
 
 		if (typeof currentVal !== 'number') {
 			throw new Error(`The value for key "${key}" is not a number.`);
 		}
 
-		if (currentVal > value) {
+		if (currentVal >= value) {
 			return false;
 		}
 
-		await this.set(key, value);
+		this.set(key, value);
 
 		return true;
+	}
+
+	acquireLock(_key: string): {
+		release: () => Promise<void>;
+		extend: (_duration: number) => Promise<void>;
+	} {
+		return {
+			release: async () => {},
+			extend: async (_duration: number) => {},
+		};
+	}
+
+	usingLock<T>(_key: string, callback: (signal: AbortSignal) => Promise<T>): Promise<T> {
+		return callback(new AbortController().signal);
+	}
+
+	clear(): void {
+		this.store.clear();
 	}
 }

@@ -1,7 +1,7 @@
 import BaseAttachesTool from '@editorjs/attaches';
 import BaseImageTool from '@editorjs/image';
-import { unexpectedError } from '@/utils/unexpected-error';
 import { useBus } from './bus';
+import { unexpectedError } from '@/utils/unexpected-error';
 
 /**
  * This file is a modified version of the attaches and image tool from editorjs to work with the Directus file manager.
@@ -179,7 +179,7 @@ export class ImageTool extends BaseImageTool {
 					bus.emit({ type: 'open-url', payload: this.data.file.fileURL });
 				},
 			},
-			...ImageTool.tunes,
+			...BaseImageTool.tunes,
 		];
 
 		const wrapperElement = document.createElement('div');
@@ -200,6 +200,10 @@ export class ImageTool extends BaseImageTool {
 			titleElement.classList.add('ce-popover-item__title');
 			titleElement.innerHTML = tune.title;
 			tuneElement.appendChild(titleElement);
+
+			if (tune.toggle && tune.name && this._data[tune.name]) {
+				tuneElement.classList.add('ce-popover-item--active');
+			}
 
 			if (tune.onActivate) tuneElement.addEventListener('click', tune.onActivate);
 			else if (tune.toggle)

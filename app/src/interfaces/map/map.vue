@@ -1,17 +1,13 @@
 <script setup lang="ts">
-import { useSettingsStore } from '@/stores/settings';
-import { flatten, getBBox, getGeometryFormatForType, getParser, getSerializer } from '@/utils/geometry';
-import { getBasemapSources, getStyleFromBasemapSource } from '@/utils/geometry/basemap';
-import { ButtonControl } from '@/utils/geometry/controls';
 import { useAppStore } from '@directus/stores';
 import { Field, GeoJSONParser, GeoJSONSerializer, GeometryType, MultiGeometry, SimpleGeometry } from '@directus/types';
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
-import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
+import StaticMode from '@mapbox/mapbox-gl-draw-static-mode';
 import MapboxGeocoder from '@mapbox/mapbox-gl-geocoder';
-import '@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css';
 import { Geometry } from 'geojson';
-import { debounce, isEqual, snakeCase } from 'lodash';
-import maplibre, {
+import { debounce, isEqual, snakeCase } from 'lodash-es';
+import * as maplibre from 'maplibre-gl';
+import {
 	AnimationOptions,
 	AttributionControl,
 	CameraOptions,
@@ -21,14 +17,38 @@ import maplibre, {
 	Map,
 	NavigationControl,
 } from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Ref } from 'vue';
 import { computed, onMounted, onUnmounted, ref, toRefs, watch } from 'vue';
 import { TranslateResult, useI18n } from 'vue-i18n';
 import { getMapStyle } from './style';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInfo from '@/components/v-info.vue';
+import VNotice from '@/components/v-notice.vue';
+import VSelect from '@/components/v-select/v-select.vue';
+import { useSettingsStore } from '@/stores/settings';
+import { flatten, getBBox, getGeometryFormatForType, getParser, getSerializer } from '@/utils/geometry';
+import { getBasemapSources, getStyleFromBasemapSource } from '@/utils/geometry/basemap';
+import { ButtonControl, onCustomEvent } from '@/utils/geometry/controls';
+import { getMapboxRequestTransformer } from '@/utils/geometry/mapbox';
 
-// @ts-ignore
-import StaticMode from '@mapbox/mapbox-gl-draw-static-mode';
+import '@/utils/geometry/maplibre-worker';
+
+import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
+import '@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css';
+import 'maplibre-gl/dist/maplibre-gl.css';
+
+// Repoint the Mapbox GL class names MapboxDraw builds its containers with at maplibre's, which
+// must happen before the first `new MapboxDraw()` below. The cast is because the types pin these
+// as readonly literals. Draw's own `mapbox-gl-draw_*` classes are unaffected.
+Object.assign(MapboxDraw.constants.classes as Record<string, string>, {
+	CANVAS: 'maplibregl-canvas',
+	CONTROL_BASE: 'maplibregl-ctrl',
+	CONTROL_PREFIX: 'maplibregl-ctrl-',
+	CONTROL_GROUP: 'maplibregl-ctrl-group',
+	ATTRIBUTION: 'maplibregl-ctrl-attrib',
+});
 
 const activeLayers = [
 	'directus-point',
@@ -46,6 +66,7 @@ const props = withDefaults(
 		fieldData?: Field;
 		loading?: boolean;
 		disabled?: boolean;
+		nonEditable?: boolean;
 		geometryType?: GeometryType;
 		defaultView?: Record<string, unknown>;
 	}>(),
@@ -81,7 +102,7 @@ const { basemap } = toRefs(appStore);
 const style = computed(() => {
 	const source = basemaps.find((source) => source.name == basemap.value) ?? basemaps[0];
 	if (!source) return;
-	return basemap.value, getStyleFromBasemapSource(source);
+	return (basemap.value, getStyleFromBasemapSource(source));
 });
 
 let parse: GeoJSONParser;
@@ -108,7 +129,7 @@ watch(location, updateProjection);
 const controls = {
 	attribution: new AttributionControl(),
 	draw: new MapboxDraw(getDrawOptions(geometryType)),
-	fitData: new ButtonControl('mapboxgl-ctrl-fitdata', fitDataBounds),
+	fitData: new ButtonControl('maplibregl-ctrl-fitdata', fitDataBounds),
 	navigation: new NavigationControl({
 		showCompass: false,
 	}),
@@ -165,12 +186,10 @@ function setupMap(): () => void {
 		logoPosition: 'bottom-left',
 		attributionControl: false,
 		...props.defaultView,
-		...(mapboxKey ? { accessToken: mapboxKey } : {}),
+		...(mapboxKey ? { transformRequest: getMapboxRequestTransformer(mapboxKey) } : {}),
 	});
 
 	if (controls.geocoder) {
-		map.addControl(controls.geocoder as any, 'top-right');
-
 		controls.geocoder.on('result', (event: any) => {
 			location.value = event.result.center;
 		});
@@ -185,20 +204,18 @@ function setupMap(): () => void {
 		location.value = [longitude, latitude];
 	});
 
-	map.addControl(controls.attribution, 'bottom-left');
-	map.addControl(controls.navigation, 'top-left');
-	map.addControl(controls.geolocate, 'top-left');
-	map.addControl(controls.fitData, 'top-left');
-	map.addControl(controls.draw as any, 'top-left');
+	watch(() => style.value, updateStyle);
+	watch(() => props.disabled, updateDisabled, { immediate: true });
+	watch(() => props.value, updateValue, { immediate: true });
 
 	map.on('load', async () => {
 		map.resize();
 		mapLoading.value = false;
-		map.on('draw.create', handleDrawUpdate);
-		map.on('draw.delete', handleDrawUpdate);
-		map.on('draw.update', handleDrawUpdate);
-		map.on('draw.modechange', handleDrawModeChange);
-		map.on('draw.selectionchange', handleSelectionChange);
+		onCustomEvent(map, 'draw.create', handleDrawUpdate);
+		onCustomEvent(map, 'draw.delete', handleDrawUpdate);
+		onCustomEvent(map, 'draw.update', handleDrawUpdate);
+		onCustomEvent(map, 'draw.modechange', handleDrawModeChange);
+		onCustomEvent(map, 'draw.selectionchange', handleSelectionChange);
 		map.on('move', updateProjection);
 
 		for (const layer of activeLayers) {
@@ -209,10 +226,6 @@ function setupMap(): () => void {
 
 		window.addEventListener('keydown', handleKeyDown);
 	});
-
-	watch(() => props.value, updateValue, { immediate: true });
-	watch(() => style.value, updateStyle);
-	watch(() => props.disabled, updateStyle);
 
 	return () => {
 		window.removeEventListener('keydown', handleKeyDown);
@@ -243,11 +256,59 @@ function updateValue(value: any) {
 }
 
 function updateStyle() {
-	map.removeControl(controls.draw as any);
+	refreshUI();
+}
+
+function updateDisabled() {
+	refreshUI(true);
+}
+
+function refreshUI(updatedDisabled = false) {
+	if (map.hasControl(controls.draw as any)) map.removeControl(controls.draw as any);
 	if (style.value) map.setStyle(style.value, { diff: false });
+
+	if (updatedDisabled) refreshDisabledState();
+
 	controls.draw = new MapboxDraw(getDrawOptions(geometryType));
 	map.addControl(controls.draw as any, 'top-left');
+	if (props.disabled) controls.draw.changeMode('static');
 	loadValueFromProps();
+}
+
+function refreshDisabledState() {
+	if (!props.disabled) {
+		map.dragPan.enable();
+		map.scrollZoom.enable();
+		map.boxZoom.enable();
+		map.keyboard.enable();
+		map.doubleClickZoom.enable();
+		map.touchZoomRotate.enable();
+
+		map.addControl(controls.geocoder as any, 'top-right');
+		map.addControl(controls.attribution, 'bottom-left');
+		map.addControl(controls.navigation, 'top-left');
+		map.addControl(controls.geolocate, 'top-left');
+		map.addControl(controls.fitData, 'top-left');
+
+		return;
+	}
+
+	if (!props.nonEditable) {
+		map.dragPan.disable();
+		map.scrollZoom.disable();
+		map.boxZoom.disable();
+		map.keyboard.disable();
+		map.doubleClickZoom.disable();
+		map.touchZoomRotate.disable();
+	}
+
+	if (props.nonEditable) map.addControl(controls.navigation, 'top-left');
+	else if (map.hasControl(controls.navigation)) map.removeControl(controls.navigation);
+
+	if (map.hasControl(controls.geocoder as any)) map.removeControl(controls.geocoder as any);
+	if (map.hasControl(controls.attribution)) map.removeControl(controls.attribution);
+	if (map.hasControl(controls.geolocate)) map.removeControl(controls.geolocate);
+	if (map.hasControl(controls.fitData)) map.removeControl(controls.fitData);
 }
 
 function resetValue(hard: boolean) {
@@ -401,7 +462,7 @@ function handleKeyDown(event: any) {
 </script>
 
 <template>
-	<div class="interface-map">
+	<div class="interface-map" :class="{ disabled }">
 		<div
 			class="map"
 			:class="{
@@ -414,12 +475,12 @@ function handleKeyDown(event: any) {
 		</div>
 		<div
 			v-if="location"
-			class="mapboxgl-user-location-dot mapboxgl-search-location-dot"
+			class="maplibregl-user-location-dot maplibregl-search-location-dot"
 			:style="`transform: translate(${projection!.x}px, ${
 				projection!.y
 			}px) translate(-50%, -50%) rotateX(0deg) rotateZ(0deg)`"
 		></div>
-		<transition name="fade">
+		<Transition name="fade">
 			<div
 				v-if="tooltipVisible"
 				class="tooltip top"
@@ -427,41 +488,41 @@ function handleKeyDown(event: any) {
 			>
 				{{ tooltipMessage }}
 			</div>
-		</transition>
-		<div class="mapboxgl-ctrl-group mapboxgl-ctrl mapboxgl-ctrl-dropdown basemap-select">
-			<v-icon name="map" />
-			<v-select v-model="basemap" inline :items="basemaps.map((s) => ({ text: s.name, value: s.name }))" />
+		</Transition>
+		<div v-if="!nonEditable" class="maplibregl-ctrl-group maplibregl-ctrl maplibregl-ctrl-dropdown basemap-select">
+			<VIcon name="map" />
+			<VSelect v-model="basemap" inline :disabled :items="basemaps.map((s) => ({ text: s.name, value: s.name }))" />
 		</div>
-		<transition name="fade">
-			<v-info
+		<Transition name="fade">
+			<VInfo
 				v-if="geometryOptionsError"
 				icon="error"
 				center
 				type="danger"
-				:title="t('interfaces.map.invalid_options')"
+				:title="$t('interfaces.map.invalid_options')"
 			>
-				<v-notice type="danger" :icon="false">
+				<VNotice type="danger" :icon="false">
 					{{ geometryOptionsError }}
-				</v-notice>
-			</v-info>
-			<v-info
+				</VNotice>
+			</VInfo>
+			<VInfo
 				v-else-if="geometryParsingError"
 				icon="error"
 				center
 				type="warning"
-				:title="t('layouts.map.invalid_geometry')"
+				:title="$t('layouts.map.invalid_geometry')"
 			>
-				<v-notice type="warning" :icon="false">
+				<VNotice type="warning" :icon="false">
 					{{ geometryParsingError }}
-				</v-notice>
+				</VNotice>
 				<template #append>
-					<v-card-actions>
-						<v-button small secondary @click="resetValue(false)">{{ t('continue') }}</v-button>
-						<v-button small kind="danger" @click="resetValue(true)">{{ t('reset') }}</v-button>
-					</v-card-actions>
+					<VCardActions>
+						<VButton small secondary @click="resetValue(false)">{{ $t('continue') }}</VButton>
+						<VButton small kind="danger" @click="resetValue(true)">{{ $t('reset') }}</VButton>
+					</VCardActions>
 				</template>
-			</v-info>
-		</transition>
+			</VInfo>
+		</Transition>
 	</div>
 </template>
 
@@ -472,10 +533,21 @@ function handleKeyDown(event: any) {
 	border: var(--theme--border-width) solid var(--theme--form--field--input--border-color);
 	border-radius: var(--theme--border-radius);
 
+	&:not(.disabled):focus-within {
+		outline: var(--focus-ring-width) solid
+			var(--v-input-focus-ring-color, var(--theme--form--field--input--focus-ring-color));
+		outline-offset: max(-1 * var(--focus-ring-width), -1 * var(--theme--border-width));
+	}
+
+	:deep(button) {
+		--focus-ring-offset: var(--focus-ring-offset-invert);
+		--focus-ring-radius: 0;
+	}
+
 	.map {
 		position: relative;
-		width: 100%;
-		height: 500px;
+		inline-size: 100%;
+		block-size: 28.125rem;
 
 		&.error,
 		&.loading {
@@ -483,8 +555,8 @@ function handleKeyDown(event: any) {
 		}
 
 		.maplibregl-map {
-			width: 100%;
-			height: 100%;
+			inline-size: 100%;
+			block-size: 100%;
 		}
 
 		&:not(.has-selection) :deep(.mapbox-gl-draw_trash) {
@@ -493,46 +565,62 @@ function handleKeyDown(event: any) {
 	}
 
 	.v-info {
-		padding: 20px;
+		padding: 1.125rem;
 		background-color: var(--theme--form--field--input--background);
 		border-radius: var(--theme--border-radius);
 	}
 
 	.basemap-select {
 		position: absolute;
-		right: 10px;
-		bottom: 10px;
+		inset-inline-end: 0.5625rem;
+		inset-block-end: 0.5625rem;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		height: 36px;
-		padding: 10px;
+		block-size: 2rem;
+		padding: 0.5625rem;
 		color: var(--theme--form--field--input--foreground-subdued);
 		background-color: var(--theme--background);
 		border: var(--theme--border-width) solid var(--theme--background);
 		border-radius: var(--theme--border-radius);
 
 		span {
-			width: auto;
-			margin-right: 4px;
+			inline-size: auto;
+			margin-inline-end: 0.25rem;
 		}
 
 		.v-select {
 			color: var(--theme--form--field--input--foreground);
+
+			:deep(button) {
+				background-color: transparent !important;
+			}
+
+			:deep(button.active) {
+				color: inherit !important;
+			}
+
+			:deep(button.disabled) {
+				color: var(--theme--form--field--input--foreground-subdued) !important;
+			}
 		}
 	}
 
-	.mapboxgl-search-location-dot {
+	&:not(.disabled) .basemap-select:hover {
+		background-color: var(--theme--background-normal);
+	}
+
+	.maplibregl-search-location-dot {
 		position: absolute;
-		top: 0;
-		left: 0;
+		inset-block-start: 0;
+		inset-inline-start: 0;
 	}
 }
 
 .center {
 	position: absolute;
-	top: 50%;
-	left: 50%;
+	inset-block-start: 50%;
+	inset-inline-start: 50%;
 	transform: translate(-50%, -50%);
 }
 

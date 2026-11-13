@@ -1,19 +1,42 @@
+import { promises as fs } from 'fs';
+import path from 'path';
+import type { Snapshot, SnapshotDiff } from '@directus/types';
+import { DiffKind } from '@directus/types';
 import { parseJSON } from '@directus/utils';
 import chalk from 'chalk';
-import { promises as fs } from 'fs';
 import inquirer from 'inquirer';
 import { load as loadYaml } from 'js-yaml';
-import path from 'path';
 import getDatabase, { isInstalled, validateDatabaseConnection } from '../../../database/index.js';
-import { useLogger } from '../../../logger.js';
-import type { Snapshot } from '../../../types/index.js';
-import { DiffKind } from '../../../types/index.js';
-import { isNestedMetaUpdate } from '../../../utils/apply-diff.js';
-import { applySnapshot } from '../../../utils/apply-snapshot.js';
-import { getSnapshotDiff } from '../../../utils/get-snapshot-diff.js';
-import { getSnapshot } from '../../../utils/get-snapshot.js';
+import { getLicenseManager } from '../../../license/index.js';
+import { useLogger } from '../../../logger/index.js';
+import { isNestedMetaUpdate } from '../../../utils/schema/apply-diff.js';
+import { applySnapshot } from '../../../utils/schema/apply-snapshot.js';
+import { getSnapshotDiff } from '../../../utils/schema/get-snapshot-diff.js';
+import { getSnapshot } from '../../../utils/schema/get-snapshot.js';
 
-export async function apply(snapshotPath: string, options?: { yes: boolean; dryRun: boolean }): Promise<void> {
+export function filterSnapshotDiff(snapshot: SnapshotDiff, filters: string[]): SnapshotDiff {
+	const filterSet = new Set(filters);
+
+	function shouldKeep(item: { collection: string; field?: string }): boolean {
+		if (filterSet.has(item.collection)) return false;
+		if (item.field && filterSet.has(`${item.collection}.${item.field}`)) return false;
+		return true;
+	}
+
+	const filteredDiff: SnapshotDiff = {
+		collections: snapshot.collections.filter((item) => shouldKeep(item)),
+		fields: snapshot.fields.filter((item) => shouldKeep(item)),
+		systemFields: snapshot.systemFields.filter((item) => shouldKeep(item)),
+		relations: snapshot.relations.filter((item) => shouldKeep(item)),
+	};
+
+	return filteredDiff;
+}
+
+export async function apply(
+	snapshotPath: string,
+	options?: { yes: boolean; dryRun: boolean; ignoreRules: string },
+): Promise<void> {
 	const logger = useLogger();
 
 	const filename = path.resolve(process.cwd(), snapshotPath);
@@ -40,11 +63,16 @@ export async function apply(snapshotPath: string, options?: { yes: boolean; dryR
 		}
 
 		const currentSnapshot = await getSnapshot({ database });
-		const snapshotDiff = getSnapshotDiff(currentSnapshot, snapshot);
+		let snapshotDiff = getSnapshotDiff(currentSnapshot, snapshot);
+
+		if (options?.ignoreRules) {
+			snapshotDiff = filterSnapshotDiff(snapshotDiff, options.ignoreRules.split(','));
+		}
 
 		if (
 			snapshotDiff.collections.length === 0 &&
 			snapshotDiff.fields.length === 0 &&
+			snapshotDiff.systemFields.length === 0 &&
 			snapshotDiff.relations.length === 0
 		) {
 			logger.info('No changes to apply.');
@@ -113,6 +141,30 @@ export async function apply(snapshotPath: string, options?: { yes: boolean; dryR
 				sections.push(lines.join('\n'));
 			}
 
+			if (snapshotDiff.systemFields.length > 0) {
+				const lines = [chalk.underline.bold('System Fields:')];
+
+				for (const { collection, field, diff } of snapshotDiff.systemFields) {
+					if (diff[0]?.kind === DiffKind.EDIT) {
+						lines.push(`  - ${chalk.magenta('Update')} ${collection}.${field}`);
+
+						for (const change of diff) {
+							const path = formatPath(change.path!);
+
+							if (change.kind === DiffKind.EDIT) {
+								lines.push(`    - Set ${path} to ${change.rhs}`);
+							} else if (change.kind === DiffKind.DELETE) {
+								lines.push(`    - Remove ${path}`);
+							} else if (change.kind === DiffKind.NEW) {
+								lines.push(`    - Add ${path} and set it to ${change.rhs}`);
+							}
+						}
+					}
+				}
+
+				sections.push(lines.join('\n'));
+			}
+
 			if (snapshotDiff.relations.length > 0) {
 				const lines = [chalk.underline.bold('Relations:')];
 
@@ -161,6 +213,9 @@ export async function apply(snapshotPath: string, options?: { yes: boolean; dryR
 			}
 		}
 
+		// Load the license so schema changes are checked against the active limits
+		await getLicenseManager().initialize();
+
 		await applySnapshot(snapshot, { current: currentSnapshot, diff: snapshotDiff, database });
 
 		logger.info(`Snapshot applied successfully`);
@@ -174,7 +229,7 @@ export async function apply(snapshotPath: string, options?: { yes: boolean; dryR
 	}
 }
 
-function formatPath(path: any[]): string {
+export function formatPath(path: any[]): string {
 	if (path.length === 1) {
 		return path.toString();
 	}
@@ -182,7 +237,7 @@ function formatPath(path: any[]): string {
 	return path.slice(1).join('.');
 }
 
-function formatRelatedCollection(relatedCollection: string | null): string {
+export function formatRelatedCollection(relatedCollection: string | null): string {
 	// Related collection doesn't exist for a2o relationship types
 	if (relatedCollection) {
 		return ` → ${relatedCollection}`;

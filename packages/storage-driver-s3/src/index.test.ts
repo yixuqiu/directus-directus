@@ -1,16 +1,21 @@
+import { join } from 'node:path';
+import { PassThrough, Readable } from 'node:stream';
 import type { HeadObjectCommandOutput } from '@aws-sdk/client-s3';
 import {
 	CopyObjectCommand,
+	CreateMultipartUploadCommand,
 	DeleteObjectCommand,
 	GetObjectCommand,
 	HeadObjectCommand,
 	ListObjectsV2Command,
 	S3Client,
+	ServerSideEncryption,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { normalizePath } from '@directus/utils';
 import { isReadableStream } from '@directus/utils/node';
 import {
+	rand,
 	randAlphaNumeric,
 	randBoolean,
 	randGitBranch as randBucket,
@@ -25,8 +30,6 @@ import {
 	randWord,
 } from '@ngneat/falso';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
-import { join } from 'node:path';
-import { PassThrough, Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { DriverS3Config } from './index.js';
 import { DriverS3 } from './index.js';
@@ -38,7 +41,7 @@ vi.mock('@aws-sdk/lib-storage');
 vi.mock('node:path');
 
 let sample: {
-	config: Required<DriverS3Config>;
+	config: DriverS3Config & Required<Pick<DriverS3Config, 'key' | 'secret' | 'root' | 'region' | 'forcePathStyle'>>;
 	path: {
 		input: string;
 		inputFull: string;
@@ -68,8 +71,9 @@ beforeEach(() => {
 			key: randAlphaNumeric({ length: 20 }).join(''),
 			secret: randAlphaNumeric({ length: 40 }).join(''),
 			bucket: randBucket(),
-			acl: randWord(),
-			serverSideEncryption: randWord(),
+			acl: 'private',
+			serverSideEncryption: rand(Object.values(ServerSideEncryption)),
+			serverSideEncryptionKmsKeyId: randAlphaNumeric({ length: 20 }).join(''),
 			root: randDirectoryPath(),
 			endpoint: randDomainName(),
 			region: randWord(),
@@ -300,6 +304,7 @@ describe('#fullPath', () => {
 		vi.mocked(join).mockReturnValue(sample.path.inputFull);
 		vi.mocked(normalizePath).mockReturnValue(sample.path.inputFull);
 
+		// @ts-expect-error - mutating private attribute
 		driver['root'] = sample.config.root;
 
 		const result = driver['fullPath'](sample.path.input);
@@ -328,7 +333,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting start range offset', async () => {
-		await driver.read(sample.path.input, { start: sample.range.start });
+		await driver.read(sample.path.input, { range: { start: sample.range.start } });
 
 		expect(GetObjectCommand).toHaveBeenCalledWith({
 			Key: sample.path.inputFull,
@@ -338,7 +343,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting end range offset', async () => {
-		await driver.read(sample.path.input, { end: sample.range.end });
+		await driver.read(sample.path.input, { range: { end: sample.range.end } });
 
 		expect(GetObjectCommand).toHaveBeenCalledWith({
 			Key: sample.path.inputFull,
@@ -348,7 +353,7 @@ describe('#read', () => {
 	});
 
 	test('Optionally allows setting start and end range offset', async () => {
-		await driver.read(sample.path.input, sample.range);
+		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(GetObjectCommand).toHaveBeenCalledWith({
 			Key: sample.path.inputFull,
@@ -361,7 +366,7 @@ describe('#read', () => {
 		vi.mocked(driver['client'].send).mockReturnValue({ Body: undefined } as unknown as void);
 
 		try {
-			await driver.read(sample.path.input, sample.range);
+			await driver.read(sample.path.input, { range: sample.range });
 		} catch (err: any) {
 			expect(err).toBeInstanceOf(Error);
 			expect(err.message).toBe(`No stream returned for file "${sample.path.input}"`);
@@ -371,7 +376,7 @@ describe('#read', () => {
 	test('Throws an error when returned stream is not a readable stream', async () => {
 		vi.mocked(isReadableStream).mockReturnValue(false);
 
-		expect(driver.read(sample.path.input, sample.range)).rejects.toThrowError(
+		expect(driver.read(sample.path.input, { range: sample.range })).rejects.toThrowError(
 			new Error(`No stream returned for file "${sample.path.input}"`),
 		);
 	});
@@ -380,9 +385,12 @@ describe('#read', () => {
 		const mockGetObjectCommand = {} as GetObjectCommand;
 
 		vi.mocked(driver['client'].send).mockReturnValue({ Body: sample.stream } as unknown as void);
-		vi.mocked(GetObjectCommand).mockReturnValue(mockGetObjectCommand);
 
-		const stream = await driver.read(sample.path.input, sample.range);
+		vi.mocked(GetObjectCommand).mockImplementation(function () {
+			return mockGetObjectCommand;
+		} as unknown as typeof GetObjectCommand);
+
+		const stream = await driver.read(sample.path.input, { range: sample.range });
 
 		expect(driver['client'].send).toHaveBeenCalledWith(mockGetObjectCommand);
 		expect(stream).toBe(sample.stream);
@@ -410,7 +418,10 @@ describe('#stat', () => {
 
 	test('Calls #send with HeadObjectCommand', async () => {
 		const mockHeadObjectCommand = {} as HeadObjectCommand;
-		vi.mocked(HeadObjectCommand).mockReturnValue(mockHeadObjectCommand);
+
+		vi.mocked(HeadObjectCommand).mockImplementation(function () {
+			return mockHeadObjectCommand;
+		} as unknown as typeof HeadObjectCommand);
 
 		await driver.stat(sample.path.input);
 
@@ -440,12 +451,34 @@ describe('#exists', () => {
 		expect(exists).toBe(true);
 	});
 
-	test('Returns false if stat throws an error', async () => {
-		vi.mocked(driver.stat).mockRejectedValue(new Error());
+	test('Returns false if the object is not found', async () => {
+		vi.mocked(driver.stat).mockRejectedValue(Object.assign(new Error(), { $metadata: { httpStatusCode: 404 } }));
 
 		const exists = await driver.exists(sample.path.input);
 
 		expect(exists).toBe(false);
+	});
+
+	/**
+	 * Reporting a timed out or rejected request as "the file isn't there" makes callers act on a wrong
+	 * answer, for example by serving a permission error for a file that does exist. A 403 is not an
+	 * answer either: HEAD has no body, so it covers rejected credentials as much as a missing object.
+	 *
+	 * Error shapes as produced by @aws-sdk/client-s3 3.928.0. A timeout carries `$metadata` without a
+	 * `httpStatusCode`.
+	 */
+	test.each([
+		['a rejected request', { $metadata: { httpStatusCode: 403 } }],
+		['the wrong region', { $metadata: { httpStatusCode: 301 } }],
+		['a server error', { $metadata: { httpStatusCode: 500 } }],
+		['a socket timeout', { name: 'TimeoutError', $metadata: { attempts: 3 } }],
+		['a refused connection', { code: 'ECONNREFUSED' }],
+	])('Throws if the lookup failed with %s', async (_, shape) => {
+		const error = Object.assign(new Error(), shape);
+
+		vi.mocked(driver.stat).mockRejectedValue(error);
+
+		await expect(driver.exists(sample.path.input)).rejects.toThrow(error);
 	});
 });
 
@@ -490,6 +523,42 @@ describe('#copy', () => {
 		});
 	});
 
+	test.each([[ServerSideEncryption.aws_kms], [ServerSideEncryption.aws_kms_dsse]])(
+		'Optionally sets ServerSideEncryptionKMSKeyId ',
+		async (sse) => {
+			driver['config'].serverSideEncryption = sse;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+
+			await driver.copy(sample.path.src, sample.path.dest);
+
+			expect(CopyObjectCommand).toHaveBeenCalledWith({
+				Key: sample.path.destFull,
+				Bucket: sample.config.bucket,
+				CopySource: `/${sample.config.bucket}/${sample.path.srcFull}`,
+				ServerSideEncryption: sse,
+				SSEKMSKeyId: sample.config.serverSideEncryptionKmsKeyId,
+			});
+		},
+	);
+
+	test.each([[ServerSideEncryption.AES256], [ServerSideEncryption.aws_fsx]])(
+		'Does not set ServerSideEncryptionKMSKeyId if ServerSideEncryption is not aws:kms or aws:kms:dsse',
+		async (sse) => {
+			driver['config'].serverSideEncryption = sse;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+
+			await driver.copy(sample.path.src, sample.path.dest);
+
+			expect(CopyObjectCommand).toHaveBeenCalledWith({
+				Key: sample.path.destFull,
+				Bucket: sample.config.bucket,
+				CopySource: `/${sample.config.bucket}/${sample.path.srcFull}`,
+				ServerSideEncryption: sse,
+				SSEKMSKeyId: undefined,
+			});
+		},
+	);
+
 	test('Optionally sets ACL', async () => {
 		driver['config'].acl = sample.config.acl;
 
@@ -505,7 +574,10 @@ describe('#copy', () => {
 
 	test('Executes CopyObjectCommand', async () => {
 		const mockCommand = {} as CopyObjectCommand;
-		vi.mocked(CopyObjectCommand).mockReturnValue(mockCommand);
+
+		vi.mocked(CopyObjectCommand).mockImplementation(function () {
+			return mockCommand;
+		} as unknown as typeof CopyObjectCommand);
 
 		await driver.copy(sample.path.src, sample.path.dest);
 
@@ -557,6 +629,48 @@ describe('#write', () => {
 		});
 	});
 
+	test.each([[ServerSideEncryption.aws_kms], [ServerSideEncryption.aws_kms_dsse]])(
+		'Optionally sets ServerSideEncryptionKmsKeyId',
+		async (sse) => {
+			driver['config'].serverSideEncryption = sse;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+
+			await driver.write(sample.path.input, sample.stream);
+
+			expect(Upload).toHaveBeenCalledWith({
+				client: driver['client'],
+				params: {
+					Key: sample.path.inputFull,
+					Bucket: sample.config.bucket,
+					Body: sample.stream,
+					ServerSideEncryption: sse,
+					SSEKMSKeyId: sample.config.serverSideEncryptionKmsKeyId,
+				},
+			});
+		},
+	);
+
+	test.each([[ServerSideEncryption.aws_fsx], [ServerSideEncryption.AES256]])(
+		'Does not set ServerSideEncryptionKmsKeyId when ServerSideEncryption is not aws:kms or aws:kms:dsse',
+		async (sse) => {
+			driver['config'].serverSideEncryption = sse;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+
+			await driver.write(sample.path.input, sample.stream);
+
+			expect(Upload).toHaveBeenCalledWith({
+				client: driver['client'],
+				params: {
+					Key: sample.path.inputFull,
+					Bucket: sample.config.bucket,
+					Body: sample.stream,
+					ServerSideEncryption: sse,
+					SSEKMSKeyId: undefined,
+				},
+			});
+		},
+	);
+
 	test('Optionally sets ACL', async () => {
 		driver['config'].acl = sample.config.acl;
 
@@ -575,7 +689,10 @@ describe('#write', () => {
 
 	test('Waits for upload to be done', async () => {
 		const mockUpload = { done: vi.fn() };
-		vi.mocked(Upload).mockReturnValue(mockUpload as unknown as Upload);
+
+		vi.mocked(Upload).mockImplementation(function () {
+			return mockUpload;
+		} as unknown as typeof Upload);
 
 		await driver.write(sample.path.input, sample.stream);
 
@@ -595,7 +712,10 @@ describe('#delete', () => {
 
 	test('Executes DeleteObjectCommand', async () => {
 		const mockDeleteObjectCommand = {} as DeleteObjectCommand;
-		vi.mocked(DeleteObjectCommand).mockReturnValue(mockDeleteObjectCommand);
+
+		vi.mocked(DeleteObjectCommand).mockImplementation(function () {
+			return mockDeleteObjectCommand;
+		} as unknown as typeof DeleteObjectCommand);
 
 		await driver.delete(sample.path.input);
 
@@ -618,7 +738,11 @@ describe('#list', () => {
 
 	test('Calls send with the command', async () => {
 		const mockListObjectsV2Command = {} as ListObjectsV2Command;
-		vi.mocked(ListObjectsV2Command).mockReturnValue(mockListObjectsV2Command);
+
+		vi.mocked(ListObjectsV2Command).mockImplementation(function () {
+			return mockListObjectsV2Command;
+		} as unknown as typeof ListObjectsV2Command);
+
 		vi.mocked(driver['client'].send).mockResolvedValue({} as unknown as void);
 
 		await driver.list(sample.path.input).next();
@@ -639,6 +763,7 @@ describe('#list', () => {
 			],
 		} as unknown as void);
 
+		// @ts-expect-error - mutating private attribute
 		driver['root'] = sampleRoot;
 
 		const iterator = driver.list(sample.path.input);
@@ -693,4 +818,46 @@ describe('#list', () => {
 		expect(driver['client'].send).toHaveBeenCalledTimes(3);
 		expect(output.length).toBe(4);
 	});
+});
+
+describe('#createChunkedUpload', () => {
+	beforeEach(() => {
+		vi.mocked(driver['client'].send).mockResolvedValue({ UploadId: 'test-upload-id' } as unknown as void);
+	});
+
+	test.each([[ServerSideEncryption.aws_kms], [ServerSideEncryption.aws_kms_dsse]])(
+		'Optionally sets ServerSideEncryptionKMSKeyId ',
+		async (sse) => {
+			driver['config'].serverSideEncryption = sse;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+
+			await driver.createChunkedUpload(sample.path.input, { metadata: {} });
+
+			expect(CreateMultipartUploadCommand).toHaveBeenCalledWith({
+				Bucket: sample.config.bucket,
+				Key: sample.path.inputFull,
+				Metadata: { 'tus-version': '1.0.0' },
+				ServerSideEncryption: sse,
+				SSEKMSKeyId: sample.config.serverSideEncryptionKmsKeyId,
+			});
+		},
+	);
+
+	test.each([[ServerSideEncryption.AES256], [ServerSideEncryption.aws_fsx]])(
+		'Does not set SSEKMSKeyId if ServerSideEncryption is not aws:kms or aws:kms:dsse',
+		async (sse) => {
+			driver['config'].serverSideEncryption = sse;
+			driver['config'].serverSideEncryptionKmsKeyId = sample.config.serverSideEncryptionKmsKeyId;
+
+			await driver.createChunkedUpload(sample.path.input, { metadata: {} });
+
+			expect(CreateMultipartUploadCommand).toHaveBeenCalledWith({
+				Bucket: sample.config.bucket,
+				Key: sample.path.inputFull,
+				Metadata: { 'tus-version': '1.0.0' },
+				ServerSideEncryption: sse,
+				SSEKMSKeyId: undefined,
+			});
+		},
+	);
 });

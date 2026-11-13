@@ -1,19 +1,41 @@
 <script setup lang="ts">
+import { useCollection } from '@directus/composables';
+import { DIRECTUS_SECURITY_BEST_PRACTICES_URL } from '@directus/constants';
+import { Filter } from '@directus/types';
+import { getEndpoint } from '@directus/utils';
+import type { AxiosProgressEvent } from 'axios';
+import { debounce, pick } from 'lodash-es';
+import { computed, reactive, ref, toRefs, watch } from 'vue';
+import { I18nT, useI18n } from 'vue-i18n';
+import PrivateViewHeaderBarActionButton from '../private-view/components/private-view-header-bar-action-button.vue';
+import ImportErrorDialog from './import-error-dialog.vue';
+import SidebarDetail from './sidebar-detail.vue';
 import api from '@/api';
+import VButton from '@/components/v-button.vue';
+import VCheckbox from '@/components/v-checkbox.vue';
+import VDivider from '@/components/v-divider.vue';
+import VDrawer from '@/components/v-drawer.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VNotice from '@/components/v-notice.vue';
+import VProgressLinear from '@/components/v-progress-linear.vue';
+import VRemove from '@/components/v-remove.vue';
+import VSelect from '@/components/v-select/v-select.vue';
 import { useCollectionPermissions } from '@/composables/use-permissions';
+import InterfaceSystemField from '@/interfaces/_system/system-field/system-field.vue';
+import InterfaceSystemFields from '@/interfaces/_system/system-fields/system-fields.vue';
+import InterfaceSystemFilter from '@/interfaces/_system/system-filter/system-filter.vue';
 import { useServerStore } from '@/stores/server';
+import { useSettingsStore } from '@/stores/settings';
+import type { APIError } from '@/types/error';
 import { getPublicURL } from '@/utils/get-root-path';
 import { notify } from '@/utils/notify';
 import { readableMimeType } from '@/utils/readable-mime-type';
 import { unexpectedError } from '@/utils/unexpected-error';
 import FolderPicker from '@/views/private/components/folder-picker.vue';
-import { useCollection } from '@directus/composables';
-import { Filter } from '@directus/types';
-import { getEndpoint } from '@directus/utils';
-import type { AxiosProgressEvent } from 'axios';
-import { debounce, pick } from 'lodash';
-import { computed, reactive, ref, toRefs, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
 
 type LayoutQuery = {
 	fields?: string[];
@@ -31,16 +53,19 @@ const props = defineProps<{
 
 const emit = defineEmits(['refresh']);
 
-const { t, n, te } = useI18n();
+const { t, n } = useI18n();
 
 const { collection } = toRefs(props);
 
 const fileInput = ref<HTMLInputElement | null>(null);
 
 const file = ref<File | null>(null);
-const { uploading, progress, importing, uploadFile } = useUpload();
+const { uploading, progress, importing, uploadFile, background: backgroundImport } = useUpload();
 
 const exportDialogActive = ref(false);
+
+const errorDialogActive = ref(false);
+const errorDialogRows = ref<APIError[]>([]);
 
 const fileExtension = computed(() => {
 	if (file.value === null) return null;
@@ -50,25 +75,45 @@ const fileExtension = computed(() => {
 const { primaryKeyField, fields, info: collectionInfo } = useCollection(collection);
 
 const { createAllowed } = useCollectionPermissions(collection);
+const { readAllowed: readFoldersAllowed } = useCollectionPermissions('directus_folders');
+const { createAllowed: createFilesAllowed } = useCollectionPermissions('directus_files');
 
 const { info } = useServerStore();
+const settingsStore = useSettingsStore();
 
 const queryLimitMax = info.queryLimit === undefined || info.queryLimit.max === -1 ? Infinity : info.queryLimit.max;
 const defaultLimit = info.queryLimit !== undefined ? Math.min(25, queryLimitMax) : 25;
+
+const isVirtualField = (fieldName: string) => fieldName.startsWith('$');
+
+const isExportableField = (field: { field: string }) => isVirtualField(field.field) === false;
+
+const sanitizeExportFields = (fieldNames: string[] | undefined) => {
+	return fieldNames?.filter((fieldName) => isVirtualField(fieldName) === false) ?? [];
+};
+
+const getDefaultExportFields = () => {
+	return (
+		fields.value
+			?.filter((field) => field.type !== 'alias' && isVirtualField(field.field) === false)
+			.map((field) => field.field) ?? []
+	);
+};
 
 const exportSettings = reactive({
 	limit: props.layoutQuery?.limit ?? defaultLimit,
 	filter: props.filter,
 	search: props.search,
-	fields: props.layoutQuery?.fields ?? fields.value?.map((field) => field.field),
+	fields: sanitizeExportFields(props.layoutQuery?.fields) ?? getDefaultExportFields(),
 	sort: `${primaryKeyField.value?.field ?? ''}`,
 });
 
 watch(
 	fields,
 	() => {
-		if (props.layoutQuery?.fields) return;
-		exportSettings.fields = fields.value?.map((field) => field.field);
+		exportSettings.fields = props.layoutQuery?.fields
+			? sanitizeExportFields(props.layoutQuery.fields)
+			: getDefaultExportFields();
 	},
 	{ immediate: true },
 );
@@ -79,7 +124,9 @@ watch(
 		exportSettings.limit = props.layoutQuery?.limit ?? defaultLimit;
 
 		if (props.layoutQuery?.fields) {
-			exportSettings.fields = props.layoutQuery?.fields;
+			exportSettings.fields = sanitizeExportFields(props.layoutQuery.fields);
+		} else {
+			exportSettings.fields = getDefaultExportFields();
 		}
 
 		if (props.layoutQuery?.sort) {
@@ -104,7 +151,10 @@ watch(
 
 const format = ref('csv');
 const location = ref('download');
-const folder = ref<string | null>(null);
+
+const folder = ref<string | null>(
+	settingsStore.settings?.default_exports_folder ?? settingsStore.settings?.storage_default_folder ?? null,
+);
 
 const lockedToFiles = ref<{ previousLocation: string } | null>(null);
 
@@ -119,10 +169,10 @@ const getItemCount = async () => {
 		const aggregate = primaryKeyField.value?.field
 			? {
 					countDistinct: [primaryKeyField.value.field],
-			  }
+				}
 			: {
 					count: ['*'],
-			  };
+				};
 
 		const response = await api.get(getEndpoint(collection.value), {
 			params: {
@@ -172,13 +222,18 @@ const exportCount = computed(() => {
 	return itemCount.value !== undefined ? Math.min(itemCount.value, limit) : limit;
 });
 
-watch(
-	exportCount,
-	() => {
-		const queryLimitThreshold = exportCount.value > queryLimitMax;
-		const batchThreshold = exportCount.value >= 2500;
+const tooLargeToDownload = computed(() => exportCount.value > queryLimitMax || exportCount.value >= 2500);
+const exportBlocked = computed(() => tooLargeToDownload.value && !createFilesAllowed.value);
 
-		if (queryLimitThreshold || batchThreshold) {
+const locationOptions = computed(() => [
+	{ value: 'download', text: t('download_file') },
+	...(createFilesAllowed.value ? [{ value: 'files', text: t('file_library') }] : []),
+]);
+
+watch(
+	tooLargeToDownload,
+	() => {
+		if (tooLargeToDownload.value && createFilesAllowed.value) {
 			lockedToFiles.value = {
 				previousLocation: lockedToFiles.value?.previousLocation ?? location.value,
 			};
@@ -243,6 +298,10 @@ function clearFileInput() {
 	file.value = null;
 }
 
+function openFileBrowser() {
+	fileInput.value?.click();
+}
+
 function importData() {
 	uploadFile(file.value!);
 }
@@ -251,8 +310,9 @@ function useUpload() {
 	const uploading = ref(false);
 	const importing = ref(false);
 	const progress = ref(0);
+	const background = ref(false);
 
-	return { uploading, progress, importing, uploadFile };
+	return { uploading, progress, importing, uploadFile, background };
 
 	async function uploadFile(file: File) {
 		uploading.value = true;
@@ -262,8 +322,15 @@ function useUpload() {
 		const formData = new FormData();
 		formData.append('file', file);
 
+		const params: Record<string, unknown> = {};
+
+		if (background.value) {
+			params.background = background.value;
+		}
+
 		try {
 			await api.post(`/utils/import/${collection.value}`, formData, {
+				params,
 				onUploadProgress: (progressEvent: AxiosProgressEvent) => {
 					const percentCompleted = Math.floor((progressEvent.loaded * 100) / progressEvent.total!);
 					progress.value = percentCompleted;
@@ -273,20 +340,25 @@ function useUpload() {
 
 			clearFileInput();
 
-			emit('refresh');
+			if (!background.value) {
+				emit('refresh');
 
-			notify({
-				title: t('import_data_success', { filename: file.name }),
-			});
+				notify({
+					title: t('import_data_success', { filename: file.name }),
+				});
+			} else {
+				notify({
+					title: t('import_upload_success', { filename: file.name }),
+				});
+			}
 		} catch (error: any) {
-			const code = error?.response?.data?.errors?.[0]?.extensions?.code;
+			const errors = error?.response?.data?.errors;
+			const code = errors?.[0]?.extensions?.code;
 
-			notify({
-				title: te(`errors.${code}`) ? t(`errors.${code}`) : t('import_data_error'),
-				type: 'error',
-			});
-
-			if (code === 'INTERNAL_SERVER_ERROR') {
+			if (code === 'FAILED_VALIDATION' && Array.isArray(errors)) {
+				errorDialogRows.value = errors;
+				errorDialogActive.value = true;
+			} else {
 				unexpectedError(error);
 			}
 		} finally {
@@ -298,6 +370,10 @@ function useUpload() {
 }
 
 function startExport() {
+	if (exportBlocked.value) {
+		return;
+	}
+
 	if (location.value === 'download') {
 		exportDataLocal();
 	} else {
@@ -332,6 +408,8 @@ function exportDataLocal() {
 }
 
 async function exportDataFiles() {
+	if (exporting.value) return;
+
 	exporting.value = true;
 
 	try {
@@ -363,27 +441,29 @@ async function exportDataFiles() {
 </script>
 
 <template>
-	<sidebar-detail icon="import_export" :title="t('import_export')">
+	<SidebarDetail id="export" icon="import_export" :title="$t('import_export')">
 		<div class="fields">
 			<template v-if="createAllowed">
 				<div class="field full">
 					<div v-if="uploading || importing" class="uploading">
 						<div class="type-text">
-							<span>{{ importing ? t('import_data_indeterminate') : t('upload_file_indeterminate') }}</span>
+							<span>{{ importing ? $t('import_data_indeterminate') : $t('upload_file_indeterminate') }}</span>
 							<span v-if="!importing">{{ progress }}%</span>
 						</div>
-						<v-progress-linear :indeterminate="importing" :value="progress" rounded />
+						<VProgressLinear :indeterminate="importing" :value="progress" rounded />
 					</div>
 					<template v-else>
-						<p class="type-label">{{ t('label_import') }}</p>
-						<v-input clickable>
-							<template #prepend>
+						<p class="type-label">{{ $t('label_import') }}</p>
+
+						<VListItem v-tooltip="file && file.name" block clickable @click="openFileBrowser">
+							<VListItemIcon>
 								<div class="preview" :class="{ 'has-file': file }">
 									<span v-if="fileExtension" class="extension">{{ fileExtension }}</span>
-									<v-icon v-else name="folder_open" />
+									<VIcon v-else name="folder_open" />
 								</div>
-							</template>
-							<template #input>
+							</VListItemIcon>
+
+							<VListItemContent>
 								<input
 									id="import-file"
 									ref="fileInput"
@@ -392,87 +472,103 @@ async function exportDataFiles() {
 									hidden
 									@change="onChange"
 								/>
-								<label v-tooltip="file && file.name" for="import-file" class="import-file-label"></label>
+
 								<span class="import-file-text" :class="{ 'no-file': !file }">
-									{{ file ? file.name : t('import_data_input_placeholder') }}
+									{{ file ? file.name : $t('import_data_input_placeholder') }}
 								</span>
-							</template>
-							<template #append>
-								<template v-if="file">
-									<v-icon v-tooltip="t('deselect')" class="deselect" name="close" @click.stop="clearFileInput" />
-								</template>
-								<v-icon v-else name="attach_file" />
-							</template>
-						</v-input>
+							</VListItemContent>
+
+							<div class="item-actions">
+								<VRemove v-if="file" deselect @action="clearFileInput" />
+
+								<VIcon v-else name="attach_file" />
+							</div>
+						</VListItem>
 					</template>
 				</div>
 
-				<div class="field full">
-					<v-button small full-width :disabled="!file" :loading="uploading || importing" @click="importData">
-						{{ t('import_data_button') }}
-					</v-button>
+				<div class="field full import-actions">
+					<VButton small full-width :disabled="!file" :loading="uploading || importing" @click="importData">
+						{{ $t('import_data_button') }}
+					</VButton>
+
+					<VCheckbox
+						v-if="file"
+						v-model="backgroundImport"
+						class="background"
+						small
+						full-width
+						:disabled="uploading || importing"
+					>
+						{{ $t('import_background') }}
+					</VCheckbox>
 				</div>
 
-				<v-divider />
+				<div class="field full">
+					<VDivider />
+				</div>
 			</template>
 
 			<div class="field full">
-				<v-button small full-width @click="openExportDialog">
-					{{ t('export_items') }}
-				</v-button>
+				<VButton small full-width @click="openExportDialog">
+					{{ $t('export_items') }}
+				</VButton>
 
 				<button
 					v-tooltip.bottom="
-						!!onDownload ? t('presentation_text_values_cannot_be_reimported') : t('download_page_as_csv_unsupported')
+						!!onDownload ? $t('presentation_text_values_cannot_be_reimported') : $t('download_page_as_csv_unsupported')
 					"
 					class="download-local"
 					:disabled="!onDownload"
 					@click="onDownload"
 				>
-					{{ t('download_page_as_csv') }}
+					{{ $t('download_page_as_csv') }}
 				</button>
 			</div>
 		</div>
 
-		<v-drawer
+		<VDrawer
 			v-model="exportDialogActive"
-			:title="t('export_items')"
+			:title="$t('export_items')"
 			icon="import_export"
 			persistent
-			@esc="exportDialogActive = false"
 			@cancel="exportDialogActive = false"
+			@apply="startExport"
 		>
-			<template #actions>
-				<v-button
-					v-tooltip.bottom="location === 'download' ? t('download_file') : t('start_export')"
-					rounded
-					icon
+			<template #actions:primary>
+				<PrivateViewHeaderBarActionButton
+					:label="location === 'download' ? $t('download_file') : $t('start_export')"
 					:loading="exporting"
+					:disabled="exportBlocked"
+					:icon="location === 'download' ? 'download' : 'start'"
 					@click="startExport"
-				>
-					<v-icon :name="location === 'download' ? 'download' : 'start'" />
-				</v-button>
+				/>
 			</template>
+
 			<div class="export-fields">
 				<div class="field half-left">
-					<p class="type-label">{{ t('format') }}</p>
-					<v-select
+					<p class="type-label">{{ $t('format') }}</p>
+					<VSelect
 						v-model="format"
 						:items="[
 							{
-								text: t('csv'),
+								text: $t('csv'),
 								value: 'csv',
 							},
 							{
-								text: t('json'),
+								text: $t('csv_utf8'),
+								value: 'csv_utf8',
+							},
+							{
+								text: $t('json'),
 								value: 'json',
 							},
 							{
-								text: t('xml'),
+								text: $t('xml'),
 								value: 'xml',
 							},
 							{
-								text: t('yaml'),
+								text: $t('yaml'),
 								value: 'yaml',
 							},
 						]"
@@ -480,41 +576,37 @@ async function exportDataFiles() {
 				</div>
 
 				<div class="field half-right">
-					<p class="type-label">{{ t('limit') }}</p>
-					<v-input v-model="exportSettings.limit" type="number" :min="-1" :step="1" :placeholder="t('unlimited')" />
+					<p class="type-label">{{ $t('limit') }}</p>
+					<VInput v-model="exportSettings.limit" type="number" :min="-1" :step="1" :placeholder="$t('unlimited')" />
 				</div>
 
 				<div class="field half-left">
-					<p class="type-label">{{ t('export_location') }}</p>
-					<v-select
-						v-model="location"
-						:disabled="lockedToFiles !== null"
-						:items="[
-							{ value: 'download', text: t('download_file') },
-							{ value: 'files', text: t('file_library') },
-						]"
-					/>
+					<p class="type-label">{{ $t('export_location') }}</p>
+					<VSelect v-model="location" :disabled="lockedToFiles !== null" :items="locationOptions" />
 				</div>
 
 				<div class="field half-right">
-					<p class="type-label">{{ t('folder') }}</p>
-					<folder-picker v-if="location === 'files'" v-model="folder" />
-					<v-notice v-else>{{ t('not_available_for_local_downloads') }}</v-notice>
+					<p class="type-label">{{ $t('folder') }}</p>
+					<FolderPicker v-if="location === 'files' && readFoldersAllowed" v-model="folder" type="files" />
+					<VNotice v-else-if="location === 'files'" class="folder-not-selectable-notice">
+						{{ folder ? $t('exporting_folder_not_selectable') : $t('exporting_folder_root') }}
+					</VNotice>
+					<VNotice v-else>{{ $t('not_available_for_local_downloads') }}</VNotice>
 				</div>
 
-				<v-notice class="full" :type="lockedToFiles ? 'warning' : 'normal'">
+				<VNotice class="full" :type="exportBlocked ? 'danger' : lockedToFiles ? 'warning' : undefined">
 					<div>
 						<p v-if="itemCountLoading">
-							{{ t('loading') }}
+							{{ $t('loading') }}
 						</p>
 
 						<p v-else-if="exportCount === 0">
-							{{ t('exporting_no_items_to_export') }}
+							{{ $t('exporting_no_items_to_export') }}
 						</p>
 
 						<p v-else-if="itemCountTotal && exportCount >= itemCountTotal">
 							{{
-								t('exporting_all_items_in_collection', {
+								$t('exporting_all_items_in_collection', {
 									total: itemCountTotal ? n(itemCountTotal) : '??',
 									collection: collectionInfo?.name,
 								})
@@ -523,7 +615,7 @@ async function exportDataFiles() {
 
 						<p v-else-if="itemCountTotal && exportCount < itemCountTotal">
 							{{
-								t('exporting_limited_items_in_collection', {
+								$t('exporting_limited_items_in_collection', {
 									count: n(exportCount),
 									total: itemCountTotal ? n(itemCountTotal) : '??',
 									collection: collectionInfo?.name,
@@ -531,74 +623,103 @@ async function exportDataFiles() {
 							}}
 						</p>
 
-						<p v-if="lockedToFiles">
-							{{ t('exporting_library_hint_forced', { format: t(format) }) }}
+						<p v-if="exportBlocked" class="export-blocked-hint">
+							{{ $t('exporting_too_large_to_download') }}
+						</p>
+
+						<p v-else-if="lockedToFiles">
+							{{ $t('exporting_library_hint_forced', { format: $t(format) }) }}
 						</p>
 
 						<p v-else-if="location === 'files'">
-							{{ t('exporting_library_hint', { format: t(format) }) }}
+							{{ $t('exporting_library_hint', { format: $t(format) }) }}
 						</p>
 
 						<p v-else>
-							{{ t('exporting_download_hint', { format: t(format) }) }}
+							{{ $t('exporting_download_hint', { format: $t(format) }) }}
 						</p>
 					</div>
-				</v-notice>
+				</VNotice>
 
-				<v-divider />
+				<VNotice v-if="location === 'files'" class="full files-access-notice" type="warning">
+					<I18nT keypath="exporting_library_access_warning" tag="span">
+						<template #docs>
+							<a :href="DIRECTUS_SECURITY_BEST_PRACTICES_URL" target="_blank" rel="noopener noreferrer">
+								{{ $t('public_policy_warning_docs_link') }}
+							</a>
+						</template>
+					</I18nT>
+				</VNotice>
+
+				<VDivider />
 
 				<div class="field half-left">
-					<p class="type-label">{{ t('sort_field') }}</p>
-					<interface-system-field
+					<p class="type-label">{{ $t('sort_field') }}</p>
+					<InterfaceSystemField
 						:value="sortField"
 						:collection-name="collection"
 						allow-primary-key
-						@input="sortField = $event"
+						@input="sortField = $event ?? ''"
 					/>
 				</div>
 				<div class="field half-right">
-					<p class="type-label">{{ t('sort_direction') }}</p>
-					<v-select
+					<p class="type-label">{{ $t('sort_direction') }}</p>
+					<VSelect
 						v-model="sortDirection"
 						:items="[
-							{ value: 'ASC', text: t('sort_asc') },
-							{ value: 'DESC', text: t('sort_desc') },
+							{ value: 'ASC', text: $t('sort_asc') },
+							{ value: 'DESC', text: $t('sort_desc') },
 						]"
 					/>
 				</div>
 
 				<div class="field full">
-					<p class="type-label">{{ t('full_text_search') }}</p>
-					<v-input v-model="exportSettings.search" :placeholder="t('search')" />
+					<p class="type-label">{{ $t('full_text_search') }}</p>
+					<VInput v-model="exportSettings.search" :placeholder="$t('search')" />
 				</div>
 				<div class="field full">
-					<p class="type-label">{{ t('filter') }}</p>
-					<interface-system-filter
+					<p class="type-label">{{ $t('filter') }}</p>
+					<InterfaceSystemFilter
 						:value="exportSettings.filter"
 						:collection-name="collection"
 						@input="exportSettings.filter = $event"
 					/>
 				</div>
 				<div class="field full">
-					<p class="type-label">{{ t('field', 2) }}</p>
-					<interface-system-fields
+					<p class="type-label">{{ $t('field', 2) }}</p>
+					<InterfaceSystemFields
 						:value="exportSettings.fields"
 						:collection-name="collection"
+						:field-filter="isExportableField"
 						allow-select-all
 						@input="exportSettings.fields = $event"
 					/>
 				</div>
 			</div>
-		</v-drawer>
-	</sidebar-detail>
+		</VDrawer>
+
+		<ImportErrorDialog v-model="errorDialogActive" :errors="errorDialogRows" :collection="collection" />
+	</SidebarDetail>
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
+
+.v-list-item {
+	&:focus-within,
+	&:focus-visible {
+		outline: var(--focus-ring-width) solid var(--theme--form--field--input--focus-ring-color);
+		outline-offset: var(--focus-ring-offset-invert);
+	}
+}
+
+.item-actions {
+	@include mixins.list-interface-item-actions;
+}
 
 .fields,
 .export-fields {
-	@include form-grid;
+	@include mixins.form-grid;
 
 	.v-divider {
 		grid-column: 1 / span 2;
@@ -606,24 +727,35 @@ async function exportDataFiles() {
 }
 
 .fields {
-	--theme--form--row-gap: 24px;
+	--theme--form--row-gap: 1.375rem;
 
 	.type-label {
-		font-size: 1rem;
+		font-size: 0.8125rem;
 	}
+}
+
+.import-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 0.125rem;
 }
 
 .export-fields {
 	--folder-picker-background-color: var(--theme--background-subdued);
 	--folder-picker-color: var(--theme--background-normal);
 
-	margin-top: 24px;
+	margin-block-start: 1.375rem;
 	padding: var(--content-padding);
 }
 
+.files-access-notice a {
+	text-decoration: underline;
+	color: var(--theme--primary);
+}
+
 .v-checkbox {
-	width: 100%;
-	margin-top: 8px;
+	inline-size: 100%;
+	margin-block-start: 0.4375rem;
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
@@ -636,10 +768,9 @@ async function exportDataFiles() {
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
-	height: var(--theme--form--field--input--height);
+	block-size: var(--theme--form--field--input--height);
 	padding: var(--theme--form--field--input--padding);
-	padding-top: 0;
-	padding-bottom: 0;
+	padding-block: 0;
 	color: var(--white);
 	background-color: var(--theme--primary);
 	border: var(--theme--border-width) solid var(--theme--primary);
@@ -648,12 +779,12 @@ async function exportDataFiles() {
 	.type-text {
 		display: flex;
 		justify-content: space-between;
-		margin-bottom: 4px;
+		margin-block-end: 0.25rem;
 		color: var(--white);
 	}
 
 	.v-progress-linear {
-		margin-bottom: 4px;
+		margin-block-end: 0.25rem;
 	}
 }
 
@@ -663,9 +794,9 @@ async function exportDataFiles() {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 40px;
-	height: 40px;
-	margin-left: -8px;
+	inline-size: 2.25rem;
+	block-size: 2.25rem;
+	margin-inline-start: -0.4375rem;
 	overflow: hidden;
 	background-color: var(--theme--background-normal);
 	border-radius: var(--theme--border-radius);
@@ -678,20 +809,8 @@ async function exportDataFiles() {
 .extension {
 	color: var(--theme--primary);
 	font-weight: 600;
-	font-size: 11px;
+	font-size: 0.625rem;
 	text-transform: uppercase;
-}
-
-.import-file-label {
-	position: absolute;
-	top: 0;
-	left: 0;
-	display: block;
-	width: 100%;
-	height: 100%;
-	cursor: pointer;
-	opacity: 0;
-	appearance: none;
 }
 
 .import-file-text {
@@ -714,8 +833,8 @@ async function exportDataFiles() {
 	color: var(--theme--foreground-subdued);
 	text-align: center;
 	display: block;
-	width: 100%;
-	margin-top: 8px;
+	inline-size: 100%;
+	margin-block-start: 0.4375rem;
 	transition: color var(--fast) var(--transition);
 
 	&:hover {

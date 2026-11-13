@@ -9,6 +9,7 @@ export interface Column {
 
 	is_nullable: boolean;
 	is_unique: boolean;
+	is_indexed: boolean;
 	is_primary_key: boolean;
 	is_generated: boolean;
 	generation_expression?: string | null;
@@ -23,3 +24,8 @@ export interface Column {
 	schema?: string;
 	foreign_key_schema?: string | null;
 }
+
+export type TableColumn = {
+	table: string;
+	column: string;
+};

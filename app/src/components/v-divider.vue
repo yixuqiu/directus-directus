@@ -19,9 +19,9 @@ withDefaults(defineProps<Props>(), {
 	<div class="v-divider" :class="{ vertical, inlineTitle, large }">
 		<span v-if="$slots.icon || $slots.default" class="wrapper">
 			<slot name="icon" class="icon" />
-			<span v-if="!vertical && $slots.default" class="type-text"><slot /></span>
+			<span v-if="!vertical && $slots.default" class="text" :class="{ 'type-display': large }"><slot /></span>
 		</span>
-		<hr role="separator" :aria-orientation="vertical ? 'vertical' : 'horizontal'" />
+		<hr :aria-orientation="vertical ? 'vertical' : 'horizontal'" />
 	</div>
 </template>
 
@@ -37,9 +37,7 @@ withDefaults(defineProps<Props>(), {
 */
 
 .v-divider {
-	flex-basis: 0px;
-	flex-grow: 1;
-	flex-shrink: 1;
+	flex: 1 1 0;
 	flex-wrap: wrap;
 	align-items: center;
 	overflow: visible;
@@ -47,8 +45,8 @@ withDefaults(defineProps<Props>(), {
 	hr {
 		flex-grow: 1;
 		order: 1;
-		max-width: 100%;
-		margin-top: 8px;
+		max-inline-size: 100%;
+		margin-block-start: 0.4375rem;
 		border: solid;
 		border-color: var(--v-divider-color, var(--theme--form--field--input--border-color));
 		border-width: var(--v-divider-thickness, var(--theme--border-width)) 0 0 0;
@@ -56,25 +54,22 @@ withDefaults(defineProps<Props>(), {
 
 	span.wrapper {
 		display: flex;
+		align-items: center;
 		color: var(--v-divider-label-color, var(--theme--foreground-accent));
 
 		:slotted(.v-icon) {
-			margin-right: 4px;
-			transform: translateY(-1px);
+			margin-inline-end: 0.25rem;
 		}
 	}
 
-	.type-text {
-		width: 100%;
+	.text {
+		inline-size: 100%;
 		color: var(--v-divider-label-color, var(--theme--foreground-accent));
-		font-weight: 600;
 		transition: color var(--fast) var(--transition);
-	}
 
-	&.large .type-text {
-		font-size: 24px;
-		font-weight: var(--theme--fonts--display--font-weight);
-		font-family: var(--theme--fonts--display--font-family);
+		&:not(.type-display) {
+			font-weight: 600;
+		}
 	}
 
 	&.inlineTitle {
@@ -82,9 +77,9 @@ withDefaults(defineProps<Props>(), {
 
 		span.wrapper {
 			order: 0;
-			margin-right: 8px;
+			margin-inline-end: 0.4375rem;
 			font-weight: 600;
-			font-size: 14px;
+			font-size: 0.8125rem;
 		}
 
 		hr {
@@ -96,17 +91,17 @@ withDefaults(defineProps<Props>(), {
 		display: inline-flex;
 		flex-direction: column;
 		align-self: stretch;
-		height: 100%;
+		block-size: 100%;
 
 		hr {
-			width: 0px;
-			max-width: 0px;
+			inline-size: 0;
+			max-inline-size: 0;
 			border-width: 0 var(--theme--border-width) 0 0;
 		}
 
 		span.wrapper {
 			order: 0;
-			margin: 0 0 8px;
+			margin: 0 0 0.4375rem;
 		}
 	}
 }

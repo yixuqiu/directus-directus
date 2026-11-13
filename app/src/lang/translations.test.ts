@@ -1,10 +1,9 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
-
-import { importDateLocale } from '@/utils/get-date-fns-locale';
 import { format } from 'date-fns';
-import { merge } from 'lodash';
+import { merge } from 'lodash-es';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createI18n } from 'vue-i18n';
 import availableLanguages from './available-languages.yaml';
+import { importDateLocale } from '@/utils/get-date-fns-locale';
 
 const locales = Object.keys(availableLanguages).sort();
 const consoleErrorSpy = vi.spyOn(console, 'error');
@@ -43,7 +42,7 @@ async function importLanguageFile(locale: string): Promise<{ isImported: boolean
 	try {
 		const { default: translations } = await import(`./translations/${locale}.yaml`);
 		return { isImported: true, translations };
-	} catch (e) {
+	} catch {
 		return { isImported: false, translations: {} };
 	}
 }

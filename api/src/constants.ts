@@ -1,7 +1,6 @@
-import type { CookieOptions } from 'express';
-import type { TransformationParams } from './types/index.js';
-import { getMilliseconds } from './utils/get-milliseconds.js';
 import { useEnv } from '@directus/env';
+import type { Settings, TransformationParams } from '@directus/types';
+import type { CookieOptions } from 'express';
 
 const env = useEnv();
 
@@ -55,31 +54,34 @@ export const FILTER_VARIABLES = ['$NOW', '$CURRENT_USER', '$CURRENT_ROLE'];
 
 export const ALIAS_TYPES = ['alias', 'o2m', 'm2m', 'm2a', 'o2a', 'files', 'translations'];
 
+export const SNAPSHOT_VERSION = {
+	FULL: 1,
+	PARTIAL: 2,
+} as const;
+
 export const DEFAULT_AUTH_PROVIDER = 'default';
 
 export const COLUMN_TRANSFORMS = ['year', 'month', 'day', 'weekday', 'hour', 'minute', 'second'];
-
-export const GENERATE_SPECIAL = ['uuid', 'date-created', 'role-created', 'user-created'];
 
 export const UUID_REGEX = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 
 export const REFRESH_COOKIE_OPTIONS: CookieOptions = {
 	httpOnly: true,
-	domain: env['REFRESH_TOKEN_COOKIE_DOMAIN'] as string,
-	maxAge: getMilliseconds(env['REFRESH_TOKEN_TTL'] as string),
-	secure: Boolean(env['REFRESH_TOKEN_COOKIE_SECURE']),
-	sameSite: (env['REFRESH_TOKEN_COOKIE_SAME_SITE'] || 'strict') as 'lax' | 'strict' | 'none',
+	domain: env.REFRESH_TOKEN_COOKIE_DOMAIN,
+	maxAge: env.REFRESH_TOKEN_TTL,
+	secure: env.REFRESH_TOKEN_COOKIE_SECURE,
+	sameSite: env.REFRESH_TOKEN_COOKIE_SAME_SITE as 'lax' | 'strict' | 'none',
 };
 
 export const SESSION_COOKIE_OPTIONS: CookieOptions = {
 	httpOnly: true,
-	domain: env['SESSION_COOKIE_DOMAIN'] as string,
-	maxAge: getMilliseconds(env['SESSION_COOKIE_TTL'] as string),
-	secure: Boolean(env['SESSION_COOKIE_SECURE']),
-	sameSite: (env['SESSION_COOKIE_SAME_SITE'] || 'strict') as 'lax' | 'strict' | 'none',
+	domain: env.SESSION_COOKIE_DOMAIN,
+	maxAge: env.SESSION_COOKIE_TTL,
+	secure: env.SESSION_COOKIE_SECURE,
+	sameSite: env.SESSION_COOKIE_SAME_SITE as 'lax' | 'strict' | 'none',
 };
 
-export const OAS_REQUIRED_SCHEMAS = ['Query', 'x-metadata'];
+export const OAS_REQUIRED_SCHEMAS = ['Error', 'Query', 'Metadata'];
 
 /** Formats from which transformation is supported */
 export const SUPPORTED_IMAGE_TRANSFORM_FORMATS = ['image/jpeg', 'image/png', 'image/webp', 'image/tiff', 'image/avif'];
@@ -92,4 +94,66 @@ export const SUPPORTED_IMAGE_METADATA_FORMATS = [
 	'image/gif',
 	'image/tiff',
 	'image/avif',
+];
+
+/** File uploads */
+export const FILE_UPLOADS = {
+	MAX_SIZE: env.FILES_MAX_UPLOAD_SIZE,
+	MAX_CONCURRENCY: env.FILES_MAX_UPLOAD_CONCURRENCY,
+};
+
+/** Extensions */
+export const EXTENSIONS = {
+	/** p-queue requires a number >=1 or throws type error */
+	STORAGE_MAX_CONCURRENCY: env.EXTENSIONS_STORAGE_MAX_CONCURRENCY >= 1 ? env.EXTENSIONS_STORAGE_MAX_CONCURRENCY : 20,
+};
+
+/** Resumable uploads (TUS) */
+export const RESUMABLE_UPLOADS = {
+	ENABLED: env.TUS_ENABLED,
+	CHUNK_SIZE: env.TUS_CHUNK_SIZE,
+	EXPIRATION_TIME: env.TUS_UPLOAD_EXPIRATION,
+	SCHEDULE: env.TUS_CLEANUP_SCHEDULE,
+};
+
+export const ALLOWED_DB_DEFAULT_FUNCTIONS = ['gen_random_uuid()', 'uuidv7()'];
+
+export const CUSTOM_LLM_FIELDS = [
+	'ai_openai_compatible_api_key',
+	'ai_openai_compatible_base_url',
+	'ai_openai_compatible_name',
+	'ai_openai_compatible_models',
+	'ai_openai_compatible_headers',
+] as const satisfies readonly (keyof Settings)[];
+
+/**
+ * Key paths redacted from flow logs. Secrets under `body` and `payload` match at any depth, since the sender controls
+ * their shape
+ */
+export const FLOW_SECRET_KEYS: string[][] = [
+	['**', 'headers', 'authorization'],
+	['**', 'headers', 'cookie'],
+	['**', 'query', 'access_token'],
+	['**', 'payload', '**', 'password'],
+	['**', 'payload', '**', 'token'],
+	['**', 'payload', '**', 'tfa_secret'],
+	['**', 'payload', '**', 'external_identifier'],
+	['**', 'payload', '**', 'auth_data'],
+	['**', 'payload', '**', 'credentials'],
+	['**', 'payload', '**', 'ai_openai_api_key'],
+	['**', 'payload', '**', 'ai_anthropic_api_key'],
+	['**', 'payload', '**', 'ai_google_api_key'],
+	['**', 'payload', '**', 'ai_openrouter_api_key'],
+	['**', 'payload', '**', 'ai_openai_compatible_api_key'],
+	['**', 'body', '**', 'password'],
+	['**', 'body', '**', 'token'],
+	['**', 'body', '**', 'tfa_secret'],
+	['**', 'body', '**', 'external_identifier'],
+	['**', 'body', '**', 'auth_data'],
+	['**', 'body', '**', 'credentials'],
+	['**', 'body', '**', 'ai_openai_api_key'],
+	['**', 'body', '**', 'ai_anthropic_api_key'],
+	['**', 'body', '**', 'ai_google_api_key'],
+	['**', 'body', '**', 'ai_openrouter_api_key'],
+	['**', 'body', '**', 'ai_openai_compatible_api_key'],
 ];

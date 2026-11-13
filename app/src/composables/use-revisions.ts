@@ -1,38 +1,55 @@
+import { Action } from '@directus/constants';
+import type { Filter } from '@directus/types';
+import { format, isThisYear, isToday, isYesterday, parseISO } from 'date-fns';
+import { groupBy, orderBy } from 'lodash-es';
+import { Ref, ref, unref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import api from '@/api';
 import { useServerStore } from '@/stores/server';
-import type { Revision, RevisionWithTime, RevisionsByDate } from '@/types/revisions';
+import type { Revision, RevisionPartial, RevisionsByDate, RevisionWithTime } from '@/types/revisions';
+import type { ContentVersionWithType } from '@/types/versions';
 import { localizedFormat } from '@/utils/localized-format';
 import { localizedFormatDistance } from '@/utils/localized-format-distance';
 import { unexpectedError } from '@/utils/unexpected-error';
-import { Action } from '@directus/constants';
-import type { ContentVersion, Filter } from '@directus/types';
-import { format, isThisYear, isToday, isYesterday, parseISO } from 'date-fns';
-import { groupBy, orderBy } from 'lodash';
-import { Ref, ref, unref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
 
 type UseRevisionsOptions = {
 	action?: Action;
+	full?: boolean;
+	disabled?: Ref<boolean>;
 };
 
 export function useRevisions(
 	collection: Ref<string>,
 	primaryKey: Ref<number | string>,
-	version: Ref<ContentVersion | null | undefined>,
+	version: Ref<ContentVersionWithType | null | undefined>,
 	options?: UseRevisionsOptions,
 ) {
 	const { t } = useI18n();
 	const { info } = useServerStore();
 
-	const revisions = ref<Revision[] | null>(null);
+	const revisions = ref<RevisionPartial[] | null>(null);
 	const revisionsByDate = ref<RevisionsByDate[] | null>(null);
 	const loading = ref(false);
 	const loadingCount = ref(false);
 	const revisionsCount = ref(0);
-	const created = ref<Revision>();
+	const created = ref<{ id: number }>();
 	const pagesCount = ref(0);
 
-	watch([collection, primaryKey, version], () => refresh());
+	watch([collection, primaryKey, version], () => {
+		if (options?.disabled?.value) {
+			reset();
+			return;
+		}
+
+		refresh();
+	});
+
+	function reset() {
+		revisions.value = [];
+		revisionsByDate.value = [];
+		revisionsCount.value = 0;
+		pagesCount.value = 0;
+	}
 
 	return {
 		created,
@@ -49,6 +66,7 @@ export function useRevisions(
 
 	async function getRevisions(page = 0) {
 		if (typeof unref(primaryKey) === 'undefined') return;
+		if (options?.disabled?.value) return;
 
 		loading.value = true;
 		const pageSize = info.queryLimit?.max && info.queryLimit.max !== -1 ? Math.min(10, info.queryLimit.max) : 10;
@@ -70,7 +88,7 @@ export function useRevisions(
 						version: version?.value
 							? {
 									_eq: version.value.id,
-							  }
+								}
 							: { _null: true },
 					},
 				],
@@ -86,7 +104,7 @@ export function useRevisions(
 				});
 			}
 
-			type RevisionResponse = { data: Revision[]; meta: { filter_count: number } };
+			type RevisionResponse = { data: Revision[] | RevisionPartial[]; meta: { filter_count: number } };
 
 			const response = await api.get<RevisionResponse>(`/revisions`, {
 				params: {
@@ -96,8 +114,6 @@ export function useRevisions(
 					page,
 					fields: [
 						'id',
-						'data',
-						'delta',
 						'collection',
 						'item',
 						'activity.action',
@@ -109,12 +125,13 @@ export function useRevisions(
 						'activity.ip',
 						'activity.user_agent',
 						'activity.origin',
+						...(options?.full ? ['data', 'delta'] : []),
 					],
 				},
 			});
 
 			if (!created.value) {
-				const createdResponse = await api.get<RevisionResponse>(`/revisions`, {
+				const createdResponse = await api.get<{ data: { id: number }[] }>(`/revisions`, {
 					params: {
 						filter: {
 							collection: {
@@ -132,22 +149,7 @@ export function useRevisions(
 						},
 						sort: '-id',
 						limit: 1,
-						fields: [
-							'id',
-							'data',
-							'delta',
-							'collection',
-							'item',
-							'activity.action',
-							'activity.timestamp',
-							'activity.user.id',
-							'activity.user.email',
-							'activity.user.first_name',
-							'activity.user.last_name',
-							'activity.ip',
-							'activity.user_agent',
-							'activity.origin',
-						],
+						fields: ['id'],
 					},
 				});
 
@@ -181,16 +183,22 @@ export function useRevisions(
 				const revisions: RevisionWithTime[] = [];
 
 				for (const revision of value) {
+					const steps = (revision as Revision)?.data?.steps;
+					const lastStepStatus = steps?.[steps.length - 1]?.status;
+
 					revisions.push({
 						...revision,
-						timestampFormatted: await getFormattedDate(revision.activity?.timestamp),
-						timeRelative: `${getTime(revision.activity?.timestamp)} (${localizedFormatDistance(
-							parseISO(revision.activity?.timestamp),
-							new Date(),
-							{
-								addSuffix: true,
-							},
-						)})`,
+						timestampFormatted: `${localizedFormat(
+							new Date(revision.activity?.timestamp),
+							String(t('date-fns_date_short')),
+						)} (${localizedFormat(new Date(revision.activity?.timestamp), String(t('date-fns_time')))})`,
+						timeRelative: `${format(
+							new Date(revision.activity?.timestamp),
+							String(t('date-fns_time')),
+						)} (${localizedFormatDistance(parseISO(revision.activity?.timestamp), new Date(), {
+							addSuffix: true,
+						})})`,
+						status: lastStepStatus,
 					});
 				}
 
@@ -213,6 +221,7 @@ export function useRevisions(
 
 	async function getRevisionsCount() {
 		if (typeof unref(primaryKey) === 'undefined') return;
+		if (options?.disabled?.value) return;
 
 		loadingCount.value = true;
 
@@ -233,7 +242,7 @@ export function useRevisions(
 						version: version?.value
 							? {
 									_eq: version.value.id,
-							  }
+								}
 							: { _null: true },
 					},
 				],
@@ -269,16 +278,5 @@ export function useRevisions(
 	async function refresh(page = 0) {
 		await getRevisionsCount();
 		await getRevisions(page);
-	}
-
-	function getTime(timestamp: string) {
-		return format(new Date(timestamp), String(t('date-fns_time')));
-	}
-
-	async function getFormattedDate(timestamp: string) {
-		const date = localizedFormat(new Date(timestamp), String(t('date-fns_date_short')));
-		const time = localizedFormat(new Date(timestamp), String(t('date-fns_time')));
-
-		return `${date} (${time})`;
 	}
 }

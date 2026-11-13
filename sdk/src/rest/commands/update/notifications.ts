@@ -1,7 +1,7 @@
 import type { DirectusNotification } from '../../../schema/notification.js';
-import type { ApplyQueryFields, Query } from '../../../types/index.js';
-import { throwIfEmpty } from '../../utils/index.js';
+import type { ApplyQueryFields, NestedPartial, Query } from '../../../types/index.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfEmpty } from '../../utils/index.js';
 
 export type UpdateNotificationOutput<
 	Schema,
@@ -20,7 +20,7 @@ export type UpdateNotificationOutput<
 export const updateNotifications =
 	<Schema, const TQuery extends Query<Schema, DirectusNotification<Schema>>>(
 		keys: DirectusNotification<Schema>['id'][],
-		item: Partial<DirectusNotification<Schema>>,
+		item: NestedPartial<DirectusNotification<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateNotificationOutput<Schema, TQuery>[], Schema> =>
 	() => {
@@ -35,6 +35,24 @@ export const updateNotifications =
 	};
 
 /**
+ * Update multiple notifications as batch.
+ * @param items
+ * @param query
+ * @returns Returns the notification objects for the updated notifications.
+ */
+export const updateNotificationsBatch =
+	<Schema, const TQuery extends Query<Schema, DirectusNotification<Schema>>>(
+		items: NestedPartial<DirectusNotification<Schema>>[],
+		query?: TQuery,
+	): RestCommand<UpdateNotificationOutput<Schema, TQuery>[], Schema> =>
+	() => ({
+		path: `/notifications`,
+		params: query ?? {},
+		body: JSON.stringify(items),
+		method: 'PATCH',
+	});
+
+/**
  * Update an existing notification.
  * @param key
  * @param item
@@ -45,7 +63,7 @@ export const updateNotifications =
 export const updateNotification =
 	<Schema, const TQuery extends Query<Schema, DirectusNotification<Schema>>>(
 		key: DirectusNotification<Schema>['id'],
-		item: Partial<DirectusNotification<Schema>>,
+		item: NestedPartial<DirectusNotification<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateNotificationOutput<Schema, TQuery>, Schema> =>
 	() => {

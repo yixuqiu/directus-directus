@@ -1,20 +1,38 @@
 <script setup lang="ts">
-import api from '@/api';
-import { useCollectionPermissions } from '@/composables/use-permissions';
-import { unexpectedError } from '@/utils/unexpected-error';
-import { ContentVersion } from '@directus/types';
-import { isNil } from 'lodash';
-import { ref, toRefs, unref } from 'vue';
+import { VERSION_KEY_DRAFT } from '@directus/constants';
+import type { ContentVersion, PrimaryKey } from '@directus/types';
+import slugify from '@sindresorhus/slugify';
+import { computed, ref, toRefs, unref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import VersionPromoteDrawer from './version-promote-drawer.vue';
+import VersionChip from './version-chip.vue';
+import api from '@/api';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VDivider from '@/components/v-divider.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VMenu from '@/components/v-menu.vue';
+import VTextOverflow from '@/components/v-text-overflow.vue';
+import { useCollectionPermissions } from '@/composables/use-permissions';
+import type { ContentVersionMaybeNew } from '@/types/versions';
+import { getVersionDisplayName } from '@/utils/get-version-display-name';
+import { unexpectedError } from '@/utils/unexpected-error';
 
 interface Props {
 	collection: string;
-	primaryKey: string | number;
-	updateAllowed: boolean;
+	primaryKey: PrimaryKey | null;
 	hasEdits: boolean;
-	currentVersion: ContentVersion | null;
-	versions: ContentVersion[] | null;
+	currentVersion: ContentVersionMaybeNew | null;
+	versions: ContentVersionMaybeNew[];
+	deleteVersionLoading?: boolean;
 }
 
 const props = defineProps<Props>();
@@ -22,36 +40,53 @@ const props = defineProps<Props>();
 const emit = defineEmits<{
 	add: [version: ContentVersion];
 	update: [updates: { key: string; name?: string | null }];
-	delete: [];
-	switch: [version: ContentVersion | null];
+	delete: [versionId: PrimaryKey];
+	switch: [version: ContentVersionMaybeNew | null];
 }>();
+
+const { collection, primaryKey, hasEdits, currentVersion, versions, deleteVersionLoading } = toRefs(props);
 
 const { t } = useI18n();
 
-const { collection, primaryKey, hasEdits, currentVersion } = toRefs(props);
-
-const isVersionPromoteDrawerOpen = ref(false);
+const draftVersion = computed(() => versions.value.find((version) => version.key === VERSION_KEY_DRAFT));
+const localVersions = computed(() => versions.value.filter((version) => version.type === 'local'));
 
 const {
 	createAllowed: createVersionsAllowed,
+	readAllowed: readVersionsAllowed,
 	updateAllowed: updateVersionsAllowed,
 	deleteAllowed: deleteVersionsAllowed,
 } = useCollectionPermissions('directus_versions');
 
 const { switchDialogActive, switchTarget, switchVersion } = useSwitchDialog();
 
-const { createDialogActive, newVersionKey, newVersionName, closeCreateDialog, creating, createVersion } =
-	useCreateDialog();
+const {
+	createDialogActive,
+	newVersionKey,
+	newVersionName,
+	closeCreateDialog,
+	creating,
+	isCreateDisabled,
+	createVersion,
+} = useCreateDialog();
 
-const { renameDialogActive, openRenameDialog, closeRenameDialog, updating, renameVersion } = useRenameDialog();
-
-const { deleting, deleteVersion } = useDelete();
+const { renameDialogActive, openRenameDialog, closeRenameDialog, updating, renameVersion, isRenameDisabled } =
+	useRenameDialog();
 
 const { deleteDialogActive, onDeleteVersion } = useDeleteDialog();
 
+const { isCurrentVersionGlobal, isCurrentVersionNew, canAccessGlobalVersion, isVersionKeyGlobal, isVersionNew } =
+	useGlobalVersions();
+
+const isNewItem = computed(() => primaryKey.value === '+');
+
+const newVersionKeyReservedTooltip = computed(() =>
+	isVersionKeyGlobal(newVersionKey.value) ? t('reserved_version_key', { key: newVersionKey.value }) : undefined,
+);
+
 function useSwitchDialog() {
 	const switchDialogActive = ref(false);
-	const switchTarget = ref<ContentVersion | null>(null);
+	const switchTarget = ref<ContentVersionMaybeNew | null>(null);
 
 	return {
 		switchDialogActive,
@@ -59,7 +94,7 @@ function useSwitchDialog() {
 		switchVersion,
 	};
 
-	function switchVersion(version?: ContentVersion | null) {
+	function switchVersion(version?: ContentVersionMaybeNew | null) {
 		if (version !== undefined) switchTarget.value = version;
 
 		if (hasEdits.value && !switchDialogActive.value) {
@@ -76,17 +111,39 @@ function useCreateDialog() {
 	const creating = ref(false);
 	const newVersionKey = ref<string | null>(null);
 	const newVersionName = ref<string | null>(null);
+	const isCreateDisabled = computed(() => newVersionKey.value === null || isVersionKeyGlobal(newVersionKey.value));
+
+	watch(
+		newVersionName,
+		(newName, oldName) => {
+			if (
+				newName === null ||
+				newVersionKey.value ===
+					slugify(oldName ?? '', {
+						separator: '-',
+					})
+			) {
+				newVersionKey.value = slugify(newName ?? '', {
+					separator: '-',
+				});
+			}
+		},
+		{ immediate: true },
+	);
 
 	return {
 		newVersionKey,
 		newVersionName,
 		createDialogActive,
 		creating,
+		isCreateDisabled,
 		createVersion,
 		closeCreateDialog,
 	};
 
 	async function createVersion() {
+		if (isCreateDisabled.value || creating.value || !newVersionKey.value) return;
+
 		if (!unref(primaryKey) || unref(primaryKey) === '+') return;
 
 		creating.value = true;
@@ -95,10 +152,10 @@ function useCreateDialog() {
 			const {
 				data: { data: version },
 			} = await api.post(`/versions`, {
-				key: unref(newVersionKey),
-				...(unref(newVersionName) ? { name: unref(newVersionName) } : {}),
-				collection: unref(collection),
-				item: unref(primaryKey),
+				key: newVersionKey.value,
+				name: isVersionKeyGlobal(newVersionKey.value) ? null : (newVersionName.value ?? null),
+				collection: collection.value,
+				item: String(primaryKey.value),
 			});
 
 			emit('add', version);
@@ -122,26 +179,38 @@ function useRenameDialog() {
 	const renameDialogActive = ref(false);
 	const updating = ref(false);
 
+	const isRenameDisabled = computed(
+		() =>
+			((newVersionKey.value === null || newVersionKey.value === currentVersion.value?.key) &&
+				newVersionName.value === currentVersion.value?.name) ||
+			isVersionKeyGlobal(newVersionKey.value) ||
+			!unref(primaryKey) ||
+			unref(primaryKey) === '+' ||
+			!newVersionKey.value ||
+			isCurrentVersionGlobal.value,
+	);
+
 	return {
 		renameDialogActive,
 		updating,
+		isRenameDisabled,
 		renameVersion,
 		openRenameDialog,
 		closeRenameDialog,
 	};
 
 	async function renameVersion() {
-		if (!unref(primaryKey) || unref(primaryKey) === '+' || !newVersionKey.value) return;
+		if (isRenameDisabled.value || updating.value || newVersionKey.value === null || !currentVersion.value?.id) return;
 
 		updating.value = true;
 
 		try {
 			const updates = {
 				key: newVersionKey.value,
-				...(newVersionName.value !== currentVersion.value?.name && { name: newVersionName.value }),
+				name: isVersionKeyGlobal(newVersionKey.value) ? null : newVersionName.value,
 			};
 
-			await api.patch(`/versions/${unref(currentVersion)!.id}`, updates);
+			await api.patch(`/versions/${currentVersion.value.id}`, updates);
 
 			emit('update', updates);
 
@@ -167,291 +236,323 @@ function useRenameDialog() {
 	}
 }
 
-function useDelete() {
-	const deleting = ref(false);
-
-	return {
-		deleting,
-		deleteVersion,
-	};
-
-	async function deleteVersion() {
-		if (!currentVersion.value) return;
-
-		deleting.value = true;
-
-		try {
-			await api.delete(`/versions/${currentVersion.value.id}`);
-
-			emit('delete');
-		} catch (error) {
-			unexpectedError(error);
-		} finally {
-			deleting.value = false;
-		}
-	}
-}
-
 function useDeleteDialog() {
 	const deleteDialogActive = ref(false);
 
-	return {
-		deleteDialogActive,
-		onDeleteVersion,
-	};
+	return { deleteDialogActive, onDeleteVersion };
 
 	async function onDeleteVersion() {
-		await deleteVersion();
+		const versionId = currentVersion.value?.id;
+		if (!versionId || deleteVersionLoading.value) return;
+
+		emit('delete', versionId);
 		deleteDialogActive.value = false;
 	}
 }
 
-function getVersionDisplayName(version: ContentVersion) {
-	return isNil(version.name) ? version.key : version.name;
+function useGlobalVersions() {
+	const isCurrentVersionGlobal = computed(() => currentVersion.value?.type === 'global');
+	const isCurrentVersionNew = computed(() => isVersionNew(currentVersion.value));
+
+	return {
+		isCurrentVersionGlobal,
+		isCurrentVersionNew,
+		canAccessGlobalVersion,
+		isVersionKeyGlobal,
+		isVersionNew,
+	};
+
+	function canAccessGlobalVersion(version: ContentVersionMaybeNew | null): boolean {
+		return isVersionNew(version) ? createVersionsAllowed.value : readVersionsAllowed.value;
+	}
+
+	function isVersionKeyGlobal(key: ContentVersion['key'] | null) {
+		return key !== null && versions.value.find((version) => version.key === key)?.type === 'global';
+	}
+
+	function isVersionNew(version: ContentVersionMaybeNew | null) {
+		return version?.id === '+';
+	}
 }
 
-async function onPromoteComplete(deleteOnPromote: boolean) {
-	isVersionPromoteDrawerOpen.value = false;
-
-	if (deleteOnPromote) {
-		await deleteVersion();
-	} else {
-		emit('switch', null);
-	}
+function hasVersionEdits(version: ContentVersionMaybeNew | null) {
+	if (!version || isVersionNew(version)) return false;
+	return (version as ContentVersion).delta !== null;
 }
 </script>
 
 <template>
-	<div>
-		<v-menu class="version-menu" placement="bottom-start" show-arrow>
-			<template #activator="{ toggle }">
-				<button class="version-button" :class="{ main: currentVersion === null }" @click="toggle">
-					<span class="version-name">
-						{{ currentVersion ? getVersionDisplayName(currentVersion) : t('main_version') }}
-					</span>
-					<v-icon name="arrow_drop_down" />
-				</button>
+	<VMenu class="version-menu" placement="bottom" show-arrow :disabled="!readVersionsAllowed">
+		<template #activator="{ toggle }">
+			<VersionChip :version="currentVersion" :clickable="readVersionsAllowed" @click="toggle()" />
+		</template>
+
+		<VList class="version-list">
+			<VListItem
+				class="version-item"
+				clickable
+				:active="currentVersion === null"
+				:disabled="isNewItem"
+				@click="switchVersion(null)"
+			>
+				<VListItemIcon class="version-item-icon">
+					<span v-if="!isNewItem" v-tooltip="$t('content_edited')" class="edit-dot edit-dot-primary" />
+				</VListItemIcon>
+
+				<VListItemContent>
+					{{ $t('published') }}
+				</VListItemContent>
+			</VListItem>
+
+			<VListItem
+				v-if="draftVersion"
+				class="version-item"
+				clickable
+				:active="draftVersion?.key === currentVersion?.key"
+				:disabled="!canAccessGlobalVersion(draftVersion)"
+				@click="switchVersion(draftVersion)"
+			>
+				<VListItemIcon class="version-item-icon">
+					<span
+						v-if="hasVersionEdits(draftVersion)"
+						v-tooltip="$t('content_edited')"
+						class="edit-dot edit-dot-secondary"
+					/>
+				</VListItemIcon>
+
+				<VListItemContent>
+					<VTextOverflow :text="getVersionDisplayName(draftVersion)" />
+				</VListItemContent>
+			</VListItem>
+
+			<VListItem
+				v-for="versionItem of localVersions"
+				:key="versionItem.id"
+				class="version-item"
+				clickable
+				:active="versionItem.id === currentVersion?.id"
+				@click="switchVersion(versionItem)"
+			>
+				<VListItemIcon class="version-item-icon">
+					<span v-if="hasVersionEdits(versionItem)" v-tooltip="$t('content_edited')" class="edit-dot" />
+				</VListItemIcon>
+
+				<VListItemContent>
+					<VTextOverflow :text="getVersionDisplayName(versionItem)" />
+				</VListItemContent>
+			</VListItem>
+
+			<template v-if="createVersionsAllowed">
+				<VDivider />
+
+				<VListItem
+					v-tooltip="isNewItem ? $t('version_create_item_less') : undefined"
+					:disabled="isNewItem"
+					clickable
+					@click="createDialogActive = true"
+				>
+					<VListItemIcon>
+						<VIcon name="add" />
+					</VListItemIcon>
+
+					<VListItemContent>{{ $t('create_version') }}</VListItemContent>
+				</VListItem>
 			</template>
 
-			<v-list>
-				<v-list-item class="version-item" clickable :active="currentVersion === null" @click="switchVersion(null)">
-					{{ t('main_version') }}
-				</v-list-item>
+			<template v-if="currentVersion !== null">
+				<VDivider />
 
-				<v-list-item
-					v-for="versionItem of versions"
-					:key="versionItem.id"
-					class="version-item"
+				<VListItem v-if="updateVersionsAllowed && !isCurrentVersionGlobal" clickable @click="openRenameDialog">
+					<VListItemIcon>
+						<VIcon name="edit" />
+					</VListItemIcon>
+
+					<VListItemContent>{{ $t('rename_version') }}</VListItemContent>
+				</VListItem>
+
+				<VListItem
+					v-if="deleteVersionsAllowed"
+					:disabled="isCurrentVersionNew"
+					class="version-delete"
 					clickable
-					:active="versionItem.id === currentVersion?.id"
-					@click="switchVersion(versionItem)"
+					@click="deleteDialogActive = true"
 				>
-					{{ getVersionDisplayName(versionItem) }}
-				</v-list-item>
+					<VListItemIcon>
+						<VIcon :name="isCurrentVersionGlobal ? 'undo' : 'delete'" />
+					</VListItemIcon>
 
-				<template v-if="createVersionsAllowed">
-					<v-divider />
+					<VListItemContent>{{ $t(isCurrentVersionGlobal ? 'discard_changes' : 'delete_version') }}</VListItemContent>
+				</VListItem>
+			</template>
+		</VList>
+	</VMenu>
 
-					<v-list-item clickable @click="createDialogActive = true">
-						{{ t('create_version') }}
-					</v-list-item>
-				</template>
+	<VDialog v-model="switchDialogActive" @esc="switchDialogActive = false" @apply="switchVersion">
+		<VCard>
+			<VCardTitle>{{ $t('unsaved_changes') }}</VCardTitle>
+			<VCardText>
+				{{
+					$t('switch_version_copy', {
+						version: switchTarget ? switchTarget.name || switchTarget.key : $t('published'),
+					})
+				}}
+			</VCardText>
+			<VCardActions>
+				<VButton secondary @click="switchVersion()">
+					{{ $t('switch_version') }}
+				</VButton>
+				<VButton @click="switchDialogActive = false">{{ $t('keep_editing') }}</VButton>
+			</VCardActions>
+		</VCard>
+	</VDialog>
 
-				<template v-if="currentVersion !== null">
-					<v-divider />
+	<VDialog :model-value="createDialogActive" persistent @esc="closeCreateDialog" @apply="createVersion">
+		<VCard>
+			<VCardTitle>{{ $t('create_version') }}</VCardTitle>
 
-					<v-list-item v-if="updateAllowed" clickable @click="isVersionPromoteDrawerOpen = true">
-						{{ t('promote_version') }}
-					</v-list-item>
-
-					<v-list-item v-if="updateVersionsAllowed" clickable @click="openRenameDialog">
-						{{ t('rename_version') }}
-					</v-list-item>
-
-					<v-list-item v-if="deleteVersionsAllowed" class="version-delete" clickable @click="deleteDialogActive = true">
-						{{ t('delete_version') }}
-					</v-list-item>
-				</template>
-			</v-list>
-		</v-menu>
-
-		<version-promote-drawer
-			v-if="currentVersion !== null"
-			:active="isVersionPromoteDrawerOpen"
-			:current-version="currentVersion"
-			:delete-versions-allowed="deleteVersionsAllowed"
-			@cancel="isVersionPromoteDrawerOpen = false"
-			@promote="onPromoteComplete($event)"
-		/>
-
-		<v-dialog v-model="switchDialogActive" @esc="switchDialogActive = false">
-			<v-card>
-				<v-card-title>{{ t('unsaved_changes') }}</v-card-title>
-				<v-card-text>
-					{{
-						t('switch_version_copy', {
-							version: switchTarget ? switchTarget.name || switchTarget.key : t('main_version'),
-						})
-					}}
-				</v-card-text>
-				<v-card-actions>
-					<v-button secondary @click="switchVersion()">
-						{{ t('switch_version') }}
-					</v-button>
-					<v-button @click="switchDialogActive = false">{{ t('keep_editing') }}</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
-
-		<v-dialog :model-value="createDialogActive" persistent @esc="closeCreateDialog">
-			<v-card>
-				<v-card-title>{{ t('create_version') }}</v-card-title>
-
-				<v-card-text>
-					<div class="grid">
-						<div class="field">
-							<v-input
-								v-model="newVersionKey"
-								class="full"
-								:placeholder="t('version_key')"
-								autofocus
-								slug
-								trim
-								:max-length="64"
-								@keyup.enter="createVersion"
-							/>
-						</div>
-						<div class="field">
-							<v-input
-								v-model="newVersionName"
-								class="full"
-								:placeholder="t('version_name')"
-								trim
-								:max-length="255"
-								@keyup.enter="createVersion"
-							/>
-						</div>
+			<VCardText>
+				<div class="grid">
+					<div class="field">
+						<VInput
+							v-model="newVersionName"
+							class="full"
+							:placeholder="$t('version_name')"
+							autofocus
+							trim
+							:max-length="255"
+						/>
 					</div>
-				</v-card-text>
 
-				<v-card-actions>
-					<v-button secondary @click="closeCreateDialog">{{ t('cancel') }}</v-button>
-					<v-button :disabled="newVersionKey === null" :loading="creating" @click="createVersion">
-						{{ t('save') }}
-					</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
-
-		<v-dialog :model-value="renameDialogActive" persistent @esc="closeRenameDialog">
-			<v-card>
-				<v-card-title>{{ t('rename_version') }}</v-card-title>
-
-				<v-card-text>
-					<div class="grid">
-						<div class="field">
-							<v-input
-								v-model="newVersionKey"
-								class="full"
-								:placeholder="t('version_key')"
-								autofocus
-								slug
-								trim
-								:max-length="64"
-								@keyup.enter="renameVersion"
-							/>
-						</div>
-						<div class="field">
-							<v-input
-								v-model="newVersionName"
-								class="full"
-								:placeholder="t('version_name')"
-								trim
-								:max-length="255"
-								@keyup.enter="renameVersion"
-							/>
-						</div>
+					<div class="field">
+						<VInput v-model="newVersionKey" class="full" :placeholder="$t('version_key')" slug trim :max-length="64" />
 					</div>
-				</v-card-text>
+				</div>
+			</VCardText>
 
-				<v-card-actions>
-					<v-button secondary @click="closeRenameDialog">{{ t('cancel') }}</v-button>
-					<v-button
-						:disabled="
-							(newVersionKey === null || newVersionKey === currentVersion?.key) &&
-							newVersionName === currentVersion?.name
-						"
-						:loading="updating"
-						@click="renameVersion"
-					>
-						{{ t('save') }}
-					</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+			<VCardActions>
+				<VButton secondary @click="closeCreateDialog">{{ $t('cancel') }}</VButton>
+				<VButton
+					v-tooltip.top="newVersionKeyReservedTooltip"
+					:disabled="isCreateDisabled"
+					:loading="creating"
+					@click="createVersion"
+				>
+					{{ $t('save') }}
+				</VButton>
+			</VCardActions>
+		</VCard>
+	</VDialog>
 
-		<v-dialog v-if="currentVersion !== null" v-model="deleteDialogActive" @esc="deleteDialogActive = false">
-			<v-card>
-				<v-card-title>{{ t('delete_version_copy', { version: currentVersion!.name }) }}</v-card-title>
-				<v-card-actions>
-					<v-button secondary @click="deleteDialogActive = false">{{ t('cancel') }}</v-button>
-					<v-button :loading="deleting" kind="danger" @click="onDeleteVersion">
-						{{ t('delete_label') }}
-					</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
-	</div>
+	<VDialog :model-value="renameDialogActive" persistent @esc="closeRenameDialog" @apply="renameVersion">
+		<VCard>
+			<VCardTitle>{{ $t('rename_version') }}</VCardTitle>
+
+			<VCardText>
+				<div class="grid">
+					<div class="field">
+						<VInput
+							v-model="newVersionName"
+							autofocus
+							class="full"
+							:placeholder="$t('version_name')"
+							trim
+							:max-length="255"
+						/>
+					</div>
+					<div class="field">
+						<VInput v-model="newVersionKey" class="full" :placeholder="$t('version_key')" slug trim :max-length="64" />
+					</div>
+				</div>
+			</VCardText>
+
+			<VCardActions>
+				<VButton secondary @click="closeRenameDialog">{{ $t('cancel') }}</VButton>
+				<VButton
+					v-tooltip.top="newVersionKeyReservedTooltip"
+					:disabled="isRenameDisabled"
+					:loading="updating"
+					@click="renameVersion"
+				>
+					{{ $t('save') }}
+				</VButton>
+			</VCardActions>
+		</VCard>
+	</VDialog>
+
+	<VDialog
+		v-if="currentVersion !== null"
+		v-model="deleteDialogActive"
+		@esc="deleteDialogActive = false"
+		@apply="onDeleteVersion"
+	>
+		<VCard>
+			<VCardTitle>
+				{{
+					isCurrentVersionGlobal
+						? $t('discard_changes_copy')
+						: $t('delete_version_copy', { version: getVersionDisplayName(currentVersion) })
+				}}
+			</VCardTitle>
+			<VCardActions>
+				<VButton secondary @click="deleteDialogActive = false">{{ $t('cancel') }}</VButton>
+				<VButton :loading="deleteVersionLoading" kind="danger" @click="onDeleteVersion">
+					{{ $t(isCurrentVersionGlobal ? 'discard_label' : 'delete_label') }}
+				</VButton>
+			</VCardActions>
+		</VCard>
+	</VDialog>
 </template>
 
 <style scoped lang="scss">
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
 
 .grid {
-	--theme--form--row-gap: 8px;
+	--theme--form--row-gap: 0.4375rem;
 
-	@include form-grid;
+	@include mixins.form-grid;
 }
 
 .version-menu {
-	flex-shrink: 0;
+	flex-shrink: 1;
+}
+
+.version-list {
+	--v-list-max-width: 16.3125rem;
 }
 
 .version-item {
-	--v-list-item-color-active: var(--foreground-inverted);
-	--v-list-item-background-color-active: var(--theme--primary);
-	--v-list-item-color-active-hover: var(--white);
-	--v-list-item-background-color-active-hover: var(--theme--primary-accent);
-}
-
-.version-button {
-	display: flex;
-	margin-left: 16px;
-	padding: 2px;
-	background-color: var(--theme--background-normal);
-	color: var(--theme--foreground);
-	border-radius: 24px;
-
-	.version-name {
-		padding-left: 8px;
+	&.active {
+		--focus-ring-color: var(--v-list-item-color-active);
+		--focus-ring-offset: var(--focus-ring-offset-inset);
 	}
 
-	&:hover {
-		background-color: var(--theme--background-accent);
+	.version-item-icon {
+		inline-size: var(--v-icon-size, var(--icon-size-default));
+		display: flex;
+		justify-content: center;
 	}
 
-	&.main {
-		background-color: var(--theme--primary);
-		color: var(--white);
+	.edit-dot {
+		display: block;
+		inline-size: 0.5rem;
+		block-size: 0.5rem;
+		border-radius: 0.5rem;
+		transition: inherit;
+		background-color: var(--theme--foreground);
 
-		&:hover {
-			background-color: var(--theme--primary-accent);
+		&.edit-dot-primary {
+			background-color: var(--primary);
+		}
+
+		&.edit-dot-secondary {
+			background-color: var(--secondary);
 		}
 	}
 }
 
 .version-delete {
 	--v-list-item-color: var(--theme--danger);
-	--v-list-item-color-hover: var(--theme--danger);
+	--v-list-item-color-hover: var(--v-list-item-color);
+	--v-list-item-icon-color: var(--v-list-item-color);
 }
 </style>

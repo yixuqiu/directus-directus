@@ -1,32 +1,45 @@
-import { REGEX_BETWEEN_PARENS } from '@directus/constants';
-import type { Accountability, Filter, Role, User } from '@directus/types';
+import type { Accountability, Filter, Policy, Role, User } from '@directus/types';
 import { isObjectLike } from 'lodash-es';
-import { adjustDate } from './adjust-date.js';
 import { deepMap } from './deep-map.js';
 import { get } from './get-with-arrays.js';
-import { isDynamicVariable } from './is-dynamic-variable.js';
 import { isObject } from './is-object.js';
 import { parseJSON } from './parse-json.js';
+import { parseNow } from './parse-now.js';
 import { toArray } from './to-array.js';
 
 type ParseFilterContext = {
-	// The user can add any custom fields to user
+	// The user can add any custom fields to any of them
 	$CURRENT_USER?: User & Record<string, any>;
 	$CURRENT_ROLE?: Role & Record<string, any>;
+	$CURRENT_ROLES?: (Role & Record<string, any>)[];
+	$CURRENT_POLICIES?: (Policy & Record<string, any>)[];
 };
+
+type BasicAccountability = Pick<Accountability, 'user' | 'role' | 'roles'>;
 
 export function parseFilter(
 	filter: Filter | null,
-	accountability: Accountability | null,
+	accountability: BasicAccountability | null,
 	context: ParseFilterContext = {},
+	skipCoercion = false,
 ): Filter | null {
 	let parsedFilter = parseFilterRecursive(filter, accountability, context);
 
-	if (parsedFilter) {
-		parsedFilter = shiftLogicalOperatorsUp(parsedFilter);
+	if (!parsedFilter) {
+		return parsedFilter;
 	}
 
-	return parsedFilter;
+	if (skipCoercion === false) {
+		parsedFilter = deepMap(parsedFilter, (value) => {
+			if (value === 'true') return true;
+			if (value === 'false') return false;
+			if (value === 'null' || value === 'NULL') return null;
+
+			return value;
+		});
+	}
+
+	return shiftLogicalOperatorsUp(parsedFilter);
 }
 
 const logicalFilterOperators = ['_and', '_or'];
@@ -37,36 +50,32 @@ function shiftLogicalOperatorsUp(filter: any): any {
 	if (!key) return filter;
 
 	if (logicalFilterOperators.includes(key)) {
-		for (const childKey of Object.keys(filter[key])) {
-			filter[key][childKey] = shiftLogicalOperatorsUp(filter[key][childKey]);
-		}
-
-		return filter;
+		return {
+			[key]: filter[key].map(shiftLogicalOperatorsUp),
+		};
 	} else if (key.startsWith('_')) {
 		return filter;
 	} else {
-		const childKey = Object.keys(filter[key])[0];
-		if (!childKey) return filter;
+		const childResult = shiftLogicalOperatorsUp(filter[key]);
+		const childKey = Object.keys(childResult)[0];
+
+		if (!childKey) return { [key]: childResult };
 
 		if (logicalFilterOperators.includes(childKey)) {
-			return {
-				[childKey]: toArray(filter[key][childKey]).map((childFilter) => {
-					return { [key]: shiftLogicalOperatorsUp(childFilter) };
-				}),
-			};
-		} else if (bypassOperators.includes(childKey)) {
-			return { [key]: { [childKey]: shiftLogicalOperatorsUp(filter[key][childKey]) } };
-		} else if (childKey.startsWith('_')) {
-			return filter;
-		} else {
-			return { [key]: shiftLogicalOperatorsUp(filter[key]) };
+			return shiftLogicalOperatorsUp({
+				[childKey]: childResult[childKey].map((nestedFilter: any) => ({
+					[key]: nestedFilter,
+				})),
+			});
 		}
+
+		return { [key]: childResult };
 	}
 }
 
 function parseFilterRecursive(
 	filter: Filter | null,
-	accountability: Accountability | null,
+	accountability: BasicAccountability | null,
 	context: ParseFilterContext = {},
 ): Filter | null {
 	if (filter === null || filter === undefined) {
@@ -74,7 +83,7 @@ function parseFilterRecursive(
 	}
 
 	if (!isObjectLike(filter)) {
-		return { _eq: parseFilterValue(filter, accountability, context) };
+		return { _eq: parseDynamicVariable(filter, accountability, context) };
 	}
 
 	const filters = Object.entries(filter).map((entry) => parseFilterEntry(entry, accountability, context));
@@ -90,16 +99,22 @@ function parseFilterRecursive(
 
 export function parsePreset(
 	preset: Record<string, any> | null,
-	accountability: Accountability | null,
+	accountability: BasicAccountability | null,
 	context: ParseFilterContext,
-) {
+): any {
 	if (!preset) return preset;
-	return deepMap(preset, (value) => parseFilterValue(value, accountability, context));
+	return deepMap(preset, (value) => {
+		if (value === 'true') return true;
+		if (value === 'false') return false;
+		if (value === 'null' || value === 'NULL') return null;
+
+		return parseDynamicVariable(value, accountability, context);
+	});
 }
 
 function parseFilterEntry(
 	[key, value]: [string, any],
-	accountability: Accountability | null,
+	accountability: BasicAccountability | null,
 	context: ParseFilterContext,
 ): Filter {
 	if (['_or', '_and'].includes(String(key))) {
@@ -109,37 +124,63 @@ function parseFilterEntry(
 		// the query parser (qs) parses them as a key-value pair object instead of an array,
 		// so we will need to convert them back to an array
 		const val = isObject(value) ? Object.values(value) : value;
-		return { [key]: toArray(val).flatMap((value) => parseFilterValue(value, accountability, context)) } as Filter;
+		return { [key]: toArray(val).flatMap((value) => parseDynamicVariable(value, accountability, context)) } as Filter;
 	} else if (['_intersects', '_nintersects', '_intersects_bbox', '_nintersects_bbox'].includes(String(key))) {
 		// Geometry filters always expect to operate against a GeoJSON object. Parse the
 		// value to JSON in case a stringified JSON blob is passed
-		return { [key]: parseFilterValue(typeof value === 'string' ? parseJSON(value) : value, accountability, context) };
+		return {
+			[key]: parseDynamicVariable(typeof value === 'string' ? parseJSON(value) : value, accountability, context),
+		};
+	} else if (String(key) === '_json') {
+		return { [key]: parseJsonFilterValue(value, accountability, context) };
 	} else if (String(key).startsWith('_') && !bypassOperators.includes(key)) {
-		return { [key]: parseFilterValue(value, accountability, context) };
-	} else if (String(key).startsWith('item__') && isObjectLike(value)) {
-		return { [`item:${String(key).split('item__')[1]}`]: parseFilter(value, accountability, context) } as Filter;
+		return { [key]: parseDynamicVariable(value, accountability, context) };
 	} else {
 		return { [key]: parseFilterRecursive(value, accountability, context) } as Filter;
 	}
 }
 
-function parseFilterValue(value: any, accountability: Accountability | null, context: ParseFilterContext) {
-	if (value === 'true') return true;
-	if (value === 'false') return false;
-	if (value === 'null' || value === 'NULL') return null;
-	if (isDynamicVariable(value)) return parseDynamicVariable(value, accountability, context);
-	return value;
+function parseJsonFilterValue(
+	jsonFilter: Record<string, any>,
+	accountability: BasicAccountability | null,
+	context: ParseFilterContext,
+): Record<string, any> {
+	const result: Record<string, any> = {};
+
+	for (const [key, value] of Object.entries(jsonFilter)) {
+		if (key === '_or' || key === '_and') {
+			result[key] = (value as Record<string, any>[]).map((subFilter) =>
+				parseJsonFilterValue(subFilter, accountability, context),
+			);
+		} else if (['_in', '_nin', '_between', '_nbetween'].includes(key)) {
+			if (Array.isArray(value)) {
+				result[key] = value.flatMap((v) => parseDynamicVariable(v, accountability, context));
+			} else if (isObject(value)) {
+				// Dynamic variable passed as object (e.g. $CURRENT_USER) — wrap into array
+				result[key] = Object.values(value).flatMap((v) => parseDynamicVariable(v, accountability, context));
+			} else {
+				// Resolve dynamic variables (e.g. $CURRENT_ROLES → array); other invalid values pass through
+				// unchanged so validateQuery can reject them
+				result[key] = typeof value === 'string' ? parseDynamicVariable(value, accountability, context) : value;
+			}
+		} else if (key.startsWith('_')) {
+			result[key] = parseDynamicVariable(value, accountability, context);
+		} else {
+			// JSON path key — recurse to process the operator+value object beneath it
+			result[key] = parseJsonFilterValue(value as Record<string, any>, accountability, context);
+		}
+	}
+
+	return result;
 }
 
-function parseDynamicVariable(value: any, accountability: Accountability | null, context: ParseFilterContext) {
-	if (value.startsWith('$NOW')) {
-		if (value.includes('(') && value.includes(')')) {
-			const adjustment = value.match(REGEX_BETWEEN_PARENS)?.[1];
-			if (!adjustment) return new Date();
-			return adjustDate(new Date(), adjustment);
-		}
+function parseDynamicVariable(value: any, accountability: BasicAccountability | null, context: ParseFilterContext) {
+	if (typeof value !== 'string') {
+		return value;
+	}
 
-		return new Date();
+	if (value.startsWith('$NOW')) {
+		return parseNow(value);
 	}
 
 	if (value.startsWith('$CURRENT_USER')) {
@@ -147,8 +188,21 @@ function parseDynamicVariable(value: any, accountability: Accountability | null,
 		return get(context, value, null);
 	}
 
+	if (value.startsWith('$CURRENT_ROLES')) {
+		if (value === '$CURRENT_ROLES') return accountability?.roles ?? null;
+		return get(context, value, null);
+	}
+
 	if (value.startsWith('$CURRENT_ROLE')) {
 		if (value === '$CURRENT_ROLE') return accountability?.role ?? null;
 		return get(context, value, null);
 	}
+
+	if (value.startsWith('$CURRENT_POLICIES')) {
+		if (value === '$CURRENT_POLICIES')
+			return (get(context, value, null) as Policy[] | null)?.map(({ id }) => id) ?? null;
+		return get(context, value, null);
+	}
+
+	return value;
 }

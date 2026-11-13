@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { useThemeConfiguration } from '@/composables/use-theme-configuration';
 import { Theme, useTheme } from '@directus/themes';
-import { clone, get, isEmpty, setWith, unset } from 'lodash';
+import { clone, get, isEmpty, setWith, unset } from 'lodash-es';
 import { computed } from 'vue';
-import SystemThemeOverridesGroup from './system-theme-overrides-group.vue';
+import SystemThemeOverridesGroup from './SystemThemeOverridesGroup.vue';
 import type { SetValueFn } from './types.js';
+import { useThemeConfiguration } from '@/composables/use-theme-configuration';
 
 defineOptions({
 	inheritAttrs: false,
@@ -47,7 +47,7 @@ const { theme } = useTheme(darkMode, themeLight, themeDark, {}, {});
 </script>
 
 <template>
-	<div class="theme-overrides">
+	<div class="theme-overrides" lang="en-US" dir="ltr">
 		<SystemThemeOverridesGroup root :rules="theme.rules" :path="[]" :value="value ?? {}" :set="set" />
 	</div>
 </template>
@@ -57,21 +57,20 @@ const { theme } = useTheme(darkMode, themeLight, themeDark, {}, {});
 	border: var(--theme--border-width) solid var(--theme--form--field--input--border-color);
 	padding: var(--theme--form--field--input--padding);
 	border-radius: var(--theme--border-radius);
-	max-height: var(--input-height-max);
+	max-block-size: var(--input-height-xl);
 	overflow-y: auto;
 	background-color: var(--theme--form--field--input--background);
 	transition-duration: var(--fast);
 	transition-timing-function: var(--transition);
-	transition-property: box-shadow, border-color;
+	transition-property: border-color;
 
 	&:hover {
 		border-color: var(--theme--form--field--input--border-color-hover);
-		box-shadow: var(--theme--form--field--input--box-shadow-hover);
 	}
 
 	&:focus-within {
-		border-color: var(--theme--form--field--input--border-color-focus);
-		box-shadow: var(--theme--form--field--input--box-shadow-focus);
+		outline: var(--focus-ring-width) solid var(--theme--form--field--input--focus-ring-color);
+		outline-offset: var(--focus-ring-offset-invert);
 	}
 }
 </style>

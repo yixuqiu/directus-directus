@@ -1,6 +1,6 @@
+import path from 'path';
 import { ExtensionManifest } from '@directus/extensions';
 import fs from 'fs-extra';
-import path from 'path';
 import { log } from '../utils/logger.js';
 
 export default async function link(extensionsPath: string): Promise<void> {
@@ -24,14 +24,15 @@ export default async function link(extensionsPath: string): Promise<void> {
 
 	try {
 		manifestFile = await fs.readJSON(packagePath);
-	} catch (err) {
+	} catch {
 		log(`Current directory is not a valid Directus extension.`, 'error');
 		return;
 	}
 
 	const extensionManifest = ExtensionManifest.parse(manifestFile);
 
-	const extensionName = extensionManifest.name;
+	// Flatten scoped extension names so they can be detected
+	const extensionName = extensionManifest.name.replaceAll('/', '-');
 
 	if (!extensionName) {
 		log(`Extension name not found in package.json`, 'error');

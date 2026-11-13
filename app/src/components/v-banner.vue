@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import VIcon from '@/components/v-icon/v-icon.vue';
+
 defineProps<{
 	icon: string;
 	hideAvatarBackground?: boolean;
@@ -8,7 +10,7 @@ defineProps<{
 <template>
 	<div class="v-banner">
 		<div class="avatar" :class="{ 'no-bg': hideAvatarBackground }">
-			<slot name="avatar"><v-icon :name="icon" large /></slot>
+			<slot name="avatar"><VIcon :name="icon" large /></slot>
 		</div>
 
 		<div class="content">
@@ -157,10 +159,12 @@ defineProps<{
 	</div>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
+@use '@/styles/mixins';
+
 .v-banner {
 	container-type: inline-size;
-	width: 100%;
+	inline-size: 100%;
 	padding: var(--theme--banner--padding);
 	border-radius: var(--theme--banner--border-radius);
 	background-color: var(--theme--banner--background);
@@ -172,8 +176,8 @@ defineProps<{
 
 	.avatar {
 		flex-shrink: 0;
-		width: 120px;
-		height: 120px;
+		inline-size: 6.75rem;
+		block-size: 6.75rem;
 		position: relative;
 		overflow: hidden;
 		align-items: center;
@@ -187,7 +191,7 @@ defineProps<{
 			background: transparent;
 		}
 
-		@container (width > 700px) {
+		@container (width > 39.375rem) {
 			display: flex;
 		}
 	}
@@ -201,12 +205,13 @@ defineProps<{
 		}
 
 		.title {
+			@include mixins.type-display;
+
 			--theme--foreground: var(--theme--banner--foreground);
 			color: var(--theme--banner--title--foreground);
 			font-family: var(--theme--banner--title--font-family);
 			font-weight: var(--theme--banner--title--font-weight);
-			font-size: 24px;
-			line-height: 34px;
+			line-height: 1.4091;
 		}
 
 		.subtitle {

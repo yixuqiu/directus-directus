@@ -1,63 +1,53 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n';
-import { translateShortcut } from '@/utils/translate-shortcut';
+import { translateShortcut } from '@directus/composables';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItemHint from '@/components/v-list-item-hint.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
 
 defineProps<{
 	disabledOptions?: string[];
 }>();
 
 defineEmits<{
+	(e: 'save-and-quit'): void;
 	(e: 'save-and-stay'): void;
 	(e: 'save-and-add-new'): void;
 	(e: 'save-as-copy'): void;
 	(e: 'discard-and-stay'): void;
 }>();
-
-const { t } = useI18n();
 </script>
 
 <template>
-	<v-menu show-arrow>
-		<template #activator="{ toggle }">
-			<v-icon name="more_vert" clickable @click="toggle" />
-		</template>
-
-		<v-list>
-			<v-list-item v-if="!disabledOptions?.includes('save-and-stay')" clickable @click="$emit('save-and-stay')">
-				<v-list-item-icon><v-icon name="check" /></v-list-item-icon>
-				<v-list-item-content>{{ t('save_and_stay') }}</v-list-item-content>
-				<v-list-item-hint>{{ translateShortcut(['meta', 's']) }}</v-list-item-hint>
-			</v-list-item>
-			<v-list-item v-if="!disabledOptions?.includes('save-and-add-new')" clickable @click="$emit('save-and-add-new')">
-				<v-list-item-icon><v-icon name="add" /></v-list-item-icon>
-				<v-list-item-content>{{ t('save_and_create_new') }}</v-list-item-content>
-				<v-list-item-hint>{{ translateShortcut(['meta', 'shift', 's']) }}</v-list-item-hint>
-			</v-list-item>
-			<v-list-item v-if="!disabledOptions?.includes('save-as-copy')" clickable @click="$emit('save-as-copy')">
-				<v-list-item-icon><v-icon name="done_all" /></v-list-item-icon>
-				<v-list-item-content>{{ t('save_as_copy') }}</v-list-item-content>
-			</v-list-item>
-			<v-list-item v-if="!disabledOptions?.includes('discard-and-stay')" clickable @click="$emit('discard-and-stay')">
-				<v-list-item-icon><v-icon name="undo" /></v-list-item-icon>
-				<v-list-item-content>{{ t('discard_all_changes') }}</v-list-item-content>
-			</v-list-item>
-		</v-list>
-	</v-menu>
+	<VList>
+		<VListItem v-if="!disabledOptions?.includes('save-and-quit')" clickable @click="$emit('save-and-quit')">
+			<VListItemIcon><VIcon name="arrow_back" /></VListItemIcon>
+			<VListItemContent>{{ $t('save_and_quit') }}</VListItemContent>
+		</VListItem>
+		<VListItem v-if="!disabledOptions?.includes('save-and-stay')" clickable @click="$emit('save-and-stay')">
+			<VListItemIcon><VIcon name="check" /></VListItemIcon>
+			<VListItemContent>{{ $t('save_and_stay') }}</VListItemContent>
+			<VListItemHint>{{ translateShortcut(['meta', 's']) }}</VListItemHint>
+		</VListItem>
+		<VListItem v-if="!disabledOptions?.includes('save-and-add-new')" clickable @click="$emit('save-and-add-new')">
+			<VListItemIcon><VIcon name="add" /></VListItemIcon>
+			<VListItemContent>{{ $t('save_and_create_new') }}</VListItemContent>
+			<VListItemHint>{{ translateShortcut(['meta', 'shift', 's']) }}</VListItemHint>
+		</VListItem>
+		<VListItem v-if="!disabledOptions?.includes('save-as-copy')" clickable @click="$emit('save-as-copy')">
+			<VListItemIcon><VIcon name="done_all" /></VListItemIcon>
+			<VListItemContent>{{ $t('save_as_copy') }}</VListItemContent>
+		</VListItem>
+		<VListItem v-if="!disabledOptions?.includes('discard-and-stay')" clickable @click="$emit('discard-and-stay')">
+			<VListItemIcon><VIcon name="undo" /></VListItemIcon>
+			<VListItemContent>{{ $t('discard_all_changes') }}</VListItemContent>
+		</VListItem>
+	</VList>
 </template>
 
 <style scoped>
-:deep(.v-icon) {
-	color: var(--theme--foreground-subdued) !important;
-}
-
-:deep(.v-icon:hover:not(.disabled)) {
-	color: var(--theme--foreground) !important;
-}
-
-:deep(.v-icon.disabled) {
-	cursor: not-allowed;
-}
-
 .v-list-item {
 	white-space: nowrap;
 }

@@ -1,12 +1,7 @@
+import type { NumericValue } from '@directus/types';
+import type { NumberInfo } from '@directus/utils';
 import type { Knex } from 'knex';
 import { DatabaseHelper } from '../types.js';
-import type { NumericType, NumericValue } from '@directus/types';
-
-export type NumberInfo = {
-	type: NumericType;
-	precision: number | null;
-	scale: number | null;
-};
 
 export abstract class NumberDatabaseHelper extends DatabaseHelper {
 	addSearchCondition(
@@ -14,8 +9,9 @@ export abstract class NumberDatabaseHelper extends DatabaseHelper {
 		collection: string,
 		name: string,
 		value: NumericValue,
+		logical: 'and' | 'or',
 	): Knex.QueryBuilder {
-		return dbQuery.orWhere({ [`${collection}.${name}`]: value });
+		return dbQuery[logical].where({ [`${collection}.${name}`]: value });
 	}
 
 	isNumberValid(_value: NumericValue, _info: NumberInfo) {

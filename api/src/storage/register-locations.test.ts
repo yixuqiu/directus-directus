@@ -1,7 +1,8 @@
+import { useEnv } from '@directus/env';
 import type { StorageManager } from '@directus/storage';
 import { randNumber, randWord } from '@ngneat/falso';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { useEnv } from '@directus/env';
+import { mockEnv } from '../test-utils/env.js';
 import { getConfigFromEnv } from '../utils/get-config-from-env.js';
 import { registerLocations } from './register-locations.js';
 
@@ -9,10 +10,12 @@ vi.mock('@directus/env');
 
 vi.mock('../utils/get-config-from-env.js');
 
+vi.mock('../constants.js', () => ({ RESUMABLE_UPLOADS: { CHUNK_SIZE: 9999 } }));
+
 let sample: {
 	options: {
 		[location: string]: {
-			[key: string]: string;
+			[key: string]: any;
 		};
 	};
 	locations: string[];
@@ -32,6 +35,7 @@ beforeEach(() => {
 
 		sample.options[`STORAGE_${location.toUpperCase()}_`] = {
 			driver: randWord(),
+			tus: { chunkSize: 9999 },
 		};
 
 		keys.forEach((key, index) => (sample.options[`STORAGE_${location.toUpperCase()}_`]![key] = values[index]!));
@@ -43,9 +47,11 @@ beforeEach(() => {
 
 	vi.mocked(getConfigFromEnv).mockImplementation((name) => sample.options[name]!);
 
-	vi.mocked(useEnv).mockReturnValue({
-		STORAGE_LOCATIONS: sample.locations.join(','),
-	});
+	vi.mocked(useEnv).mockReturnValue(
+		mockEnv({
+			STORAGE_LOCATIONS: sample.locations,
+		}),
+	);
 });
 
 afterEach(() => {

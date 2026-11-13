@@ -1,5 +1,5 @@
+import { cloneDeep } from 'lodash-es';
 import { translate as translateString } from './translate-literal';
-import { cloneDeep } from 'lodash';
 
 export function translate<T extends Record<string, any> | string>(obj: T): T {
 	if (typeof obj === 'string') {

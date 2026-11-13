@@ -5,7 +5,7 @@
 # Values in square brackets are the default values.
 #
 # The following options are not all possible options. For more, see
-# https://docs.directus.io/self-hosted/config-options/
+# https://directus.com/docs/configuration/intro
 #
 ####################################################################################################
 ####################################################################################################
@@ -147,6 +147,9 @@ CACHE_ENABLED=false
 
 # How long the cache is persisted ["5m"]
 # CACHE_TTL="30m"
+
+# How long deployment provider data is cached ["5s"]
+# CACHE_DEPLOYMENT_TTL="5s"
 
 # How to scope the cache data ["system-cache"]
 # CACHE_NAMESPACE="system-cache"
@@ -313,7 +316,7 @@ EXTENSIONS_AUTO_RELOAD=false
 EMAIL_FROM="no-reply@example.com"
 
 # What to use to send emails. One of
-# sendmail, smtp, mailgun, sendgrid, ses.
+# sendmail, smtp, mailgun, ses, mailtrap.
 EMAIL_TRANSPORT="sendmail"
 EMAIL_SENDMAIL_NEW_LINE="unix"
 EMAIL_SENDMAIL_PATH="/usr/sbin/sendmail"
@@ -341,5 +344,14 @@ EMAIL_SENDMAIL_PATH="/usr/sbin/sendmail"
 # EMAIL_MAILGUN_API_KEY="key-1234123412341234"
 # EMAIL_MAILGUN_DOMAIN="a domain name from https://app.mailgun.com/app/sending/domains"
 
-## Email (SendGrid Transport)
-# EMAIL_SENDGRID_API_KEY="key-1234123412341234"
+## Email (Mailtrap Transport)
+# EMAIL_MAILTRAP_TOKEN="an API token from https://mailtrap.io/api-tokens"
+
+# Send to a testing inbox instead of real recipients [false]
+# EMAIL_MAILTRAP_SANDBOX=false
+
+# Which testing inbox to send to, required in sandbox mode
+# EMAIL_MAILTRAP_TEST_INBOX_ID=1234567
+
+# Send via the bulk stream, cannot be combined with sandbox mode [false]
+# EMAIL_MAILTRAP_BULK=false

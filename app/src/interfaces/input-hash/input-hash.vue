@@ -1,37 +1,51 @@
-<script lang="ts">
-import { defineComponent } from 'vue';
-
-export default defineComponent({
-	inheritAttrs: false,
-});
-</script>
-
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
 
 const props = defineProps<{
 	value: string | null;
 	disabled?: boolean;
+	nonEditable?: boolean;
 	placeholder?: string;
 	masked?: boolean;
+	autocomplete?: string;
 }>();
 
 const emit = defineEmits(['input']);
+
+defineOptions({
+	inheritAttrs: false,
+});
 
 const { t } = useI18n();
 
 const isHashed = ref(false);
 const localValue = ref<string | null>(null);
 
+const autocomplete = computed(() => {
+	if (props.autocomplete) return props.autocomplete;
+
+	if (props.masked) return 'new-password';
+
+	return 'off';
+});
+
 const internalPlaceholder = computed(() => {
-	return isHashed.value ? t('value_hashed') : props.placeholder;
+	return isHashed.value ? t('value_securely_stored') : props.placeholder;
 });
 
 watch(
 	() => props.value,
-	() => {
-		isHashed.value = !!(props.value && props.value.length > 0);
+	(newValue) => {
+		isHashed.value = !!(newValue && newValue.length > 0);
+
+		// Once an entered value is persisted, props.value becomes the stored hash,
+		// Reset localValue so the field reflects the securely-stored (hashed) state.
+		if (newValue !== localValue.value) {
+			localValue.value = null;
+		}
 	},
 	{ immediate: true },
 );
@@ -40,22 +54,36 @@ function emitValue(newValue: string) {
 	emit('input', newValue);
 	localValue.value = newValue;
 }
+
+function clearValue() {
+	localValue.value = null;
+	emit('input', null);
+}
 </script>
 
 <template>
-	<v-input
+	<VInput
 		:placeholder="internalPlaceholder"
-		:disabled="disabled"
+		:disabled
+		:non-editable
 		:type="masked ? 'password' : 'text'"
-		:autocomplete="masked ? 'new-password' : 'off'"
-		:model-value="localValue"
-		:class="{ hashed: isHashed && !localValue }"
+		:autocomplete
+		:model-value="localValue ?? ''"
+		:class="{ hashed: isHashed && !localValue, 'non-editable': nonEditable }"
 		@update:model-value="emitValue"
 	>
 		<template #append>
-			<v-icon class="lock" :name="isHashed && !localValue ? 'lock' : 'lock_open'" />
+			<VIcon class="lock" :class="{ disabled }" :name="isHashed && !localValue ? 'lock' : 'lock_open'" />
+			<VIcon
+				v-if="(isHashed || localValue) && !disabled && !nonEditable"
+				v-tooltip="t('clear_value')"
+				class="clear"
+				name="close"
+				clickable
+				@click.stop="clearValue"
+			/>
 		</template>
-	</v-input>
+	</VInput>
 </template>
 
 <style lang="scss" scoped>
@@ -68,15 +96,27 @@ function emitValue(newValue: string) {
 	}
 }
 
+.clear {
+	--v-icon-color: var(--theme--form--field--input--foreground-subdued);
+}
+
 .lock {
 	--v-icon-color: var(--theme--warning);
+
+	margin-inline-end: 0.25rem;
+
+	&.disabled {
+		--v-icon-color: var(--theme--form--field--input--foreground-subdued);
+	}
+
+	.hashed &:not(.disabled),
+	.hashed.non-editable & {
+		--v-icon-color: var(--theme--primary);
+	}
 }
 
-.hashed {
+.hashed:not(.disabled),
+.hashed.non-editable {
 	--v-input-placeholder-color: var(--theme--primary);
-}
-
-.hashed .lock {
-	--v-icon-color: var(--theme--primary);
 }
 </style>

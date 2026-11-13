@@ -1,9 +1,9 @@
+import type { User } from '@directus/types';
+import { merge } from 'lodash-es';
+import { computed, ref } from 'vue';
 import type { Info } from '@/stores/server';
 import { useServerStore } from '@/stores/server';
 import { useUserStore } from '@/stores/user';
-import type { User } from '@directus/types';
-import { merge } from 'lodash';
-import { computed, ref } from 'vue';
 
 export const useThemeConfiguration = () => {
 	const serverStore = useServerStore();

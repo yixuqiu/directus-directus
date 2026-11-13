@@ -5,16 +5,17 @@ import {
 	InvalidPayloadError,
 	isDirectusError,
 } from '@directus/errors';
-import type { PrimaryKey, RegisterUserInput, Role } from '@directus/types';
+import type { PrimaryKey, RegisterUserInput } from '@directus/types';
 import express from 'express';
 import Joi from 'joi';
+import { DEFAULT_AUTH_PROVIDER } from '../constants.js';
+import { getDatabase } from '../database/index.js';
 import checkRateLimit from '../middleware/rate-limiter-registration.js';
 import { respond } from '../middleware/respond.js';
 import useCollection from '../middleware/use-collection.js';
 import { validateBatch } from '../middleware/validate-batch.js';
 import { AuthenticationService } from '../services/authentication.js';
 import { MetaService } from '../services/meta.js';
-import { RolesService } from '../services/roles.js';
 import { TFAService } from '../services/tfa.js';
 import { UsersService } from '../services/users.js';
 import asyncHandler from '../utils/async-handler.js';
@@ -87,17 +88,13 @@ router.search('/', validateBatch('read'), readHandler, respond);
 router.get(
 	'/me',
 	asyncHandler(async (req, res, next) => {
-		if (req.accountability?.share_scope) {
-			const user = {
-				share: req.accountability?.share,
-				role: {
-					id: req.accountability.role,
-					admin_access: false,
-					app_access: false,
+		if (req.accountability?.share) {
+			res.locals['payload'] = {
+				data: {
+					share: req.accountability?.share,
 				},
 			};
 
-			res.locals['payload'] = { data: user };
 			return next();
 		}
 
@@ -194,14 +191,14 @@ router.patch(
 			schema: req.schema,
 		});
 
-		let keys: PrimaryKey[] = [];
+		let keys: PrimaryKey[];
 
 		if (Array.isArray(req.body)) {
 			keys = await service.updateBatch(req.body);
 		} else if (req.body.keys) {
 			keys = await service.updateMany(req.body.keys, req.body.data);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			keys = await service.updateByQuery(sanitizedQuery, req.body.data);
 		}
 
@@ -261,7 +258,7 @@ router.delete(
 		} else if (req.body.keys) {
 			await service.deleteMany(req.body.keys);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			await service.deleteByQuery(sanitizedQuery);
 		}
 
@@ -302,7 +299,16 @@ router.post(
 			schema: req.schema,
 		});
 
-		await service.inviteUser(req.body.email, req.body.role, req.body.invite_url || null);
+		try {
+			await service.inviteUser(req.body.email, req.body.role, req.body.invite_url || null);
+		} catch (error) {
+			if (isDirectusError(error, ErrorCode.Forbidden)) {
+				return next();
+			}
+
+			throw error;
+		}
+
 		return next();
 	}),
 	respond,
@@ -337,7 +343,15 @@ router.post(
 			throw new InvalidCredentialsError();
 		}
 
-		if (!req.body.password) {
+		const currentUser = await getDatabase()
+			.select('provider')
+			.from('directus_users')
+			.where({ id: req.accountability.user })
+			.first();
+
+		const requiresPassword = currentUser?.['provider'] === DEFAULT_AUTH_PROVIDER;
+
+		if (requiresPassword && !req.body.password) {
 			throw new InvalidPayloadError({ reason: `"password" is required` });
 		}
 
@@ -346,14 +360,16 @@ router.post(
 			schema: req.schema,
 		});
 
-		const authService = new AuthenticationService({
-			accountability: req.accountability,
-			schema: req.schema,
-		});
+		if (requiresPassword) {
+			const authService = new AuthenticationService({
+				accountability: req.accountability,
+				schema: req.schema,
+			});
 
-		await authService.verifyPassword(req.accountability.user, req.body.password);
+			await authService.verifyPassword(req.accountability.user, req.body.password);
+		}
 
-		const { url, secret } = await service.generateTFA(req.accountability.user);
+		const { url, secret } = await service.generateTFA(req.accountability.user, requiresPassword);
 
 		res.locals['payload'] = { data: { secret, otpauth_url: url } };
 		return next();
@@ -374,38 +390,6 @@ router.post(
 
 		if (!req.body.otp) {
 			throw new InvalidPayloadError({ reason: `"otp" is required` });
-		}
-
-		// Override permissions only when enforce TFA is enabled in role
-		if (req.accountability.role) {
-			const rolesService = new RolesService({
-				schema: req.schema,
-			});
-
-			const role = (await rolesService.readOne(req.accountability.role)) as Role;
-
-			if (role && role.enforce_tfa) {
-				const existingPermission = await req.accountability.permissions?.find(
-					(p) => p.collection === 'directus_users' && p.action === 'update',
-				);
-
-				if (existingPermission) {
-					existingPermission.fields = ['tfa_secret'];
-					existingPermission.permissions = { id: { _eq: req.accountability.user } };
-					existingPermission.presets = null;
-					existingPermission.validation = null;
-				} else {
-					(req.accountability.permissions || (req.accountability.permissions = [])).push({
-						action: 'update',
-						collection: 'directus_users',
-						fields: ['tfa_secret'],
-						permissions: { id: { _eq: req.accountability.user } },
-						presets: null,
-						role: req.accountability.role,
-						validation: null,
-					});
-				}
-			}
 		}
 
 		const service = new TFAService({
@@ -429,38 +413,6 @@ router.post(
 
 		if (!req.body.otp) {
 			throw new InvalidPayloadError({ reason: `"otp" is required` });
-		}
-
-		// Override permissions only when enforce TFA is enabled in role
-		if (req.accountability.role) {
-			const rolesService = new RolesService({
-				schema: req.schema,
-			});
-
-			const role = (await rolesService.readOne(req.accountability.role)) as Role;
-
-			if (role && role.enforce_tfa) {
-				const existingPermission = await req.accountability.permissions?.find(
-					(p) => p.collection === 'directus_users' && p.action === 'update',
-				);
-
-				if (existingPermission) {
-					existingPermission.fields = ['tfa_secret'];
-					existingPermission.permissions = { id: { _eq: req.accountability.user } };
-					existingPermission.presets = null;
-					existingPermission.validation = null;
-				} else {
-					(req.accountability.permissions || (req.accountability.permissions = [])).push({
-						action: 'update',
-						collection: 'directus_users',
-						fields: ['tfa_secret'],
-						permissions: { id: { _eq: req.accountability.user } },
-						presets: null,
-						role: req.accountability.role,
-						validation: null,
-					});
-				}
-			}
 		}
 
 		const service = new TFAService({
@@ -505,6 +457,7 @@ router.post(
 const registerSchema = Joi.object<RegisterUserInput>({
 	email: Joi.string().email().required(),
 	password: Joi.string().required(),
+	verification_url: Joi.string().uri(),
 	first_name: Joi.string(),
 	last_name: Joi.string(),
 });

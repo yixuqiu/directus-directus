@@ -1,11 +1,13 @@
-import { ErrorCode, isDirectusError } from '@directus/errors';
+import { ErrorCode, ForbiddenError, isDirectusError } from '@directus/errors';
 import type { PrimaryKey } from '@directus/types';
 import express from 'express';
+import getDatabase from '../database/index.js';
 import { respond } from '../middleware/respond.js';
 import useCollection from '../middleware/use-collection.js';
 import { validateBatch } from '../middleware/validate-batch.js';
+import { fetchAccountabilityCollectionAccess } from '../permissions/modules/fetch-accountability-collection-access/fetch-accountability-collection-access.js';
 import { MetaService } from '../services/meta.js';
-import { PermissionsService } from '../services/permissions/index.js';
+import { PermissionsService } from '../services/permissions.js';
 import asyncHandler from '../utils/async-handler.js';
 import { sanitizeQuery } from '../utils/sanitize-query.js';
 
@@ -87,6 +89,23 @@ router.get('/', validateBatch('read'), readHandler, respond);
 router.search('/', validateBatch('read'), readHandler, respond);
 
 router.get(
+	'/me',
+	asyncHandler(async (req, res, next) => {
+		if (!req.accountability?.user && !req.accountability?.role && !req.accountability?.share)
+			throw new ForbiddenError();
+
+		const result = await fetchAccountabilityCollectionAccess(req.accountability, {
+			schema: req.schema,
+			knex: getDatabase(),
+		});
+
+		res.locals['payload'] = { data: result };
+		return next();
+	}),
+	respond,
+);
+
+router.get(
 	'/:pk',
 	asyncHandler(async (req, res, next) => {
 		if (req.path.endsWith('me')) return next();
@@ -113,14 +132,14 @@ router.patch(
 			schema: req.schema,
 		});
 
-		let keys: PrimaryKey[] = [];
+		let keys: PrimaryKey[];
 
 		if (Array.isArray(req.body)) {
 			keys = await service.updateBatch(req.body);
 		} else if (req.body.keys) {
 			keys = await service.updateMany(req.body.keys, req.body.data);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			keys = await service.updateByQuery(sanitizedQuery, req.body.data);
 		}
 
@@ -180,7 +199,7 @@ router.delete(
 		} else if (req.body.keys) {
 			await service.deleteMany(req.body.keys);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			await service.deleteByQuery(sanitizedQuery);
 		}
 

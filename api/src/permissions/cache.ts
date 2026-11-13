@@ -1,0 +1,32 @@
+import { useEnv } from '@directus/env';
+import { type CacheConfig, defineCache } from '@directus/memory';
+import { redisConfigAvailable, useRedis } from '../redis/index.js';
+
+const localOnly = redisConfigAvailable() === false;
+const env = useEnv();
+const ttl = env.CACHE_SYSTEM_TTL;
+
+const config: CacheConfig = localOnly
+	? {
+			type: 'local',
+			maxKeys: 500,
+		}
+	: {
+			type: 'multi',
+			redis: {
+				namespace: env.REDIS_PERMISSIONS_NAMESPACE,
+				redis: useRedis(),
+				...(ttl !== undefined ? { ttl } : {}),
+				hash: true,
+			},
+			local: {
+				maxKeys: 100,
+			},
+		};
+
+export const useCache = defineCache(config);
+
+export function clearCache() {
+	const cache = useCache();
+	return cache.clear();
+}

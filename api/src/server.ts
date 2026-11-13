@@ -1,27 +1,32 @@
+import * as http from 'http';
+import * as https from 'https';
+import type { ListenOptions } from 'net';
 import { useEnv } from '@directus/env';
-import { toBoolean } from '@directus/utils';
 import { getNodeEnv } from '@directus/utils/node';
 import type { TerminusOptions } from '@godaddy/terminus';
 import { createTerminus } from '@godaddy/terminus';
 import type { Request } from 'express';
-import * as http from 'http';
-import * as https from 'https';
 import { once } from 'lodash-es';
 import qs from 'qs';
-import url from 'url';
+import { shutdownAITelemetry } from './ai/telemetry/index.js';
 import createApp from './app.js';
 import getDatabase from './database/index.js';
 import emitter from './emitter.js';
-import { useLogger } from './logger.js';
+import { useLogger } from './logger/index.js';
+import { terminateAllBufferedCounters } from './telemetry/counter/use-buffered-counter.js';
+import { getAddress } from './utils/get-address.js';
 import { getConfigFromEnv } from './utils/get-config-from-env.js';
 import { getIPFromReq } from './utils/get-ip-from-req.js';
+import { parseRequestUrl } from './utils/parse-request-url.js';
 import {
+	createLogsController,
 	createSubscriptionController,
 	createWebSocketController,
+	getLogsController,
 	getSubscriptionController,
 	getWebSocketController,
 } from './websocket/controllers/index.js';
-import { startWebSocketHandlers } from './websocket/handlers/index.js';
+import { getCollabHandler, startWebSocketHandlers } from './websocket/handlers/index.js';
 
 export let SERVER_ONLINE = true;
 
@@ -57,9 +62,9 @@ export async function createServer(): Promise<http.Server> {
 			// Compatibility when supporting serving with certificates
 			const protocol = server instanceof https.Server ? 'https' : 'http';
 
-			// Rely on url.parse for path extraction
-			// Doesn't break on illegal URLs
-			const urlInfo = url.parse(req.originalUrl || req.url);
+			// Must not throw on illegal URLs, this runs outside of the Express error handling
+			const requestUrl = req.originalUrl || req.url;
+			const urlInfo = parseRequestUrl(requestUrl);
 
 			const info = {
 				finished,
@@ -67,7 +72,7 @@ export async function createServer(): Promise<http.Server> {
 					aborted: req.aborted,
 					completed: req.complete,
 					method: req.method,
-					url: urlInfo.href,
+					url: requestUrl,
 					path: urlInfo.pathname,
 					protocol,
 					host: req.headers.host,
@@ -95,17 +100,17 @@ export async function createServer(): Promise<http.Server> {
 		res.once('close', complete.bind(null, false));
 	});
 
-	if (toBoolean(env['WEBSOCKETS_ENABLED']) === true) {
+	if (env.WEBSOCKETS_ENABLED) {
 		createSubscriptionController(server);
 		createWebSocketController(server);
+		createLogsController(server);
+
 		startWebSocketHandlers();
 	}
 
 	const terminusOptions: TerminusOptions = {
 		timeout:
-			(env['SERVER_SHUTDOWN_TIMEOUT'] as number) >= 0 && (env['SERVER_SHUTDOWN_TIMEOUT'] as number) < Infinity
-				? (env['SERVER_SHUTDOWN_TIMEOUT'] as number)
-				: 1000,
+			env.SERVER_SHUTDOWN_TIMEOUT >= 0 && env.SERVER_SHUTDOWN_TIMEOUT < Infinity ? env.SERVER_SHUTDOWN_TIMEOUT : 1000,
 		signals: ['SIGINT', 'SIGTERM', 'SIGHUP'],
 		beforeShutdown,
 		onSignal,
@@ -127,6 +132,10 @@ export async function createServer(): Promise<http.Server> {
 	async function onSignal() {
 		getSubscriptionController()?.terminate();
 		getWebSocketController()?.terminate();
+		getLogsController()?.terminate();
+		await getCollabHandler()?.terminate();
+		await terminateAllBufferedCounters();
+		await shutdownAITelemetry();
 
 		const database = getDatabase();
 		await database.destroy();
@@ -154,12 +163,24 @@ export async function createServer(): Promise<http.Server> {
 export async function startServer(): Promise<void> {
 	const server = await createServer();
 
-	const host = env['HOST'] as string;
-	const port = parseInt(env['PORT'] as string);
+	let listenOptions: ListenOptions;
+
+	if (env.UNIX_SOCKET_PATH) {
+		listenOptions = { path: env.UNIX_SOCKET_PATH };
+	} else {
+		listenOptions = {
+			host: env.HOST,
+			port: env.PORT,
+		};
+	}
 
 	server
-		.listen(port, host, () => {
-			logger.info(`Server started at http://${host}:${port}`);
+		.listen(listenOptions, () => {
+			const protocol = server instanceof https.Server ? 'https' : 'http';
+
+			logger.info(
+				`Server started at ${listenOptions.port ? `${protocol}://${getAddress(server)}` : getAddress(server)}`,
+			);
 
 			process.send?.('ready');
 
@@ -175,7 +196,7 @@ export async function startServer(): Promise<void> {
 		})
 		.once('error', (err: any) => {
 			if (err?.code === 'EADDRINUSE') {
-				logger.error(`Port ${port} is already in use`);
+				logger.error(`${listenOptions.port ? `Port ${listenOptions.port}` : getAddress(server)} is already in use`);
 				process.exit(1);
 			} else {
 				throw err;

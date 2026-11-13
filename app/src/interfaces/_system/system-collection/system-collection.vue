@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { useCollectionsStore } from '@/stores/collections';
-import { isSystemCollection } from '@directus/system-data';
 import { computed } from 'vue';
-import { useI18n } from 'vue-i18n';
+import VSelect from '@/components/v-select/v-select.vue';
+import { useCollectionsStore } from '@/stores/collections';
+import { isCollectionInactive } from '@/utils/collection-status';
 
 const props = withDefaults(
 	defineProps<{
@@ -10,6 +10,7 @@ const props = withDefaults(
 		disabled?: boolean;
 		includeSystem?: boolean;
 		includeSingleton?: boolean;
+		allowNone?: boolean;
 	}>(),
 	{ includeSingleton: true },
 );
@@ -18,29 +19,25 @@ defineEmits<{
 	(e: 'input', value: string | null): void;
 }>();
 
-const { t } = useI18n();
-
 const collectionsStore = useCollectionsStore();
 
 const collections = computed(() => {
-	let collections = collectionsStore.collections;
+	let collections = collectionsStore.allCollections;
 
 	if (!props.includeSingleton) {
 		collections = collections.filter((collection) => collection?.meta?.singleton === false);
 	}
 
-	return [
-		...collections.filter((collection) => isSystemCollection(collection.collection) === false),
-		...(props.includeSystem ? collectionsStore.crudSafeSystemCollections : []),
-	];
+	return [...collections, ...(props.includeSystem ? collectionsStore.crudSafeSystemCollections : [])];
 });
 
 const items = computed(() => {
-	return collections.value.reduce<{ text: string; value: string }[]>((acc, collection) => {
+	return collections.value.reduce<{ text: string; value: string; disabled: boolean }[]>((acc, collection) => {
 		if (collection.type !== 'alias') {
 			acc.push({
 				text: collection.name,
 				value: collection.collection,
+				disabled: isCollectionInactive(collection),
 			});
 		}
 
@@ -50,11 +47,12 @@ const items = computed(() => {
 </script>
 
 <template>
-	<v-select
+	<VSelect
 		:model-value="value"
 		:disabled="disabled"
+		:show-deselect="allowNone"
 		:items="items"
-		:placeholder="t('select_a_collection')"
+		:placeholder="$t('select_a_collection')"
 		@update:model-value="$emit('input', $event)"
 	/>
 </template>

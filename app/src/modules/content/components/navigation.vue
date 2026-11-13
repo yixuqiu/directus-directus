@@ -1,17 +1,24 @@
 <script setup lang="ts">
+import { isNil, orderBy } from 'lodash-es';
+import { computed, ref, toRefs } from 'vue';
+import { useNavigation } from '../composables/use-navigation';
+import NavigationItem from './NavigationItem.vue';
+import VButton from '@/components/v-button.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VMenu from '@/components/v-menu.vue';
+import VTextOverflow from '@/components/v-text-overflow.vue';
 import { useCollectionsStore } from '@/stores/collections';
 import { useUserStore } from '@/stores/user';
-import { isNil, orderBy } from 'lodash';
-import { computed, ref, toRefs } from 'vue';
-import { useI18n } from 'vue-i18n';
-import { useNavigation } from '../composables/use-navigation';
-import NavigationItem from './navigation-item.vue';
 
 const props = defineProps<{
 	currentCollection?: string;
 }>();
 
-const { t } = useI18n();
 const { currentCollection } = toRefs(props);
 const { activeGroups, showHidden } = useNavigation(currentCollection);
 
@@ -30,7 +37,6 @@ const rootItems = computed(() => {
 	);
 });
 
-const dense = computed(() => collectionsStore.visibleCollections.length > 5);
 const showSearch = computed(() => collectionsStore.visibleCollections.length > 20);
 
 const hasHiddenCollections = computed(
@@ -41,10 +47,12 @@ const hasHiddenCollections = computed(
 <template>
 	<div class="content-navigation-wrapper">
 		<div v-if="showSearch" class="search-input">
-			<v-input v-model="search" type="search" :placeholder="t('search_collection')" />
+			<VInput v-model="search" type="search" :placeholder="$t('search_collection')">
+				<template #prepend><VIcon name="search" /></template>
+			</VInput>
 		</div>
 
-		<v-list
+		<VList
 			v-model="activeGroups"
 			v-context-menu="'contextMenu'"
 			scope="content-navigation"
@@ -52,19 +60,19 @@ const hasHiddenCollections = computed(
 			tabindex="-1"
 			nav
 			:mandatory="false"
-			:dense="dense"
+			dense
 		>
-			<v-button
+			<VButton
 				v-if="userStore.isAdmin && collectionsStore.allCollections.length === 0"
 				full-width
 				outlined
 				dashed
-				to="/settings/data-model/+"
+				:to="{ name: 'settings-add-new' }"
 			>
-				{{ t('create_collection') }}
-			</v-button>
+				{{ $t('create_collection') }}
+			</VButton>
 
-			<navigation-item
+			<NavigationItem
 				v-for="collection in rootItems"
 				:key="collection.collection"
 				:show-hidden="showHidden"
@@ -72,25 +80,25 @@ const hasHiddenCollections = computed(
 				:search="search"
 			/>
 
-			<v-menu v-if="hasHiddenCollections" ref="contextMenu" show-arrow placement="bottom-start">
-				<v-list>
-					<v-list-item clickable @click="showHidden = !showHidden">
-						<v-list-item-icon>
-							<v-icon :name="showHidden ? 'visibility_off' : 'visibility'" />
-						</v-list-item-icon>
-						<v-list-item-content>
-							<v-text-overflow :text="showHidden ? t('hide_hidden_collections') : t('show_hidden_collections')" />
-						</v-list-item-content>
-					</v-list-item>
-				</v-list>
-			</v-menu>
-		</v-list>
+			<VMenu v-if="hasHiddenCollections" ref="contextMenu" show-arrow placement="bottom-start">
+				<VList>
+					<VListItem clickable @click="showHidden = !showHidden">
+						<VListItemIcon>
+							<VIcon :name="showHidden ? 'visibility_off' : 'visibility'" />
+						</VListItemIcon>
+						<VListItemContent>
+							<VTextOverflow :text="showHidden ? $t('hide_hidden_collections') : $t('show_hidden_collections')" />
+						</VListItemContent>
+					</VListItem>
+				</VList>
+			</VMenu>
+		</VList>
 	</div>
 </template>
 
 <style lang="scss" scoped>
 .group-name {
-	padding-left: 8px;
+	padding-inline-start: 0.4375rem;
 	font-weight: 600;
 }
 
@@ -105,25 +113,42 @@ const hasHiddenCollections = computed(
 .content-navigation-wrapper {
 	display: flex;
 	flex-direction: column;
-	min-height: 100%;
+	min-block-size: 100%;
 }
 
 .content-navigation {
-	--v-list-min-height: calc(100% - 64px);
+	--v-list-min-height: calc(100% - 3.625rem);
+	--v-list-padding: 0.75rem;
 
 	flex-grow: 1;
 
+	&.nav:deep(.v-list-item:not(.dense)) {
+		padding: 0 0.5rem;
+	}
+
+	:deep(.v-list-item-icon) {
+		margin-block: 0;
+	}
+
+	:deep(.v-list-item-icon:not(:only-child):first-child) {
+		margin-inline-end: 0.5rem;
+	}
+
+	:deep(.v-list-item-content) {
+		padding: 0;
+	}
+
 	.v-detail {
 		:deep(.v-divider) {
-			margin: 0px;
+			margin: 0;
 		}
 
 		&:not(:first-child) :deep(.v-divider) {
-			margin-top: 8px;
+			margin-block-start: 0.4375rem;
 		}
 
 		&.empty :deep(.v-divider) {
-			margin-bottom: 8px;
+			margin-block-end: 0.4375rem;
 		}
 	}
 }
@@ -133,13 +158,14 @@ const hasHiddenCollections = computed(
 }
 
 .search-input {
-	--input-height: 40px;
+	--theme--form--field--input--height: 2rem;
+	--theme--form--field--input--padding: 0.5rem;
 
 	position: sticky;
-	top: 0;
-	z-index: 2;
-	padding: 12px;
-	padding-bottom: 0;
-	background-color: var(--theme--navigation--background);
+	inset-block-start: 0;
+	z-index: 1;
+	padding: 0.6875rem;
+	padding-block-end: 0;
+	background-color: var(--theme--shell--background);
 }
 </style>

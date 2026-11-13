@@ -1,18 +1,27 @@
 <script setup lang="ts">
-import { useFieldsStore } from '@/stores/fields';
-import { useRelationsStore } from '@/stores/relations';
-import { ClientFilterOperator, FieldFunction, Filter, Type } from '@directus/types';
+import { ClientFilterOperator, Field, FieldFunction, Filter, Type } from '@directus/types';
 import {
 	getFilterOperatorsForType,
 	getOutputTypeForFunction,
 	parseFilterFunctionPath,
 	parseJSON,
 } from '@directus/utils';
-import { cloneDeep, get, isEmpty, set } from 'lodash';
+import { cloneDeep, get, isEmpty, set } from 'lodash-es';
 import { computed, inject, ref } from 'vue';
-import { useI18n } from 'vue-i18n';
-import Nodes from './nodes.vue';
-import { getNodeName } from './utils';
+import Nodes from './Nodes.vue';
+import { buildJsonFilter, getNodeName } from './utils';
+import VDivider from '@/components/v-divider.vue';
+import VFieldList from '@/components/v-field-list/v-field-list.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VMenu from '@/components/v-menu.vue';
+import VNotice from '@/components/v-notice.vue';
+import VTextOverflow from '@/components/v-text-overflow.vue';
+import { useFieldsStore } from '@/stores/fields';
+import { useRelationsStore } from '@/stores/relations';
+import { extractFieldFromFunction } from '@/utils/extract-field-from-function';
 
 interface Props {
 	value?: Record<string, any> | string;
@@ -29,8 +38,17 @@ interface Props {
 	inline?: boolean;
 	includeValidation?: boolean;
 	includeRelations?: boolean;
+	/**
+	 * Allow creating `_json` filter nodes. Forced off when includeValidation is set, as the
+	 * validation/conditions rule engine (generate-joi) does not support the `_json` operator.
+	 */
+	includeJsonFunction?: boolean;
+	injectVersionField?: boolean;
 	relationalFieldSelectable?: boolean;
+	/** Hide fields the consumer can't filter on. Applies at every level of the field tree. */
+	fieldFilter?: (field: Field) => boolean;
 	rawFieldNames?: boolean;
+	rawEditorEnabled?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -43,13 +61,13 @@ const props = withDefaults(defineProps<Props>(), {
 	inline: false,
 	includeValidation: false,
 	includeRelations: true,
+	includeJsonFunction: true,
+	injectVersionField: false,
 	relationalFieldSelectable: true,
 	rawFieldNames: false,
 });
 
 const emit = defineEmits(['input']);
-
-const { t } = useI18n();
 
 const menuEl = ref();
 
@@ -62,6 +80,8 @@ const collection = computed(() => {
 
 const fieldsStore = useFieldsStore();
 const relationsStore = useRelationsStore();
+
+const jsonFunctionEnabled = computed(() => props.includeJsonFunction && !props.includeValidation);
 
 const innerValue = computed<Filter[]>({
 	get() {
@@ -98,10 +118,23 @@ function addNode(key: string) {
 	if (key === '$group') {
 		innerValue.value = innerValue.value.concat({ _and: [] });
 	} else {
+		const functionInfo = extractFieldFromFunction(key);
+
+		if (functionInfo.fn === 'json') {
+			// getOutputTypeForFunction has no mapping for "json", so there is no generic fallback
+			if (!jsonFunctionEnabled.value) return;
+
+			innerValue.value = innerValue.value.concat(buildJsonFilter(functionInfo.field, '', '_eq', null));
+			return;
+		}
+
 		let type: Type;
 		const field = fieldsStore.getField(collection.value, key);
+		const isVersion = key === '$version';
 
-		if (key.includes('(') && key.includes(')')) {
+		if (isVersion) {
+			type = 'string';
+		} else if (key.includes('(') && key.includes(')')) {
 			const functionName = key.split('(')[0] as FieldFunction;
 			type = getOutputTypeForFunction(functionName);
 			key = parseFilterFunctionPath(key);
@@ -118,8 +151,12 @@ function addNode(key: string) {
 			}
 		}
 
-		const filterOperators = getFilterOperatorsForType(type, { includeValidation: props.includeValidation });
-		const operator = field?.meta?.options?.choices && filterOperators.includes('eq') ? 'eq' : filterOperators[0];
+		const filterOperators = getFilterOperatorsForType(type, { includeValidation: props.includeValidation }).filter(
+			(operator) => operator !== 'json',
+		);
+
+		const operator =
+			isVersion || (field?.meta?.options?.choices && filterOperators.includes('eq')) ? 'eq' : filterOperators[0];
 
 		const booleanOperators: ClientFilterOperator[] = ['empty', 'nempty', 'null', 'nnull'];
 		const initialValue = operator && booleanOperators.includes(operator) ? true : null;
@@ -156,87 +193,93 @@ function addKeyAsNode() {
 </script>
 
 <template>
-	<v-notice v-if="collectionRequired && !collectionField && !collection" type="warning">
-		{{ t('collection_field_not_setup') }}
-	</v-notice>
-	<v-notice v-else-if="collectionRequired && !collection" type="warning">
-		{{ t('select_a_collection') }}
-	</v-notice>
+	<VNotice v-if="collectionRequired && !collectionField && !collection" type="warning">
+		{{ $t('collection_field_not_setup') }}
+	</VNotice>
+	<VNotice v-else-if="collectionRequired && !collection" type="warning">
+		{{ $t('select_a_collection') }}
+	</VNotice>
 
 	<div v-else class="system-filter" :class="{ inline, empty: innerValue.length === 0, field: fieldName !== undefined }">
-		<v-list mandatory>
+		<VList mandatory>
 			<div v-if="innerValue.length === 0" class="no-rules">
-				{{ t('interfaces.filter.no_rules') }}
+				{{ $t('interfaces.filter.no_rules') }}
 			</div>
 
-			<nodes
+			<Nodes
 				v-else
 				v-model:filter="innerValue"
 				:collection="collection"
 				:field="fieldName"
 				:depth="1"
 				:include-validation="includeValidation"
+				:include-json-function="jsonFunctionEnabled"
 				:include-relations="includeRelations"
 				:relational-field-selectable="relationalFieldSelectable"
+				:field-filter="fieldFilter"
 				:raw-field-names="rawFieldNames"
+				:variable-input-enabled="rawEditorEnabled"
 				@remove-node="removeNode($event)"
 				@change="emitValue"
 			/>
-		</v-list>
+		</VList>
 
 		<div v-if="fieldName" class="buttons">
-			<button @click="addNode(fieldName!)">{{ t('interfaces.filter.add_filter') }}</button>
-			<button @click="addNode('$group')">{{ t('interfaces.filter.add_group') }}</button>
+			<button @click="addNode(fieldName!)">{{ $t('interfaces.filter.add_filter') }}</button>
+			<button @click="addNode('$group')">{{ $t('interfaces.filter.add_group') }}</button>
 		</div>
 		<div v-else class="buttons">
-			<v-menu ref="menuEl" placement="bottom-start" show-arrow>
+			<VMenu ref="menuEl" placement="bottom-start" show-arrow :attached="inline">
 				<template #activator="{ toggle, active }">
 					<button class="add-filter" :class="{ active }" @click="toggle">
-						<v-icon v-if="inline" name="add" class="add" small />
-						<span>{{ t('interfaces.filter.add_filter') }}</span>
-						<v-icon name="expand_more" class="expand_more" />
+						<VIcon v-if="inline" name="add" class="add" small />
+						<span>{{ $t('interfaces.filter.add_filter') }}</span>
+						<VIcon name="arrow_drop_down" class="expand_more" />
 					</button>
 				</template>
-
-				<v-field-list
+				<VFieldList
 					v-if="collectionRequired"
+					:attached="inline"
 					:collection="collection"
 					include-functions
+					:excluded-functions="jsonFunctionEnabled ? [] : ['json']"
 					:include-relations="includeRelations"
 					:relational-field-selectable="relationalFieldSelectable"
+					:field-filter="fieldFilter"
+					:inject-version-field="injectVersionField"
 					:allow-select-all="false"
 					:raw-field-names="rawFieldNames"
 					@add="addNode($event[0])"
 				>
 					<template #prepend>
-						<v-list-item clickable @click="addNode('$group')">
-							<v-list-item-content>
-								<v-text-overflow :text="t('interfaces.filter.add_group')" />
-							</v-list-item-content>
-						</v-list-item>
-						<v-divider />
+						<VListItem clickable @click="addNode('$group')">
+							<VListItemContent>
+								<VTextOverflow :text="$t('interfaces.filter.add_group')" />
+							</VListItemContent>
+						</VListItem>
+						<VDivider />
 					</template>
-				</v-field-list>
+				</VFieldList>
 
-				<v-list v-else :mandatory="false">
-					<v-list-item clickable @click="addNode('$group')">
-						<v-list-item-content>
-							<v-text-overflow :text="t('interfaces.filter.add_group')" />
-						</v-list-item-content>
-					</v-list-item>
-					<v-divider />
-					<v-list-item @click.stop>
-						<v-list-item-content>
+				<VList v-else :mandatory="false">
+					<VListItem clickable @click="addNode('$group')">
+						<VListItemContent>
+							<VTextOverflow :text="$t('interfaces.filter.add_group')" />
+						</VListItemContent>
+					</VListItem>
+					<VDivider />
+					<VListItem @click.stop>
+						<VListItemContent>
 							<input
 								v-model="newKey"
 								class="new-key-input"
-								:placeholder="t('interfaces.filter.add_key_placeholder')"
+								:placeholder="$t('interfaces.filter.add_key_placeholder')"
 								@keydown.enter="addKeyAsNode"
 							/>
-						</v-list-item-content>
-					</v-list-item>
-				</v-list>
-			</v-menu>
+						</VListItemContent>
+					</VListItem>
+				</VList>
+			</VMenu>
 		</div>
 	</div>
 </template>
@@ -249,27 +292,27 @@ function addKeyAsNode() {
 	}
 
 	:deep(.group) {
-		margin-left: 18px;
-		padding-left: 10px;
-		border-left: var(--theme--border-width) solid var(--theme--border-color-subdued);
+		margin-inline-start: 1rem;
+		padding-inline-start: 0.5625rem;
+		border-inline-start: var(--theme--border-width) solid var(--theme--border-color-subdued);
 	}
 
 	.v-list {
-		min-width: auto;
-		margin: 0px 0px 10px;
-		padding: 20px 20px 12px;
+		min-inline-size: auto;
+		margin: 0 0 0.5625rem;
+		padding: 1.125rem 1.125rem 0.6875rem;
 		border: var(--theme--border-width) solid var(--theme--border-color-subdued);
 		background: var(--theme--form--field--input--background);
 
 		& > :deep(.group) {
-			margin-left: 0px;
-			padding-left: 0px;
-			border-left: none;
+			margin-inline-start: 0;
+			padding-inline-start: 0;
+			border-inline-start: none;
 		}
 	}
 
 	.buttons {
-		padding: 0 10px;
+		padding: 0 0.5625rem;
 		font-weight: 600;
 
 		span {
@@ -281,9 +324,8 @@ function addKeyAsNode() {
 		.v-list {
 			display: flex;
 			align-items: center;
-			height: var(--theme--form--field--input--height);
-			padding-top: 0;
-			padding-bottom: 0;
+			block-size: var(--theme--form--field--input--height);
+			padding-block: 0;
 		}
 
 		.no-rules {
@@ -316,32 +358,26 @@ function addKeyAsNode() {
 		.add-filter {
 			display: flex;
 			align-items: center;
-			width: 100%;
-			height: 30px;
+			inline-size: 100%;
+			block-size: 1.6875rem;
 			padding: 0;
 			color: var(--theme--form--field--input--foreground-subdued);
 			background-color: var(--theme--form--field--input--background);
 			border: var(--theme--border-width) solid var(--theme--border-color-subdued);
-			border-radius: 100px;
+			border-radius: 5.625rem;
 			transition: border-color var(--fast) var(--transition);
+
 			&:hover,
 			&.active {
 				border-color: var(--theme--form--field--input--border-color);
 			}
-			&.active {
-				.expand_more {
-					transform: scaleY(-1);
-					transition-timing-function: var(--transition-in);
-				}
-			}
+
 			.add {
-				margin-left: 6px;
-				margin-right: 4px;
+				margin-inline: 0.3125rem 0.25rem;
 			}
+
 			.expand_more {
-				margin-left: auto;
-				margin-right: 6px;
-				transition: transform var(--medium) var(--transition-out);
+				margin-inline: auto 0.3125rem;
 			}
 		}
 	}
@@ -355,7 +391,7 @@ function addKeyAsNode() {
 	}
 
 	button + button {
-		margin-left: 24px;
+		margin-inline-start: 1.375rem;
 	}
 }
 

@@ -1,14 +1,13 @@
 import { useEnv } from '@directus/env';
 import { ForbiddenError, InvalidPayloadError, LimitExceededError, UnprocessableContentError } from '@directus/errors';
-import type { ApiOutput, BundleExtension, ExtensionSettings } from '@directus/extensions';
 import { describe, type DescribeOptions } from '@directus/extensions-registry';
-import type { Accountability, DeepPartial, SchemaOverview } from '@directus/types';
+import type { ApiOutput, BundleExtension, ExtensionManager, ExtensionSettings } from '@directus/types';
+import type { AbstractServiceOptions, Accountability, DeepPartial, SchemaOverview } from '@directus/types';
 import { isObject } from '@directus/utils';
 import type { Knex } from 'knex';
 import getDatabase from '../database/index.js';
 import { getExtensionManager } from '../extensions/index.js';
-import type { ExtensionManager } from '../extensions/manager.js';
-import type { AbstractServiceOptions } from '../types/index.js';
+import { useLogger } from '../logger/index.js';
 import { transaction } from '../utils/transaction.js';
 import { ItemsService } from './items.js';
 
@@ -45,8 +44,8 @@ export class ExtensionsService {
 
 		const describeOptions: DescribeOptions = {};
 
-		if (typeof env['MARKETPLACE_REGISTRY'] === 'string') {
-			describeOptions.registry = env['MARKETPLACE_REGISTRY'];
+		if (env.MARKETPLACE_REGISTRY) {
+			describeOptions.registry = env.MARKETPLACE_REGISTRY;
 		}
 
 		const extension = await describe(extensionId, describeOptions);
@@ -56,7 +55,8 @@ export class ExtensionsService {
 			throw new ForbiddenError();
 		}
 
-		const limit = env['EXTENSIONS_LIMIT'] ? Number(env['EXTENSIONS_LIMIT']) : null;
+		// `0` means no limit
+		const limit = env.EXTENSIONS_LIMIT || null;
 
 		if (limit !== null) {
 			const currentlyInstalledCount = this.extensionsManager.extensions.length;
@@ -71,7 +71,7 @@ export class ExtensionsService {
 			const afterInstallCount = currentlyInstalledCount + points;
 
 			if (afterInstallCount >= limit) {
-				throw new LimitExceededError();
+				throw new LimitExceededError({ category: 'Extensions' });
 			}
 		}
 
@@ -145,6 +145,9 @@ export class ExtensionsService {
 	}
 
 	async readAll() {
+		// wait for extensions to be reloaded
+		await this.extensionsManager.isReloading();
+
 		const settings = await this.extensionsItemService.readByQuery({ limit: -1 });
 
 		const regular = settings.filter(({ bundle }) => bundle === null);
@@ -184,6 +187,8 @@ export class ExtensionsService {
 	}
 
 	async readOne(id: string): Promise<ApiOutput> {
+		// wait for extensions to be reloaded
+		await this.extensionsManager.isReloading();
 		const meta = await this.extensionsItemService.readOne(id);
 		const schema = this.extensionsManager.getExtension(meta.source, meta.folder) ?? null;
 
@@ -224,9 +229,12 @@ export class ExtensionsService {
 			return extension;
 		});
 
-		this.extensionsManager.reload().then(() => {
-			this.extensionsManager.broadcastReloadNotification();
-		});
+		this.extensionsManager
+			.reload()
+			.then(() => this.extensionsManager.broadcastReloadNotification())
+			.catch((error) => {
+				useLogger().error(error, 'Failed to notify other instances to reload extensions');
+			});
 
 		return result;
 	}
@@ -245,18 +253,22 @@ export class ExtensionsService {
 	 *    - Entry status change resulted in all children being disabled then the parent bundle is disabled
 	 *    - Entry status change resulted in at least one child being enabled then the parent bundle is enabled
 	 */
-	private async checkBundleAndSyncStatus(trx: Knex, bundleId: string, extension: ApiOutput) {
+	private async checkBundleAndSyncStatus(trx: Knex, extensionId: string, extension: ApiOutput) {
 		if (extension.bundle === null && extension.schema?.type === 'bundle') {
 			// If extension is the parent bundle, set it and all nested extensions to enabled
 			await trx('directus_extensions')
 				.update({ enabled: extension.meta.enabled })
-				.where({ bundle: bundleId })
-				.orWhere({ id: bundleId });
+				.where({ bundle: extensionId })
+				.orWhere({ id: extensionId });
 
 			return;
 		}
 
-		const parent = await this.readOne(bundleId);
+		const parentId = extension.bundle ?? extension.meta.bundle;
+
+		if (!parentId) return;
+
+		const parent = await this.readOne(parentId);
 
 		if (parent.schema?.type !== 'bundle') {
 			return;
@@ -269,14 +281,14 @@ export class ExtensionsService {
 		}
 
 		const hasEnabledChildren = !!(await trx('directus_extensions')
-			.where({ bundle: bundleId })
+			.where({ bundle: parentId })
 			.where({ enabled: true })
 			.first());
 
 		if (hasEnabledChildren) {
-			await trx('directus_extensions').update({ enabled: true }).where({ id: bundleId });
+			await trx('directus_extensions').update({ enabled: true }).where({ id: parentId });
 		} else {
-			await trx('directus_extensions').update({ enabled: false }).where({ id: bundleId });
+			await trx('directus_extensions').update({ enabled: false }).where({ id: parentId });
 		}
 	}
 }

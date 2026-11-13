@@ -31,6 +31,7 @@ export type CollectionMeta = {
 	display_template: string | null;
 	preview_url: string | null;
 	versioning: boolean;
+	autosave_revision_interval: number | null;
 	sort_field: string | null;
 	archive_field: string | null;
 	archive_value: string | null;
@@ -42,6 +43,7 @@ export type CollectionMeta = {
 	sort: number | null;
 	group: string | null;
 	collapse: 'open' | 'closed' | 'locked';
+	status: 'active' | 'inactive';
 };
 
 export type BaseCollectionMeta = Pick<
@@ -53,10 +55,12 @@ export type BaseCollectionMeta = Pick<
 	| 'icon'
 	| 'translations'
 	| 'versioning'
+	| 'autosave_revision_interval'
 	| 'item_duplication_fields'
 	| 'accountability'
 	| 'group'
 	| 'system'
+	| 'status'
 >;
 
 export type DataCollectionMeta = Partial<BaseCollectionMeta> & Pick<BaseCollectionMeta, 'collection' | 'note'>;
@@ -78,9 +82,11 @@ export type FieldMeta = {
 	translations: FieldTranslations[] | null;
 	width: Width | null;
 	note: string | null;
+	clear_hidden_value_on_save?: boolean;
 	conditions: Condition[] | null;
 	validation: Filter | null;
 	validation_message: string | null;
+	searchable: boolean;
 	system?: true;
 };
 
@@ -98,6 +104,7 @@ export type Condition = {
 	hidden?: boolean;
 	options?: Record<string, any>;
 	required?: boolean;
+	clear_hidden_value_on_save?: boolean;
 };
 
 export type Filter = LogicalFilter | FieldFilter;
@@ -155,7 +162,7 @@ export type FieldValidationOperator = {
 
 export type Permission = {
 	id?: number;
-	role: string | null;
+	policy: string | null;
 	collection: string;
 	action: PermissionsAction;
 	permissions: Filter | null;
@@ -165,6 +172,11 @@ export type Permission = {
 	system?: true;
 };
 
-export type PermissionsAction = 'create' | 'read' | 'update' | 'delete' | 'comment' | 'explain' | 'share';
+export type PermissionsAction = 'create' | 'read' | 'update' | 'delete' | 'share';
 
 export type DataPermission = Partial<Permission> & Pick<Permission, 'collection' | 'action'>;
+
+export type FieldIndex = {
+	collection: string;
+	field: string;
+};

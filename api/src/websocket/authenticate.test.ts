@@ -1,10 +1,10 @@
+import { InvalidCredentialsError } from '@directus/errors';
 import type { Accountability } from '@directus/types';
 import type { Mock } from 'vitest';
 import { describe, expect, test, vi } from 'vitest';
-import { InvalidCredentialsError } from '@directus/errors';
+import emitter from '../emitter.js';
 import { getAccountabilityForToken } from '../utils/get-accountability-for-token.js';
-import { getPermissions } from '../utils/get-permissions.js';
-import { authenticateConnection, authenticationSuccess, refreshAccountability } from './authenticate.js';
+import { authenticateConnection, authenticationSuccess } from './authenticate.js';
 import type { WebSocketAuthMessage } from './messages.js';
 import { getExpiresAtForToken } from './utils/get-expires-at-for-token.js';
 
@@ -13,6 +13,8 @@ vi.mock('../utils/get-accountability-for-token', () => ({
 		role: null, // minimum viable accountability
 	} as Accountability),
 }));
+
+vi.mock('../emitter');
 
 vi.mock('../utils/get-permissions', () => ({
 	getPermissions: vi.fn(),
@@ -25,10 +27,12 @@ vi.mock('./utils/get-expires-at-for-token', () => ({
 vi.mock('../utils/get-schema');
 
 vi.mock('../services/authentication', () => ({
-	AuthenticationService: vi.fn(() => ({
-		login: vi.fn().mockReturnValue({ accessToken: '123', refreshToken: 'refresh', expires: 123456 }),
-		refresh: vi.fn().mockReturnValue({ accessToken: '456', refreshToken: 'refresh' }),
-	})),
+	AuthenticationService: vi.fn(function () {
+		return {
+			login: vi.fn().mockReturnValue({ accessToken: '123', refreshToken: 'refresh', expires: 123456 }),
+			refresh: vi.fn().mockReturnValue({ accessToken: '456', refreshToken: 'refresh' }),
+		};
+	}),
 }));
 
 vi.mock('../database');
@@ -83,12 +87,28 @@ describe('authenticateConnection', () => {
 		});
 	});
 
+	test('Short-circuits when authenticate filter is used', async () => {
+		const TIMESTAMP = 456987;
+		(getExpiresAtForToken as Mock).mockReturnValue(TIMESTAMP);
+
+		const customAccountability = { admin: true };
+
+		vi.mocked(emitter.emitFilter).mockResolvedValueOnce(customAccountability);
+
+		const { accountability } = await authenticateConnection({
+			type: 'auth',
+			access_token: 'access_token',
+		} as WebSocketAuthMessage);
+
+		expect(accountability).toEqual(customAccountability);
+	});
+
 	test('Failure token expired', async () => {
 		(getAccountabilityForToken as Mock).mockImplementation(() => {
 			throw new InvalidCredentialsError();
 		});
 
-		expect(() =>
+		await expect(() =>
 			authenticateConnection({
 				type: 'auth',
 				access_token: 'expired',
@@ -97,7 +117,7 @@ describe('authenticateConnection', () => {
 	});
 
 	test('Failure authentication failed', async () => {
-		expect(() =>
+		await expect(() =>
 			authenticateConnection({
 				type: 'auth',
 				access_token: '',
@@ -106,20 +126,34 @@ describe('authenticateConnection', () => {
 	});
 });
 
-describe('refreshAccountability', () => {
-	test('update permissions', async () => {
-		(getPermissions as Mock).mockReturnValue([]);
+describe('authenticateConnection - OAuth guard', () => {
+	test('WebSocket connect with regular bearer token succeeds', async () => {
+		(getAccountabilityForToken as Mock).mockResolvedValueOnce({
+			role: 'some-role',
+			user: 'some-user',
+		} as Accountability);
 
-		const result = await refreshAccountability({
-			role: '123-456-789',
-			user: 'abc-def-ghi',
-		});
+		const result = await authenticateConnection({
+			type: 'auth',
+			access_token: 'regular-token',
+		} as WebSocketAuthMessage);
 
-		expect(result).toStrictEqual({
-			role: '123-456-789',
-			user: 'abc-def-ghi',
-			permissions: [],
-		});
+		expect(result.accountability).toMatchObject({ role: 'some-role' });
+	});
+
+	test('WebSocket connect with OAuth bearer token is rejected', async () => {
+		(getAccountabilityForToken as Mock).mockResolvedValueOnce({
+			role: 'some-role',
+			user: 'some-user',
+			oauth: { client: 'my-mcp-client', scopes: ['mcp:access'], aud: ['https://example.com/mcp'] },
+		} as Accountability);
+
+		await expect(() =>
+			authenticateConnection({
+				type: 'auth',
+				access_token: 'oauth-token',
+			} as WebSocketAuthMessage),
+		).rejects.toThrow('Authentication failed.');
 	});
 });
 

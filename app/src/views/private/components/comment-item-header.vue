@@ -1,18 +1,32 @@
 <script setup lang="ts">
-import api from '@/api';
-import { Activity } from '@/types/activity';
-import { getAssetUrl } from '@/utils/get-asset-url';
-import { unexpectedError } from '@/utils/unexpected-error';
-import { userName } from '@/utils/user-name';
-import type { User } from '@directus/types';
+import type { Comment, User } from '@directus/types';
 import { format } from 'date-fns';
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import UserPopover from './user-popover.vue';
+import api from '@/api';
+import VAvatar from '@/components/v-avatar.vue';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VImage from '@/components/v-image.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VMenu from '@/components/v-menu.vue';
+import { getAssetUrl } from '@/utils/get-asset-url';
+import { unexpectedError } from '@/utils/unexpected-error';
+import { userName } from '@/utils/user-name';
 
 const props = defineProps<{
-	activity: Activity & {
+	comment: Comment & {
 		display: string;
-		user: Pick<User, 'id' | 'email' | 'first_name' | 'last_name' | 'avatar'>;
+		user_created: Pick<User, 'id' | 'email' | 'first_name' | 'last_name' | 'avatar'>;
 	};
 	refresh: () => Promise<void>;
 }>();
@@ -22,18 +36,21 @@ defineEmits(['edit']);
 const { t } = useI18n();
 
 const formattedTime = computed(() => {
-	if (props.activity.timestamp) {
+	if (props.comment.date_created) {
 		// timestamp is in iso-8601
-		return format(new Date(props.activity.timestamp), String(t('date-fns_time_no_seconds')));
+		return format(new Date(props.comment.date_created), String(t('date-fns_time_no_seconds')));
 	}
 
 	return null;
 });
 
 const avatarSource = computed(() => {
-	if (!props.activity.user?.avatar) return null;
+	if (!props.comment.user_created?.avatar) return null;
 
-	return getAssetUrl(`${props.activity.user.avatar.id}?key=system-small-cover`);
+	return getAssetUrl(props.comment.user_created.avatar.id, {
+		imageKey: 'system-small-cover',
+		cacheBuster: props.comment.user_created.avatar.modified_on,
+	});
 });
 
 const { confirmDelete, deleting, remove } = useDelete();
@@ -45,10 +62,12 @@ function useDelete() {
 	return { confirmDelete, deleting, remove };
 
 	async function remove() {
+		if (deleting.value) return;
+
 		deleting.value = true;
 
 		try {
-			await api.delete(`/activity/comment/${props.activity.id}`);
+			await api.delete(`/comments/${props.comment.id}`);
 			await props.refresh();
 			confirmDelete.value = false;
 		} catch (error) {
@@ -62,62 +81,59 @@ function useDelete() {
 
 <template>
 	<div class="comment-header">
-		<v-avatar x-small>
-			<v-image v-if="avatarSource" :src="avatarSource" :alt="userName(activity.user)" />
-			<v-icon v-else name="person_outline" />
-		</v-avatar>
+		<VAvatar x-small round>
+			<VImage v-if="avatarSource" :src="avatarSource" :alt="userName(comment.user_created)" />
+			<VIcon v-else name="person_outline" small />
+		</VAvatar>
 
 		<div class="name">
-			<user-popover v-if="activity.user && activity.user.id" :user="activity.user.id">
+			<UserPopover v-if="comment.user_created && comment.user_created.id" :user="comment.user_created.id">
 				<span>
-					<template v-if="activity.user && activity.user">
-						{{ userName(activity.user) }}
-					</template>
-
-					<template v-else>
-						{{ t('private_user') }}
-					</template>
+					{{ userName(comment.user_created) }}
 				</span>
-			</user-popover>
+			</UserPopover>
+			<span v-else>
+				{{ $t('private_user') }}
+			</span>
 		</div>
 
 		<div class="header-right">
-			<v-menu show-arrow placement="bottom-end">
+			<VMenu show-arrow placement="bottom-end">
 				<template #activator="{ toggle, active }">
-					<v-icon class="more" :class="{ active }" name="more_horiz" clickable @click="toggle" />
+					<VIcon class="more" :class="{ active }" name="more_horiz" clickable @click="toggle" />
 					<div class="time">
 						{{ formattedTime }}
 					</div>
 				</template>
 
-				<v-list>
-					<v-list-item clickable @click="$emit('edit')">
-						<v-list-item-icon><v-icon name="edit" /></v-list-item-icon>
-						<v-list-item-content>{{ t('edit') }}</v-list-item-content>
-					</v-list-item>
-					<v-list-item clickable @click="confirmDelete = true">
-						<v-list-item-icon><v-icon name="delete" /></v-list-item-icon>
-						<v-list-item-content>{{ t('delete_label') }}</v-list-item-content>
-					</v-list-item>
-				</v-list>
-			</v-menu>
+				<VList>
+					<VListItem clickable @click="$emit('edit')">
+						<VListItemIcon><VIcon name="edit" /></VListItemIcon>
+						<VListItemContent>{{ $t('edit') }}</VListItemContent>
+					</VListItem>
+					<VListItem clickable @click="confirmDelete = true">
+						<VListItemIcon><VIcon name="delete" /></VListItemIcon>
+						<VListItemContent>{{ $t('delete_label') }}</VListItemContent>
+					</VListItem>
+				</VList>
+			</VMenu>
 		</div>
 
-		<v-dialog v-model="confirmDelete" @esc="confirmDelete = false">
-			<v-card>
-				<v-card-title>{{ t('delete_comment') }}</v-card-title>
-				<v-card-text>{{ t('delete_are_you_sure') }}</v-card-text>
+		<VDialog v-model="confirmDelete" @esc="confirmDelete = false" @apply="remove">
+			<VCard>
+				<VCardTitle>{{ $t('delete_comment') }}</VCardTitle>
+				<VCardText>{{ $t('delete_are_you_sure') }}</VCardText>
 
-				<v-card-actions>
-					<v-button secondary @click="confirmDelete = false">
-						{{ t('cancel') }}
-					</v-button>
-					<v-button kind="danger" :loading="deleting" @click="remove">
-						{{ t('delete_label') }}
-					</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+				<VCardActions>
+					<VButton secondary @click="confirmDelete = false">
+						{{ $t('cancel') }}
+					</VButton>
+					<VButton kind="danger" :loading="deleting" @click="remove">
+						{{ $t('delete_label') }}
+					</VButton>
+				</VCardActions>
+			</VCard>
+		</VDialog>
 	</div>
 </template>
 
@@ -126,13 +142,13 @@ function useDelete() {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	margin-bottom: 8px;
+	margin-block-end: 0.4375rem;
 
 	.v-avatar {
 		--v-avatar-color: var(--theme--background-accent);
 
-		flex-basis: 24px;
-		margin-right: 8px;
+		flex-shrink: 0;
+		margin-inline-end: 0.4375rem;
 
 		.v-icon {
 			--v-icon-color: var(--theme--foreground-subdued);
@@ -141,13 +157,13 @@ function useDelete() {
 
 	.name {
 		flex-grow: 1;
-		margin-right: 8px;
+		margin-inline-end: 0.4375rem;
 		font-weight: 600;
 	}
 
 	.header-right {
 		position: relative;
-		flex-basis: 24px;
+		flex-basis: 1.375rem;
 		color: var(--theme--foreground-subdued);
 
 		.more {
@@ -155,6 +171,7 @@ function useDelete() {
 			opacity: 0;
 			transition: all var(--slow) var(--transition);
 
+			&:focus-visible,
 			&:hover {
 				color: var(--theme--foreground);
 			}
@@ -166,13 +183,13 @@ function useDelete() {
 
 		.time {
 			position: absolute;
-			top: 0;
-			right: 0;
+			inset-block-start: 0;
+			inset-inline-end: 0;
 			display: flex;
 			align-items: center;
-			font-size: 12px;
+			font-size: 0.6875rem;
 			white-space: nowrap;
-			text-align: right;
+			text-align: end;
 			text-transform: lowercase;
 			opacity: 1;
 			transition: opacity var(--slow) var(--transition);
@@ -194,11 +211,11 @@ function useDelete() {
 
 .dot {
 	display: inline-block;
-	width: 6px;
-	height: 6px;
-	margin-right: 4px;
+	inline-size: 0.3125rem;
+	block-size: 0.3125rem;
+	margin-inline-end: 0.25rem;
 	vertical-align: middle;
 	background-color: var(--theme--warning);
-	border-radius: 3px;
+	border-radius: 0.1875rem;
 }
 </style>

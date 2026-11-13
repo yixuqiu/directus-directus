@@ -1,4 +1,4 @@
-import type { SchemaOverview } from '@directus/types';
+import { SchemaBuilder } from '@directus/schema-builder';
 import { type Knex } from 'knex';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { getSchema } from '../../utils/get-schema.js';
@@ -17,7 +17,7 @@ beforeEach(() => {
 		const res: Record<string, number> = {};
 
 		for (const collection of collections) {
-			res[collection] = 15;
+			res[collection.collection] = 15;
 		}
 
 		return res;
@@ -36,30 +36,35 @@ describe('sum', () => {
 });
 
 describe('getUserItemCount', () => {
+	const schema = new SchemaBuilder()
+		.collection('test-a', (c) => {
+			c.field('id').id();
+		})
+		.collection('test-b', (c) => {
+			c.field('id').id();
+		})
+		.collection('directus_a', (c) => {
+			c.field('id').id();
+		})
+		.collection('directus_users', (c) => {
+			c.field('id').id();
+		})
+		.build();
+
 	test('Calls getItemCount for all user collections in the schema', async () => {
-		vi.mocked(getSchema).mockResolvedValue({
-			collections: {
-				'test-a': {},
-				'test-b': {},
-				directus_a: {},
-				directus_users: {},
-			},
-		} as unknown as SchemaOverview);
+		vi.mocked(getSchema).mockResolvedValue(schema);
 
 		await getUserItemCount(mockDb);
 
-		expect(getItemCount).toHaveBeenCalledWith(mockDb, ['test-a', 'test-b', 'directus_a']);
+		expect(getItemCount).toHaveBeenCalledWith(mockDb, [
+			{ collection: 'test-a' },
+			{ collection: 'test-b' },
+			{ collection: 'directus_a' },
+		]);
 	});
 
 	test('Returns collection count and summed item total', async () => {
-		vi.mocked(getSchema).mockResolvedValue({
-			collections: {
-				'test-a': {},
-				'test-b': {},
-				directus_a: {},
-				directus_users: {},
-			},
-		} as unknown as SchemaOverview);
+		vi.mocked(getSchema).mockResolvedValue(schema);
 
 		const res = await getUserItemCount(mockDb);
 

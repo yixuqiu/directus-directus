@@ -5,7 +5,7 @@ export const _cache: {
 	env: Env | undefined;
 } = { env: undefined } as const;
 
-export const useEnv = () => {
+export function useEnv(): Env {
 	if (_cache.env) {
 		return _cache.env;
 	}
@@ -13,4 +13,4 @@ export const useEnv = () => {
 	_cache.env = createEnv();
 
 	return _cache.env;
-};
+}

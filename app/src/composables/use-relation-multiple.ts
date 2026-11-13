@@ -1,13 +1,16 @@
-import api from '@/api';
+import { ContentVersion, Filter, Item } from '@directus/types';
+import { getEndpoint, toArray } from '@directus/utils';
+import { clamp, cloneDeep, get, isEqual, merge, mergeWith } from 'lodash-es';
+import { computed, ref, Ref, shallowRef, watch } from 'vue';
+import { useRefreshSignal } from '@/composables/use-refresh-signal';
 import { RelationM2A } from '@/composables/use-relation-m2a';
 import { RelationM2M } from '@/composables/use-relation-m2m';
 import { RelationO2M } from '@/composables/use-relation-o2m';
+import sdk, { requestEndpoint } from '@/sdk';
+import { isCollectionInactive } from '@/utils/collection-status';
 import { fetchAll } from '@/utils/fetch-all';
+import { containsRelationalChanges, resolveRelationalChanges } from '@/utils/resolve-relational-changes';
 import { unexpectedError } from '@/utils/unexpected-error';
-import { Filter, Item } from '@directus/types';
-import { getEndpoint, toArray } from '@directus/utils';
-import { clamp, cloneDeep, get, isEqual, merge } from 'lodash';
-import { Ref, computed, ref, watch } from 'vue';
 
 export type RelationQueryMultiple = {
 	page: number;
@@ -23,6 +26,10 @@ export type DisplayItem = {
 	$index?: number;
 	$type?: 'created' | 'updated' | 'deleted';
 	$edits?: number;
+	/** Values replaced by the display-only resolution of nested relational edits, keyed by field */
+	$staged?: Record<string, any>;
+	/** What each `$staged` field resolved to, so a value the consumer replaced can be told apart from the resolution */
+	$resolved?: Record<string, any>;
 };
 
 export type ChangesItem = {
@@ -32,38 +39,78 @@ export type ChangesItem = {
 };
 
 export function useRelationMultiple(
-	value: Ref<Record<string, any> | any[] | undefined>,
+	value: Ref<Record<string, any> | any[] | undefined | null>,
 	previewQuery: Ref<RelationQueryMultiple>,
 	relation: Ref<RelationM2A | RelationM2M | RelationO2M | undefined>,
-	itemId: Ref<string | number>,
+	itemId: Ref<string | number | null>,
+	version: Ref<ContentVersion | null>,
 ) {
 	const loading = ref(false);
 	const fetchedItems = ref<Record<string, any>[]>([]);
 	const existingItemCount = ref(0);
 
+	// Signal to the interface to that the parent item was refreshed and should refresh it's value
+	const refreshSignal = useRefreshSignal();
+
 	const { cleanItem, getPage, isLocalItem, getItemEdits, isEmpty } = useUtil();
 
-	const _value = computed<ChangesItem>({
-		get() {
-			if (!value.value || Array.isArray(value.value)) {
-				return {
-					create: [],
-					update: [],
-					delete: [],
-				};
-			}
+	/**
+	 * Whether the collection this relation would query is inactive, and so can't be requested.
+	 * m2a only needs its junction checked, since inactive targets are left out of the fields.
+	 */
+	const targetCollectionInactive = computed(() => {
+		const info = relation.value;
+		if (!info) return false;
+		if (info.type === 'o2m') return isCollectionInactive(info.relatedCollection.collection);
+		if (isCollectionInactive(info.junctionCollection.collection)) return true;
 
-			return value.value as ChangesItem;
-		},
-		set(newValue) {
-			if (newValue.create.length === 0 && newValue.update.length === 0 && newValue.delete.length === 0) {
-				value.value = undefined;
+		return info.type === 'm2m' && isCollectionInactive(info.relatedCollection.collection);
+	});
+
+	const targetPKField = computed(() => {
+		if (!relation.value) return 'id';
+
+		return relation.value.type === 'o2m'
+			? relation.value.relatedPrimaryKeyField.field
+			: relation.value.junctionPrimaryKeyField.field;
+	});
+
+	const fetchedItemsPKs = computed(() => {
+		return fetchedItems.value.map((item) => item[targetPKField.value]);
+	});
+
+	// Kept locally so displayItems reflects an edit before the prop round-trips
+	const _value = shallowRef<ChangesItem>(toChanges(value.value));
+
+	watch(value, (newValue) => (_value.value = toChanges(newValue)), { flush: 'sync' });
+
+	function toChanges(newValue: Record<string, any> | any[] | undefined | null): ChangesItem {
+		if (!newValue || Array.isArray(newValue)) {
+			return {
+				create: [],
+				update: [],
+				delete: [],
+			};
+		}
+
+		return newValue as ChangesItem;
+	}
+
+	function emitValue(newValue: ChangesItem) {
+		if (newValue.create.length === 0 && newValue.update.length === 0 && newValue.delete.length === 0) {
+			const isVersion = version.value !== null;
+
+			if (isVersion) {
+				value.value = fetchedItemsPKs.value;
 				return;
 			}
 
-			value.value = newValue;
-		},
-	});
+			value.value = undefined;
+			return;
+		}
+
+		value.value = newValue;
+	}
 
 	// Fetch new items when the value gets changed by the external "save and stay"
 	// We don't want to refresh when we ourself reset the value (when we have no more changes)
@@ -79,7 +126,15 @@ export function useRelationMultiple(
 		}
 	});
 
-	watch([previewQuery, itemId, relation], updateFetchedItems, { immediate: true });
+	watch(
+		[previewQuery, itemId, relation, refreshSignal],
+		(newData, oldData) => {
+			if (!isEqual(newData, oldData)) {
+				updateFetchedItems();
+			}
+		},
+		{ immediate: true },
+	);
 
 	const { fetchedSelectItems, selected, isItemSelected, selectedOnPage } = useSelected();
 
@@ -91,16 +146,63 @@ export function useRelationMultiple(
 		return existingItemCount.value + _value.value.create.length;
 	});
 
+	// Collection the individual rows of this relation belong to, which is the junction for m2m/m2a
+	const rowCollection = computed(() => {
+		const info = relation.value;
+		if (!info) return null;
+
+		return info.type === 'o2m' ? info.relatedCollection.collection : info.junctionCollection.collection;
+	});
+
+	/**
+	 * Resolve staged edits to nested relations so display templates can render them. Without this a
+	 * nested `{ create, update, delete }` delta reaches the template as-is and renders as `--`.
+	 *
+	 * The values that were replaced are kept under `$staged` so `cleanItem` can put them back: display
+	 * items are handed straight back to `update()` by some interfaces, which must keep saving the delta.
+	 */
+	function forDisplay(item: Record<string, any>, existing?: Record<string, any>) {
+		if (!rowCollection.value || !containsRelationalChanges(item)) return item;
+
+		const resolved = resolveRelationalChanges(rowCollection.value, item, existing);
+		const staged: Record<string, any> = {};
+
+		for (const [field, value] of Object.entries(item)) {
+			if (resolved[field] !== value) staged[field] = value;
+		}
+
+		if (Object.keys(staged).length === 0) return resolved;
+
+		return { ...resolved, $staged: staged };
+	}
+
+	/**
+	 * Record what each staged field ended up holding on the finished display item, so `cleanItem` can
+	 * tell the resolution apart from a value the consumer replaced on purpose. Has to run once the item
+	 * is fully assembled, since the junction field of an m2m/m2a row is merged after resolution.
+	 */
+	function withResolved(item: DisplayItem): DisplayItem {
+		if (!item.$staged) return item;
+
+		const resolved: Record<string, any> = {};
+
+		for (const field of Object.keys(item.$staged)) {
+			resolved[field] = item[field];
+		}
+
+		return { ...item, $resolved: resolved };
+	}
+
 	const createdItems = computed(() => {
 		const info = relation.value;
 		if (info?.type === undefined) return [];
 
 		const items = _value.value.create.map((item, index) => {
-			return {
-				...item,
+			return withResolved({
+				...forDisplay(item),
 				$type: 'created',
 				$index: index,
-			} as DisplayItem;
+			} as DisplayItem);
 		});
 
 		if (info.type === 'o2m') return items;
@@ -110,16 +212,11 @@ export function useRelationMultiple(
 	const displayItems = computed(() => {
 		if (!relation.value) return [];
 
-		const targetPKField =
-			relation.value.type === 'o2m'
-				? relation.value.relatedPrimaryKeyField.field
-				: relation.value.junctionPrimaryKeyField.field;
-
 		const items: DisplayItem[] = fetchedItems.value.map((item: Record<string, any>) => {
 			let edits;
 
 			for (const [index, value] of _value.value.update.entries()) {
-				if (typeof value === 'object' && value[targetPKField] === item[targetPKField]) {
+				if (typeof value === 'object' && value[targetPKField.value] === item[targetPKField.value]) {
 					edits = { index, value };
 					break;
 				}
@@ -128,24 +225,28 @@ export function useRelationMultiple(
 			let updatedItem: Record<string, any> = cloneDeep(item);
 
 			if (edits) {
+				const displayEdits = forDisplay(edits.value, item);
+
 				updatedItem = {
 					...updatedItem,
-					...edits.value,
+					...displayEdits,
 				};
 
 				if (relation.value?.type === 'm2m' || relation.value?.type === 'm2a') {
 					updatedItem[relation.value.junctionField.field] = {
 						...cloneDeep(item)[relation.value.junctionField.field],
-						...edits.value[relation.value.junctionField.field],
+						...displayEdits[relation.value.junctionField.field],
 					};
 				}
+
+				updatedItem = withResolved(updatedItem);
 
 				updatedItem.$type = 'updated';
 				updatedItem.$index = edits.index;
 				updatedItem.$edits = edits.index;
 			}
 
-			const deleteIndex = _value.value.delete.findIndex((id) => id === item[targetPKField]);
+			const deleteIndex = _value.value.delete.findIndex((id) => id === item[targetPKField.value]);
 
 			if (deleteIndex !== -1) {
 				merge(updatedItem, { $type: 'deleted', $index: deleteIndex });
@@ -158,7 +259,7 @@ export function useRelationMultiple(
 			const fetchedItem = fetchedSelectItems.value.find((item) => {
 				switch (relation.value?.type) {
 					case 'o2m':
-						return edit[targetPKField] === item[targetPKField];
+						return edit[targetPKField.value] === item[targetPKField.value];
 					case 'm2m':
 						return (
 							edit[relation.value.junctionField.field][relation.value.relatedPrimaryKeyField.field] ===
@@ -168,8 +269,11 @@ export function useRelationMultiple(
 					case 'm2a': {
 						const itemCollection = item[relation.value.collectionField.field];
 						const editCollection = edit[relation.value.collectionField.field];
-						const itemPkField = relation.value.relationPrimaryKeyFields[itemCollection].field;
-						const editPkField = relation.value.relationPrimaryKeyFields[editCollection].field;
+						const itemPkField = relation.value.relationPrimaryKeyFields[itemCollection]?.field;
+						const editPkField = relation.value.relationPrimaryKeyFields[editCollection]?.field;
+
+						if (!itemPkField) throw new Error(`No primary key field found for collection ${itemCollection}`);
+						if (!editPkField) throw new Error(`No primary key field found for collection ${editCollection}`);
 
 						return (
 							itemCollection === editCollection &&
@@ -182,8 +286,17 @@ export function useRelationMultiple(
 				return;
 			});
 
-			if (!fetchedItem) return edit;
-			return merge({}, fetchedItem, edit);
+			if (!fetchedItem) return withResolved(forDisplay(edit) as DisplayItem);
+
+			const displayEdit = forDisplay(edit, fetchedItem);
+
+			// The resolution already applied the delta against the fetched values, so a plain `merge` would
+			// fold them back in index by index; an array on the edit is the complete value for that field
+			const merged = mergeWith({}, fetchedItem, displayEdit, (_target, source) =>
+				Array.isArray(source) ? source : undefined,
+			);
+
+			return withResolved(merged as DisplayItem);
 		});
 
 		const newItems = getPage(existingItemCount.value + selected.value.length, createdItems.value);
@@ -195,18 +308,25 @@ export function useRelationMultiple(
 		if ((previewQuery.value.limit > 0 && totalItemCount.value > previewQuery.value.limit) || !sortField) return items;
 
 		return items.sort((a, b) => {
+			let left;
+			let right;
+
 			if (sortField.startsWith('-')) {
 				const field = sortField.substring(1);
-				return get(b, field) - get(a, field);
+				left = get(b, field);
+				right = get(a, field);
+			} else {
+				left = get(a, sortField);
+				right = get(b, sortField);
 			}
 
-			return get(a, sortField) - get(b, sortField);
+			return Number(left > right) - Number(right > left);
 		});
 	});
 
 	const { create, remove, select, update } = useActions(_value);
 
-	function useActions(target: Ref<Item>) {
+	function useActions(target: Ref<ChangesItem>) {
 		return { create, update, remove, select };
 
 		function create(...items: Record<string, any>[]) {
@@ -222,7 +342,10 @@ export function useRelationMultiple(
 
 			for (const item of items) {
 				if (item.$type === undefined || item.$index === undefined) {
-					target.value.update.push(cleanItem(item));
+					const existingIndex = findUpdateIndex(item);
+
+					if (existingIndex === -1) target.value.update.push(cleanItem(item));
+					else target.value.update[existingIndex] = cleanItem(item);
 				} else if (item.$type === 'created') {
 					target.value.create[item.$index] = cleanItem(item);
 				} else if (item.$type === 'updated') {
@@ -244,21 +367,16 @@ export function useRelationMultiple(
 		function remove(...items: DisplayItem[]) {
 			if (!relation.value) return;
 
-			const pkField =
-				relation.value.type === 'o2m'
-					? relation.value.relatedPrimaryKeyField.field
-					: relation.value.junctionPrimaryKeyField.field;
-
 			for (const item of items) {
 				if (item.$type === undefined || item.$index === undefined) {
-					target.value.delete.push(item[pkField]);
+					target.value.delete.push(item[targetPKField.value]);
 				} else if (item.$type === 'created') {
 					target.value.create.splice(item.$index, 1);
 				} else if (item.$type === 'updated') {
 					if (isItemSelected(item)) {
 						target.value.update.splice(item.$index, 1);
 					} else {
-						target.value.delete.push(item[pkField]);
+						target.value.delete.push(item[targetPKField.value]);
 					}
 				} else if (item.$type === 'deleted') {
 					target.value.delete.splice(item.$index, 1);
@@ -289,12 +407,15 @@ export function useRelationMultiple(
 
 					case 'm2a': {
 						if (!collection) throw new Error('You need to provide a collection on an m2a');
+						const pkField = info.relationPrimaryKeyFields[collection];
+
+						if (!pkField) throw new Error(`No primary key field found for collection ${collection}`);
 
 						return {
 							[info.reverseJunctionField.field]: itemId.value,
 							[info.collectionField.field]: collection,
 							[info.junctionField.field]: {
-								[info.relationPrimaryKeyFields[collection].field]: item,
+								[pkField.field]: item,
 							},
 						};
 					}
@@ -305,15 +426,23 @@ export function useRelationMultiple(
 			else create(...selected);
 		}
 
+		function findUpdateIndex(item: DisplayItem) {
+			const pk = item[targetPKField.value];
+			if (pk === undefined || pk === null) return -1;
+
+			return target.value.update.findIndex((entry: Record<string, any>) => entry[targetPKField.value] === pk);
+		}
+
 		function updateValue() {
 			target.value = cloneDeep(target.value);
+			emitValue(target.value);
 		}
 	}
 
 	async function updateFetchedItems() {
 		if (!relation.value) return;
 
-		if (!itemId.value || itemId.value === '+') {
+		if (targetCollectionInactive.value || itemId.value === undefined || itemId.value === '+') {
 			fetchedItems.value = [];
 			return;
 		}
@@ -329,7 +458,11 @@ export function useRelationMultiple(
 				fields.add(relation.value.collectionField.field);
 
 				for (const collection of relation.value.allowedCollections) {
+					// Naming an inactive collection in a query makes the API reject the whole request
+					if (isCollectionInactive(collection.collection)) continue;
+
 					const pkField = relation.value.relationPrimaryKeyFields[collection.collection];
+					if (!pkField) throw new Error(`No primary key field found for collection ${collection.collection}`);
 					fields.add(`${relation.value.junctionField.field}:${collection.collection}.${pkField.field}`);
 				}
 
@@ -351,24 +484,38 @@ export function useRelationMultiple(
 			loading.value = true;
 
 			if (itemId.value !== '+') {
-				const filter: Filter = { _and: [{ [reverseJunctionField]: itemId.value } as Filter] };
+				const currentItemId = itemId.value;
+
+				const filter: Filter = {
+					_and: [{ [reverseJunctionField]: itemId.value === null ? { _null: true } : itemId.value } as Filter],
+				};
 
 				if (previewQuery.value.filter) {
 					filter._and.push(previewQuery.value.filter);
 				}
 
-				const response = await api.get(getEndpoint(targetCollection), {
-					params: {
-						search: previewQuery.value.search,
-						fields: Array.from(fields),
-						filter,
-						page: previewQuery.value.page,
-						limit: previewQuery.value.limit,
-						sort: previewQuery.value.sort,
-					},
-				});
+				const response = await sdk.request<Item[]>(
+					requestEndpoint(getEndpoint(targetCollection), {
+						params: {
+							search: previewQuery.value.search,
+							fields: Array.from(fields),
+							filter,
+							page: previewQuery.value.page,
+							limit: previewQuery.value.limit,
+							sort: previewQuery.value.sort,
+						},
+					}),
+				);
 
-				fetchedItems.value = response.data.data;
+				// if itemId changed during the request, we wan't to avoid updating items with incorrect data.
+				// This can happen if the user navigates to a different item while the request is in progress.
+				// The assumption here is that there is another request that started after this one started
+				// and this one is no longer relevant.
+				if (itemId.value !== currentItemId) {
+					return;
+				}
+
+				fetchedItems.value = response;
 			}
 		} catch (error) {
 			unexpectedError(error);
@@ -378,16 +525,17 @@ export function useRelationMultiple(
 	}
 
 	watch(
-		[previewQuery, itemId, relation],
+		[previewQuery, itemId, relation, refreshSignal],
 		(newData, oldData) => {
-			const [newPreviewQuery, newItemId, newRelation] = newData;
-			const [oldPreviewQuery, oldItemId, oldRelation] = oldData;
+			const [newPreviewQuery, newItemId, newRelation, newRefreshSignal] = newData;
+			const [oldPreviewQuery, oldItemId, oldRelation, oldRefreshSignal] = oldData;
 
 			if (
 				isEqual(newRelation, oldRelation) &&
-				newPreviewQuery.filter === oldPreviewQuery?.filter &&
+				isEqual(newPreviewQuery.filter, oldPreviewQuery?.filter) &&
 				newPreviewQuery.search === oldPreviewQuery?.search &&
-				newItemId === oldItemId
+				newItemId === oldItemId &&
+				newRefreshSignal === oldRefreshSignal
 			) {
 				return;
 			}
@@ -400,27 +548,23 @@ export function useRelationMultiple(
 	async function updateItemCount() {
 		if (!relation.value) return;
 
-		if (!itemId.value || itemId.value === '+') {
+		if (targetCollectionInactive.value || !itemId.value || itemId.value === '+') {
 			existingItemCount.value = 0;
 			return;
 		}
 
 		let targetCollection: string;
-		let targetPKField: string;
 		const reverseJunctionField = relation.value.reverseJunctionField.field;
 
 		switch (relation.value.type) {
 			case 'm2a':
 				targetCollection = relation.value.junctionCollection.collection;
-				targetPKField = relation.value.junctionPrimaryKeyField.field;
 				break;
 			case 'm2m':
 				targetCollection = relation.value.junctionCollection.collection;
-				targetPKField = relation.value.junctionPrimaryKeyField.field;
 				break;
 			case 'o2m':
 				targetCollection = relation.value.relatedCollection.collection;
-				targetPKField = relation.value.relatedPrimaryKeyField.field;
 				break;
 		}
 
@@ -430,17 +574,19 @@ export function useRelationMultiple(
 			filter._and.push(previewQuery.value.filter);
 		}
 
-		const response = await api.get(getEndpoint(targetCollection), {
-			params: {
-				search: previewQuery.value.search,
-				aggregate: {
-					count: targetPKField,
+		const response = await sdk.request<{ count: Record<string, unknown> }[]>(
+			requestEndpoint(getEndpoint(targetCollection), {
+				params: {
+					search: previewQuery.value.search,
+					aggregate: {
+						count: targetPKField.value,
+					},
+					filter,
 				},
-				filter,
-			},
-		});
+			}),
+		);
 
-		existingItemCount.value = Number(response.data.data[0].count[targetPKField]);
+		existingItemCount.value = Number(response[0]?.count[targetPKField.value]);
 	}
 
 	function useSelected() {
@@ -487,7 +633,9 @@ export function useRelationMultiple(
 
 				case 'm2a': {
 					const collection = item[relation.value.collectionField.field];
-					return item[relation.value.junctionField.field][relation.value.relationPrimaryKeyFields[collection].field];
+					const pkField = relation.value.relationPrimaryKeyFields[collection]?.field;
+					if (!pkField) throw new Error(`No primary key field found for collection ${collection}`);
+					return item[relation.value.junctionField.field][pkField];
 				}
 			}
 
@@ -499,6 +647,11 @@ export function useRelationMultiple(
 		}
 
 		async function loadSelectedDisplay() {
+			if (targetCollectionInactive.value) {
+				fetchedSelectItems.value = [];
+				return;
+			}
+
 			switch (relation.value?.type) {
 				case 'o2m':
 					return loadSelectedDisplayO2M(relation.value);
@@ -521,13 +674,12 @@ export function useRelationMultiple(
 			if (relation.sortField) fields.add(relation.sortField);
 
 			const targetCollection = relation.relatedCollection.collection;
-			const targetPKField = relation.relatedPrimaryKeyField.field;
 
 			fetchedSelectItems.value = await fetchAll(getEndpoint(targetCollection), {
 				params: {
 					fields: Array.from(fields),
 					filter: {
-						[targetPKField]: {
+						[targetPKField.value]: {
 							_in: selectedOnPage.value.map(getRelatedIDs),
 						},
 					},
@@ -589,9 +741,13 @@ export function useRelationMultiple(
 				{} as Record<string, DisplayItem[]>,
 			);
 
+			// Naming an inactive collection in a query makes the API reject the whole request
+			const groups = Object.entries(selectGrouped).filter(([collection]) => isCollectionInactive(collection) === false);
+
 			const responses = await Promise.all(
-				Object.entries(selectGrouped).map(([collection, items]) => {
-					const pkField = relation.relationPrimaryKeyFields[collection].field;
+				groups.map(([collection, items]) => {
+					const pkField = relation.relationPrimaryKeyFields[collection]?.field;
+					if (!pkField) throw new Error(`No primary key field found for collection ${collection}`);
 
 					const fields = new Set(
 						previewQuery.value.fields.reduce<string[]>((acc, field) => {
@@ -621,7 +777,7 @@ export function useRelationMultiple(
 				(acc, item, index) => {
 					acc.push(
 						...item.map((item: Record<string, any>) => ({
-							[relation.collectionField.field]: Object.keys(selectGrouped)[index],
+							[relation.collectionField.field]: groups[index]![0],
 							[relation.junctionField.field]: item,
 						})),
 					);
@@ -635,10 +791,21 @@ export function useRelationMultiple(
 
 	function useUtil() {
 		function cleanItem(item: DisplayItem) {
-			return Object.entries(item).reduce((acc, [key, value]) => {
+			const cleaned = Object.entries(item).reduce((acc, [key, value]) => {
 				if (!key.startsWith('$')) acc[key] = value;
 				return acc;
 			}, {} as DisplayItem);
+
+			// Undo the display-only resolution of nested relational edits, but only where the field still
+			// holds the resolved value: consumers spread a display item and replace a field on it, and
+			// that replacement is the newer of the two.
+			if (item.$staged) {
+				for (const [field, value] of Object.entries(item.$staged)) {
+					if (isEqual(cleaned[field], item.$resolved?.[field])) cleaned[field] = value;
+				}
+			}
+
+			return cleaned;
 		}
 
 		/**

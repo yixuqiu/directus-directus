@@ -1,4 +1,4 @@
-import { Type } from '@directus/types';
+import { type SettingsModuleBarLink, type SettingsModuleBarModule, Type } from '@directus/types';
 
 export const VALIDATION_TYPES = ['FAILED_VALIDATION', 'RECORD_NOT_UNIQUE'];
 
@@ -39,11 +39,16 @@ export const COLLECTIONS_DENY_LIST = [
 	'directus_settings',
 ];
 
-export const MODULE_BAR_DEFAULT = [
+export const MODULE_BAR_DEFAULT: (SettingsModuleBarLink | SettingsModuleBarModule)[] = [
 	{
 		type: 'module',
 		id: 'content',
 		enabled: true,
+	},
+	{
+		type: 'module',
+		id: 'visual',
+		enabled: false,
 	},
 	{
 		type: 'module',
@@ -61,12 +66,22 @@ export const MODULE_BAR_DEFAULT = [
 		enabled: true,
 	},
 	{
+		type: 'module',
+		id: 'flows',
+		enabled: true,
+	},
+	{
+		type: 'module',
+		id: 'deployments',
+		enabled: false,
+	},
+	{
 		type: 'link',
 		id: 'docs',
 		enabled: true,
 		name: '$t:documentation',
 		icon: 'help',
-		url: 'https://docs.directus.io',
+		url: 'https://directus.com/docs',
 	},
 	{
 		type: 'module',
@@ -75,6 +90,14 @@ export const MODULE_BAR_DEFAULT = [
 		locked: true,
 	},
 ];
+
+// Keep in sync with $breakpoints in app/src/styles/mixins/_breakpoints.scss
+export const BREAKPOINTS = {
+	xs: '28rem',
+	sm: '36rem',
+	lg: '57.625rem',
+	xl: '72rem',
+};
 
 export const FIELD_TYPES_SELECT: Array<{ value: Type; text: string } | { divider: true }> = [
 	{
@@ -148,11 +171,17 @@ export const FIELD_TYPES_SELECT: Array<{ value: Type; text: string } | { divider
 	},
 ];
 
+/** Contains `integer` and `float` – exclude `bigInteger` and `decimal` to avoid rounding errors. */
+export const APP_NUMERIC_TYPES = ['integer', 'float'];
+/** Treat `bigInteger` and `decimal` as strings to avoid rounding errors. */
+export const APP_NUMERIC_STRING_TYPES = ['bigInteger', 'decimal'];
+
 export const DEFAULT_AUTH_PROVIDER = 'local';
 export const DEFAULT_AUTH_DRIVER = 'default';
 
 export const AUTH_SSO_DRIVERS = ['oauth2', 'openid', 'saml'];
 
 export const DEFAULT_REPORT_BUG_URL = 'https://github.com/directus/directus/issues/new?template=bug_report.yml';
-export const DEFAULT_REPORT_FEATURE_URL =
-	'https://github.com/directus/directus/discussions/new?category=feature-requests';
+export const DEFAULT_REPORT_FEATURE_URL = 'https://roadmap.directus.com/';
+
+export const SDK_AUTH_REFRESH_BEFORE_EXPIRES = 10_000;

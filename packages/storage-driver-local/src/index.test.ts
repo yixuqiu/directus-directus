@@ -1,3 +1,9 @@
+import type { Dir, WriteStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { access, copyFile, mkdir, opendir, rename, stat, unlink } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { PassThrough } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import {
 	randDirectoryPath,
 	randFilePath,
@@ -5,15 +11,9 @@ import {
 	randNumber,
 	randPastDate,
 	randText,
-	randWord,
 	randGitShortSha as randUnique,
+	randWord,
 } from '@ngneat/falso';
-import type { Dir, WriteStream } from 'node:fs';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { access, copyFile, mkdir, opendir, rename, stat, unlink } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
-import { PassThrough } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { DriverLocalConfig } from './index.js';
 import { DriverLocal } from './index.js';
@@ -145,19 +145,19 @@ describe('#read', () => {
 	});
 
 	test('Calls createReadStream with optional start range', async () => {
-		await driver.read(sample.path.input, { start: sample.range.start });
+		await driver.read(sample.path.input, { range: { start: sample.range.start } });
 
 		expect(createReadStream).toHaveBeenCalledWith(sample.path.inputFull, { start: sample.range.start });
 	});
 
 	test('Calls createReadStream with optional end range', async () => {
-		await driver.read(sample.path.input, { end: sample.range.end });
+		await driver.read(sample.path.input, { range: { end: sample.range.end } });
 
 		expect(createReadStream).toHaveBeenCalledWith(sample.path.inputFull, { end: sample.range.end });
 	});
 
 	test('Calls createReadStream with optional start and end range', async () => {
-		await driver.read(sample.path.input, sample.range);
+		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(createReadStream).toHaveBeenCalledWith(sample.path.inputFull, sample.range);
 	});
@@ -201,12 +201,32 @@ describe('#exists', () => {
 		expect(result).toBe(true);
 	});
 
-	test('Returns false if access rejects', async () => {
-		vi.mocked(access).mockRejectedValueOnce(null);
+	test('Returns false if the file does not exist', async () => {
+		vi.mocked(access).mockRejectedValueOnce(Object.assign(new Error(), { code: 'ENOENT' }));
 
 		const result = await driver.exists(sample.path.input);
 
 		expect(result).toBe(false);
+	});
+
+	test('Returns false if a parent of the path is a file', async () => {
+		vi.mocked(access).mockRejectedValueOnce(Object.assign(new Error(), { code: 'ENOTDIR' }));
+
+		const result = await driver.exists(sample.path.input);
+
+		expect(result).toBe(false);
+	});
+
+	/**
+	 * Reporting an unreadable path as "the file isn't there" makes callers act on a wrong answer, for
+	 * example by serving a permission error for a file that does exist.
+	 */
+	test('Throws if the path could not be checked', async () => {
+		const error = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+
+		vi.mocked(access).mockRejectedValueOnce(error);
+
+		await expect(driver.exists(sample.path.input)).rejects.toThrow(error);
 	});
 });
 

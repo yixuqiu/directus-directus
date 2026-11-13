@@ -1,12 +1,32 @@
 <script setup lang="ts">
+import type { File, Filter } from '@directus/types';
+import { sum } from 'lodash-es';
+import type { Upload } from 'tus-js-client';
+import { computed, onUnmounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import api from '@/api';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
+import VProgressLinear from '@/components/v-progress-linear.vue';
 import { emitter, Events } from '@/events';
+import { useFilesStore } from '@/stores/files.js';
+import { useNotificationsStore } from '@/stores/notifications';
+import { useServerStore } from '@/stores/server';
 import { unexpectedError } from '@/utils/unexpected-error';
 import { uploadFile } from '@/utils/upload-file';
 import { uploadFiles } from '@/utils/upload-files';
 import DrawerFiles from '@/views/private/components/drawer-files.vue';
-import { computed, ref } from 'vue';
-import { useI18n } from 'vue-i18n';
+
+export type UploadController = {
+	start(): void;
+	abort(): void;
+};
 
 interface Props {
 	multiple?: boolean;
@@ -17,6 +37,9 @@ interface Props {
 	fromUrl?: boolean;
 	fromLibrary?: boolean;
 	folder?: string;
+	filter?: Filter;
+	disabled?: boolean;
+	accept?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -24,9 +47,16 @@ const props = withDefaults(defineProps<Props>(), {
 	fromUser: true,
 });
 
-const emit = defineEmits(['input']);
+const emit = defineEmits<{
+	input: [files: null | File | File[]];
+	start: [controller: UploadController];
+}>();
 
 const { t } = useI18n();
+const notificationsStore = useNotificationsStore();
+const { info } = useServerStore();
+
+let uploadController: Upload | null = null;
 
 const { uploading, progress, upload, onBrowseSelect, done, numberOfFiles } = useUpload();
 const { onDragEnter, onDragLeave, onDrop, dragging } = useDragging();
@@ -34,28 +64,93 @@ const { url, isValidURL, loading: urlLoading, importFromURL } = useURLImport();
 const { setSelection } = useSelection();
 const activeDialog = ref<'choose' | 'url' | null>(null);
 const input = ref<HTMLInputElement>();
+const userSelectOpen = ref(false);
+
+const menuActivce = computed(() => Boolean(activeDialog.value) || userSelectOpen.value);
+
+onUnmounted(() => {
+	uploadController?.abort();
+});
 
 function validFiles(files: FileList) {
-	if (files.length === 0) return false;
+	const typeErrors: string[] = [];
+	const emptyErrors: string[] = [];
 
 	for (const file of files) {
-		if (file.size === 0) return false;
+		if (file.size === 0) {
+			emptyErrors.push(`"${file.name}"`);
+			continue;
+		}
+
+		if (props.accept) {
+			const acceptTypes = props.accept.split(',').map((type) => type.trim());
+
+			const isValidType = acceptTypes.some((acceptType) => {
+				if (acceptType.endsWith('/*')) {
+					const baseType = acceptType.slice(0, -2);
+
+					return file.type.startsWith(baseType + '/');
+				} else {
+					return file.type === acceptType;
+				}
+			});
+
+			if (!isValidType) {
+				typeErrors.push(`"${file.name}" (${file.type})`);
+			}
+		}
+	}
+
+	const totalErrors = typeErrors.length + emptyErrors.length;
+
+	if (typeErrors.length + emptyErrors.length > 0) {
+		const errorParts: string[] = [];
+
+		if (typeErrors.length > 0) {
+			errorParts.push(
+				t('files_wrong_type', {
+					files: typeErrors.join(', '),
+					expected: props.accept,
+				}),
+			);
+		}
+
+		if (emptyErrors.length > 0) {
+			errorParts.push(
+				t('files_are_empty', {
+					files: emptyErrors.join(', '),
+				}),
+			);
+		}
+
+		notificationsStore.add({
+			title: t('invalid_files_selected', { count: totalErrors }, totalErrors),
+			text: errorParts.join('\n'),
+			type: 'error',
+			dialog: true,
+		});
+
+		return false;
 	}
 
 	return true;
 }
 
 function useUpload() {
-	const uploading = ref(false);
-	const progress = ref(0);
-	const numberOfFiles = ref(0);
-	const done = ref(0);
+	const filesStore = useFilesStore();
+	const newUpload = filesStore.upload();
 
-	return { uploading, progress, upload, onBrowseSelect, numberOfFiles, done };
+	return {
+		uploading: newUpload.uploading,
+		progress: newUpload.progress,
+		upload,
+		onBrowseSelect,
+		numberOfFiles: newUpload.numberOfFiles,
+		done: newUpload.done,
+	};
 
 	async function upload(files: FileList) {
-		uploading.value = true;
-		progress.value = 0;
+		newUpload.start(files.length);
 
 		const preset = {
 			...props.preset,
@@ -63,41 +158,80 @@ function useUpload() {
 		};
 
 		try {
-			if (!validFiles(files)) {
-				throw new Error('An error has occurred while uploading the files.');
-			}
-
-			numberOfFiles.value = files.length;
+			if (!validFiles(files)) return;
 
 			if (props.multiple === true) {
+				const fileSizes = Array.from(files).map((file) => file.size);
+				const totalBytes = sum(fileSizes);
+				const fileControllers: (UploadController | null)[] = new Array(files.length).fill(null);
+
+				const controller = {
+					start() {
+						fileControllers.forEach((controller) => controller?.start());
+					},
+					abort() {
+						fileControllers.forEach((controller) => controller?.abort());
+					},
+				};
+
 				const uploadedFiles = await uploadFiles(Array.from(files), {
-					onProgressChange: (percentage) => {
-						progress.value = Math.round(percentage.reduce((acc, cur) => (acc += cur)) / files.length);
-						done.value = percentage.filter((p) => p === 100).length;
+					maxConcurrency: info.uploads?.maxConcurrency,
+					onProgressChange: (percentages) => {
+						newUpload.progress.value = Math.round(
+							(sum(fileSizes.map((total, i) => total * (percentages[i]! / 100))) / totalBytes) * 100,
+						);
+
+						const doneIndices = percentages
+							.map((p, i) => [p, i])
+							.filter(([p]) => p === 100)
+							.map(([, i]) => i!);
+
+						newUpload.done.value = doneIndices.length;
+
+						// Nullify controller for done uploads, to prevent resuming after pausing
+						for (const idx of doneIndices) {
+							if (fileControllers[idx]) fileControllers[idx] = null;
+						}
+					},
+					onChunkedUpload: (controllers) => {
+						controllers.forEach((controller, i) => (fileControllers[i] = controller));
+						uploadController = controller as Upload;
+
+						if (controllers.every((c) => c !== null)) {
+							// Only emit start once every upload started
+							emit('start', controller);
+						}
 					},
 					preset,
 				});
 
-				uploadedFiles && emit('input', uploadedFiles);
+				if (uploadedFiles)
+					emit(
+						'input',
+						uploadedFiles.filter((f): f is File => !!f),
+					);
 			} else {
-				const uploadedFile = await uploadFile(Array.from(files)[0] as File, {
+				const uploadedFile = await uploadFile(Array.from(files)[0]!, {
 					onProgressChange: (percentage) => {
-						progress.value = percentage;
-						done.value = percentage === 100 ? 1 : 0;
+						newUpload.progress.value = percentage;
+						newUpload.done.value = percentage === 100 ? 1 : 0;
+					},
+					onChunkedUpload: (controller) => {
+						uploadController = controller;
+						emit('start', controller);
 					},
 					fileId: props.fileId,
 					preset,
 				});
 
-				uploadedFile && emit('input', uploadedFile);
+				if (uploadedFile) emit('input', uploadedFile);
+				uploadController = null;
 			}
 		} catch (error) {
 			unexpectedError(error);
 			emit('input', null);
 		} finally {
-			uploading.value = false;
-			done.value = 0;
-			numberOfFiles.value = 0;
+			newUpload.finish();
 		}
 	}
 
@@ -107,6 +241,8 @@ function useUpload() {
 		if (files) {
 			upload(files);
 		}
+
+		userSelectOpen.value = false;
 	}
 }
 
@@ -178,6 +314,8 @@ function useSelection() {
 function useURLImport() {
 	const url = ref('');
 	const loading = ref(false);
+	const filesStore = useFilesStore();
+	const newUpload = filesStore.upload();
 
 	const isValidURL = computed(() => {
 		try {
@@ -191,7 +329,10 @@ function useURLImport() {
 	return { url, loading, isValidURL, importFromURL };
 
 	async function importFromURL() {
+		if (!isValidURL.value || loading.value) return;
+
 		loading.value = true;
+		newUpload.start(1);
 
 		const data = {
 			...props.preset,
@@ -203,7 +344,11 @@ function useURLImport() {
 			const response = await api.post(`/files/import`, {
 				url: url.value,
 				data,
+				options: { filterMimeType: props.accept?.split(',') },
 			});
+
+			newUpload.progress.value = 100;
+			newUpload.done.value = 1;
 
 			emitter.emit(Events.upload);
 
@@ -219,28 +364,37 @@ function useURLImport() {
 			unexpectedError(error);
 		} finally {
 			loading.value = false;
+			newUpload.finish();
 		}
 	}
 }
 
 function openFileBrowser() {
+	userSelectOpen.value = true;
 	input.value?.click();
 }
+
+function abort() {
+	uploadController?.abort();
+}
+
+defineExpose({ abort });
 </script>
 
 <template>
 	<div
+		v-prevent-focusout="menuActivce"
 		data-dropzone
 		class="v-upload"
-		:class="{ dragging: dragging && fromUser, uploading }"
+		:class="{ dragging: dragging && fromUser, uploading, disabled }"
 		@dragenter.prevent="onDragEnter"
 		@dragover.prevent
 		@dragleave.prevent="onDragLeave"
 		@drop.stop.prevent="onDrop"
 	>
 		<template v-if="dragging && fromUser">
-			<v-icon class="upload-icon" x-large name="file_upload" />
-			<p class="type-label">{{ t('drop_to_upload') }}</p>
+			<VIcon class="upload-icon" x-large name="file_upload" />
+			<p class="type-label">{{ $t('drop_to_upload') }}</p>
 		</template>
 
 		<template v-else-if="uploading">
@@ -248,73 +402,94 @@ function openFileBrowser() {
 			<p class="type-text">
 				{{
 					multiple && numberOfFiles > 1
-						? t('upload_files_indeterminate', { done: done, total: numberOfFiles })
-						: t('upload_file_indeterminate')
+						? $t('upload_files_indeterminate', { done: done, total: numberOfFiles })
+						: $t('upload_file_indeterminate')
 				}}
 			</p>
-			<v-progress-linear :value="progress" rounded />
+			<VProgressLinear :value="progress" rounded />
 		</template>
 
 		<template v-else>
 			<div class="actions">
-				<v-button v-if="fromUser" v-tooltip="t('click_to_browse')" icon rounded secondary @click="openFileBrowser">
-					<input ref="input" class="browse" type="file" :multiple="multiple" @input="onBrowseSelect" />
-					<v-icon name="file_upload" />
-				</v-button>
-				<v-button
-					v-if="fromLibrary"
-					v-tooltip="t('choose_from_library')"
+				<VButton
+					v-if="fromUser"
+					v-tooltip="!disabled && $t('click_to_browse')"
 					icon
-					rounded
+					small
 					secondary
+					:disabled
+					@click="openFileBrowser"
+				>
+					<input
+						ref="input"
+						class="browse"
+						type="file"
+						tabindex="-1"
+						:multiple="multiple"
+						:accept="accept"
+						@cancel="userSelectOpen = false"
+						@input="onBrowseSelect"
+					/>
+					<VIcon name="file_upload" />
+				</VButton>
+				<VButton
+					v-if="fromLibrary"
+					v-tooltip="!disabled && $t('choose_from_library')"
+					icon
+					small
+					secondary
+					:disabled
 					@click="activeDialog = 'choose'"
 				>
-					<v-icon name="folder_open" />
-				</v-button>
-				<v-button
+					<VIcon name="folder_open" />
+				</VButton>
+				<VButton
 					v-if="fromUrl && fromUser"
-					v-tooltip="t('import_from_url')"
+					v-tooltip="!disabled && $t('import_from_url')"
 					icon
-					rounded
+					small
 					secondary
+					:disabled
 					@click="activeDialog = 'url'"
 				>
-					<v-icon name="link" />
-				</v-button>
+					<VIcon name="link" />
+				</VButton>
 			</div>
 
-			<p class="type-label">{{ t(fromUser ? 'drag_file_here' : 'choose_from_library') }}</p>
+			<p class="type-label">{{ $t(fromUser ? 'drag_file_here' : 'choose_from_library') }}</p>
 
 			<template v-if="fromUrl !== false || fromLibrary !== false">
-				<drawer-files
+				<DrawerFiles
 					:active="activeDialog === 'choose'"
 					:multiple="multiple"
 					:folder="folder"
+					:filter="filter"
 					@update:active="activeDialog = null"
 					@input="setSelection"
 				/>
 
-				<v-dialog
+				<VDialog
 					:model-value="activeDialog === 'url'"
 					:persistent="urlLoading"
 					@esc="activeDialog = null"
+					@apply="importFromURL"
 					@update:model-value="activeDialog = null"
 				>
-					<v-card>
-						<v-card-title>{{ t('import_from_url') }}</v-card-title>
-						<v-card-text>
-							<v-input v-model="url" autofocus :placeholder="t('url')" :nullable="false" :disabled="urlLoading" />
-						</v-card-text>
-						<v-card-actions>
-							<v-button :disabled="urlLoading" secondary @click="activeDialog = null">
-								{{ t('cancel') }}
-							</v-button>
-							<v-button :loading="urlLoading" :disabled="isValidURL === false" @click="importFromURL">
-								{{ t('import_label') }}
-							</v-button>
-						</v-card-actions>
-					</v-card>
-				</v-dialog>
+					<VCard>
+						<VCardTitle>{{ $t('import_from_url') }}</VCardTitle>
+						<VCardText>
+							<VInput v-model="url" autofocus :placeholder="$t('url')" :nullable="false" :disabled="urlLoading" />
+						</VCardText>
+						<VCardActions>
+							<VButton :disabled="urlLoading" secondary @click="activeDialog = null">
+								{{ $t('cancel') }}
+							</VButton>
+							<VButton :loading="urlLoading" :disabled="!isValidURL" @click="importFromURL">
+								{{ $t('import_label') }}
+							</VButton>
+						</VCardActions>
+					</VCard>
+				</VDialog>
 			</template>
 		</template>
 	</div>
@@ -326,8 +501,8 @@ function openFileBrowser() {
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
-	min-height: var(--input-height-tall);
-	padding: 32px;
+	min-block-size: var(--input-height-md);
+	padding: 1.8125rem;
 	color: var(--theme--foreground-subdued);
 	text-align: center;
 	border: var(--theme--border-width) dashed var(--theme--form--field--input--border-color);
@@ -339,32 +514,34 @@ function openFileBrowser() {
 		color: inherit;
 	}
 
-	&:not(.uploading):hover {
+	&.disabled {
+		background-color: var(--theme--form--field--input--background-subdued);
+	}
+
+	&:not(.uploading):not(.disabled):hover {
 		border-color: var(--theme--form--field--input--border-color-hover);
+	}
+
+	&:not(.uploading):not(.disabled):focus-within {
+		outline: var(--focus-ring-width) solid var(--theme--form--field--input--focus-ring-color);
+		outline-offset: var(--focus-ring-offset-invert);
 	}
 }
 
 .actions {
 	display: flex;
 	justify-content: center;
-	margin-bottom: 18px;
-
-	.v-button {
-		margin-right: 12px;
-
-		&:last-child {
-			margin-right: 0;
-		}
-	}
+	margin-block-end: 0.625rem;
+	gap: 0.625rem;
 }
 
 .browse {
 	position: absolute;
-	top: 0;
-	left: 0;
+	inset-block-start: 0;
+	inset-inline-start: 0;
 	display: block;
-	width: 100%;
-	height: 100%;
+	inline-size: 100%;
+	block-size: 100%;
 	cursor: pointer;
 	opacity: 0;
 	appearance: none;
@@ -373,7 +550,7 @@ function openFileBrowser() {
 .dragging {
 	color: var(--theme--primary);
 	background-color: var(--theme--primary-background);
-	border-color: var(--theme--form--field--input--border-color-focus);
+	border-color: var(--theme--primary);
 
 	* {
 		pointer-events: none;
@@ -381,25 +558,25 @@ function openFileBrowser() {
 
 	.upload-icon {
 		margin: 0 auto;
-		margin-bottom: 12px;
+		margin-block-end: 0.6875rem;
 	}
 }
 
 .uploading {
 	--v-progress-linear-color: var(--white);
 	--v-progress-linear-background-color: rgb(255 255 255 / 0.25);
-	--v-progress-linear-height: 8px;
+	--v-progress-linear-height: 0.4375rem;
 
 	color: var(--white);
 	background-color: var(--theme--primary);
-	border-color: var(--theme--form--field--input--border-color-focus);
+	border-color: var(--theme--primary);
 	border-style: solid;
 
 	.v-progress-linear {
 		position: absolute;
-		bottom: 30px;
-		left: 32px;
-		width: calc(100% - 64px);
+		inset-block-end: 1.6875rem;
+		inset-inline-start: 1.8125rem;
+		inline-size: calc(100% - 3.625rem);
 	}
 }
 </style>

@@ -1,24 +1,34 @@
 <script setup lang="ts">
+import { useShortcut } from '@directus/composables';
+import { Comment, User } from '@directus/types';
+import axios, { CancelTokenSource } from 'axios';
+import { cloneDeep, throttle } from 'lodash-es';
+import { ComponentPublicInstance, computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import api from '@/api';
-import { useShortcut } from '@/composables/use-shortcut';
-import { Activity } from '@/types/activity';
+import VAvatar from '@/components/v-avatar.vue';
+import VButton from '@/components/v-button.vue';
+import VEmojiPicker from '@/components/v-emoji-picker.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VImage from '@/components/v-image.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VMenu from '@/components/v-menu.vue';
+import VTemplateInput from '@/components/v-template-input.vue';
 import { getAssetUrl } from '@/utils/get-asset-url';
 import { md } from '@/utils/md';
 import { notify } from '@/utils/notify';
 import { unexpectedError } from '@/utils/unexpected-error';
 import { userName } from '@/utils/user-name';
-import { User } from '@directus/types';
-import axios, { CancelTokenSource } from 'axios';
-import { cloneDeep, throttle } from 'lodash';
-import { ComponentPublicInstance, computed, ref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
 
 const props = withDefaults(
 	defineProps<{
 		refresh: () => Promise<void>;
 		collection: string;
 		primaryKey: string | number;
-		existingComment?: Activity | null;
+		existingComment?: Comment | null;
 		previews?: Record<string, string> | null;
 	}>(),
 	{
@@ -115,7 +125,7 @@ const loadUsers = throttle(async (name: string): Promise<any> => {
 		const result = await api.get('/users', {
 			params: {
 				filter: name === '' || !name ? undefined : filter,
-				fields: ['first_name', 'last_name', 'email', 'id', 'avatar.id'],
+				fields: ['first_name', 'last_name', 'email', 'id', 'avatar.id', 'avatar.modified_on'],
 			},
 			cancelToken: cancelToken.token,
 		});
@@ -217,9 +227,13 @@ function triggerSearch({ searchQuery, caretPosition }: { searchQuery: string; ca
 	selectedKeyboardIndex.value = 0;
 }
 
-function avatarSource(url: string) {
-	if (url === null) return '';
-	return getAssetUrl(`${url}?key=system-small-cover`);
+function avatarSource(avatar: User['avatar'] | null) {
+	if (avatar === null) return '';
+
+	return getAssetUrl(avatar.id, {
+		imageKey: 'system-small-cover',
+		cacheBuster: avatar.modified_on,
+	});
 }
 
 async function postComment() {
@@ -228,11 +242,11 @@ async function postComment() {
 
 	try {
 		if (props.existingComment) {
-			await api.patch(`/activity/comment/${props.existingComment.id}`, {
+			await api.patch(`/comments/${props.existingComment.id}`, {
 				comment: newCommentContent.value,
 			});
 		} else {
-			await api.post(`/activity/comment`, {
+			await api.post(`/comments`, {
 				collection: props.collection,
 				item: props.primaryKey,
 				comment: newCommentContent.value,
@@ -274,16 +288,16 @@ function pressedEnter() {
 
 <template>
 	<div class="input-container" :class="{ collapsed }">
-		<v-menu v-model="showMentionDropDown" attached>
+		<VMenu v-model="showMentionDropDown" attached>
 			<template #activator>
-				<v-template-input
+				<VTemplateInput
 					ref="commentElement"
 					v-model="newCommentContent"
 					capture-group="(@[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12})"
 					multiline
 					trigger-character="@"
 					:items="userPreviews"
-					:placeholder="t('leave_comment')"
+					:placeholder="$t('leave_comment')"
 					@trigger="triggerSearch"
 					@deactivate="showMentionDropDown = false"
 					@up="pressedUp"
@@ -293,8 +307,8 @@ function pressedEnter() {
 				/>
 			</template>
 
-			<v-list>
-				<v-list-item
+			<VList>
+				<VListItem
 					v-for="(user, index) in searchResult"
 					id="suggestions"
 					:key="user.id"
@@ -302,39 +316,39 @@ function pressedEnter() {
 					:active="index === selectedKeyboardIndex"
 					@click="insertUser(user)"
 				>
-					<v-list-item-icon>
-						<v-avatar x-small>
-							<v-image v-if="user.avatar" :src="avatarSource(user.avatar.id)" />
-							<v-icon v-else name="person_outline" />
-						</v-avatar>
-					</v-list-item-icon>
+					<VListItemIcon>
+						<VAvatar x-small round>
+							<VImage v-if="user.avatar" :src="avatarSource(user.avatar)" />
+							<VIcon v-else name="person_outline" small />
+						</VAvatar>
+					</VListItemIcon>
 
-					<v-list-item-content>{{ userName(user) }}</v-list-item-content>
-				</v-list-item>
-			</v-list>
-		</v-menu>
+					<VListItemContent>{{ userName(user) }}</VListItemContent>
+				</VListItem>
+			</VList>
+		</VMenu>
 
 		<div class="buttons">
-			<v-button x-small secondary icon class="mention" @click="insertAt">
-				<v-icon name="alternate_email" />
-			</v-button>
+			<VButton x-small secondary icon class="mention" @click="insertAt">
+				<VIcon name="alternate_email" />
+			</VButton>
 
-			<v-emoji-picker @click="saveCursorPosition" @emoji-selected="insertText($event)" />
+			<VEmojiPicker @click="saveCursorPosition" @emoji-selected="insertText($event)" />
 
 			<div class="spacer"></div>
 
-			<v-button class="cancel" x-small secondary @click="cancel">
-				{{ t('cancel') }}
-			</v-button>
-			<v-button
+			<VButton class="cancel" x-small secondary @click="cancel">
+				{{ $t('cancel') }}
+			</VButton>
+			<VButton
 				:disabled="!newCommentContent || newCommentContent.length === 0 || newCommentContent.trim() === ''"
 				:loading="saving"
 				class="post-comment"
 				x-small
 				@click="postComment"
 			>
-				{{ t('submit') }}
-			</v-button>
+				{{ $t('submit') }}
+			</VButton>
 		</div>
 	</div>
 </template>
@@ -342,28 +356,28 @@ function pressedEnter() {
 <style scoped lang="scss">
 .input-container {
 	position: relative;
-	padding: 0px;
+	padding: 0;
 }
 
 .v-template-input {
 	transition:
-		height var(--fast) var(--transition),
+		block-size var(--fast) var(--transition),
 		padding var(--fast) var(--transition);
 }
 
 .collapsed .v-template-input {
-	height: 48px;
-	padding-bottom: 0px;
+	block-size: var(--input-height-md);
+	padding-block-end: 0;
 }
 
 .new-comment {
 	display: block;
 	flex-grow: 1;
-	width: 100%;
-	height: 100%;
-	height: var(--theme--form--field--input--height);
-	min-height: 100px;
-	padding: 5px;
+	inline-size: 100%;
+	block-size: 100%;
+	block-size: var(--theme--form--field--input--height);
+	min-block-size: 5.625rem;
+	padding: 0.3125rem;
 	overflow: scroll;
 	white-space: pre;
 	background-color: var(--theme--form--field--input--background);
@@ -375,30 +389,30 @@ function pressedEnter() {
 .new-comment:focus {
 	position: relative;
 	overflow: scroll;
-	border-color: var(--theme--form--field--input--border-color-focus);
-	transition: margin-bottom var(--fast) var(--transition);
+	outline: var(--focus-ring-width) solid var(--theme--form--field--input--focus-ring-color);
+	outline-offset: var(--focus-ring-offset-invert);
+	transition: margin-block-end var(--fast) var(--transition);
 }
 
 .new-comment :deep(.expand-on-focus:focus textarea),
 .new-comment :deep(.expand-on-focus:focus-within textarea),
 .new-comment :deep(.expand-on-focus.has-content textarea) {
-	margin-bottom: 36px;
+	margin-block-end: 2rem;
 }
 
 .new-comment :deep(.expand-on-focus .append::after) {
 	position: absolute;
-	right: 0;
-	bottom: 36px;
-	left: 0;
-	height: 8px;
+	inset-inline: 0;
+	inset-block-end: 2rem;
+	block-size: 0.4375rem;
 	background: linear-gradient(180deg, rgb(var(--background-page-rgb), 0) 0%, rgb(var(--background-page-rgb), 1) 100%);
 	content: '';
 }
 
 .new-comment .add-mention {
 	position: absolute;
-	bottom: 8px;
-	left: 8px;
+	inset-block-end: 0.4375rem;
+	inset-inline-start: 0.4375rem;
 	color: var(--theme--foreground-subdued);
 	cursor: pointer;
 	transition: color var(--fast) var(--transition);
@@ -406,8 +420,8 @@ function pressedEnter() {
 
 .new-comment .add-emoji {
 	position: absolute;
-	bottom: 8px;
-	left: 36px;
+	inset-block-end: 0.4375rem;
+	inset-inline-start: 2rem;
 	color: var(--theme--foreground-subdued);
 	cursor: pointer;
 	transition: color var(--fast) var(--transition);
@@ -419,23 +433,15 @@ function pressedEnter() {
 }
 
 .buttons {
-	margin-top: 4px;
+	margin-block-start: 0.25rem;
 	display: flex;
-	gap: 4px;
+	gap: 0.25rem;
 
 	.mention,
 	.emoji-button {
 		--v-button-background-color: transparent;
 		--v-button-color: var(--theme--foreground-subdued);
 		--v-button-color-hover: var(--theme--primary);
-	}
-
-	.cancel {
-		--v-button-color: var(--theme--foreground-subdued);
-	}
-
-	.post-comment {
-		--v-button-background-color-disabled: var(--theme--background-accent);
 	}
 }
 

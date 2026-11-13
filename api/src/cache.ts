@@ -1,17 +1,14 @@
+import { createRequire } from 'node:module';
 import { useEnv } from '@directus/env';
 import type { SchemaOverview } from '@directus/types';
-import { getSimpleHash } from '@directus/utils';
-import type { Options } from 'keyv';
-import Keyv from 'keyv';
+import Keyv, { type KeyvOptions } from 'keyv';
 import { useBus } from './bus/index.js';
-import { useLogger } from './logger.js';
+import { useLogger } from './logger/index.js';
+import { clearCache as clearPermissionCache } from './permissions/cache.js';
 import { redisConfigAvailable } from './redis/index.js';
 import { compress, decompress } from './utils/compress.js';
+import { freezeSchema, unfreezeSchema } from './utils/freeze-schema.js';
 import { getConfigFromEnv } from './utils/get-config-from-env.js';
-import { getMilliseconds } from './utils/get-milliseconds.js';
-import { validateEnv } from './utils/validate-env.js';
-
-import { createRequire } from 'node:module';
 
 const logger = useLogger();
 const env = useEnv();
@@ -20,10 +17,11 @@ const require = createRequire(import.meta.url);
 
 let cache: Keyv | null = null;
 let systemCache: Keyv | null = null;
-let localSchemaCache: Keyv | null = null;
-let sharedSchemaCache: Keyv | null = null;
+let deploymentCache: Keyv | null = null;
 let lockCache: Keyv | null = null;
-let messengerSubscribed = false;
+
+let localSchemaCache: Keyv | null = null;
+let memorySchemaCache: Readonly<SchemaOverview> | null = null;
 
 type Store = 'memory' | 'redis';
 
@@ -31,18 +29,18 @@ const messenger = useBus();
 
 interface CacheMessage {
 	autoPurgeCache: boolean | undefined;
+	autoPurgeSchema?: boolean | undefined;
 }
 
-interface CacheMessage {
-	autoPurgeCache: boolean | undefined;
-}
-
-if (redisConfigAvailable() && env['CACHE_STORE'] === 'memory' && env['CACHE_AUTO_PURGE'] && !messengerSubscribed) {
-	messengerSubscribed = true;
-
+if (redisConfigAvailable()) {
 	messenger.subscribe<CacheMessage>('schemaChanged', async (opts) => {
-		if (cache && opts?.['autoPurgeCache'] !== false) {
+		if (env.CACHE_STORE === 'memory' && env.CACHE_AUTO_PURGE && cache && opts?.['autoPurgeCache'] !== false) {
 			await cache.clear();
+		}
+
+		if (opts?.autoPurgeSchema !== false) {
+			await localSchemaCache?.clear();
+			memorySchemaCache = null;
 		}
 	});
 }
@@ -50,42 +48,38 @@ if (redisConfigAvailable() && env['CACHE_STORE'] === 'memory' && env['CACHE_AUTO
 export function getCache(): {
 	cache: Keyv | null;
 	systemCache: Keyv;
-	sharedSchemaCache: Keyv;
+	deploymentCache: Keyv;
 	localSchemaCache: Keyv;
 	lockCache: Keyv;
 } {
-	if (env['CACHE_ENABLED'] === true && cache === null) {
-		validateEnv(['CACHE_NAMESPACE', 'CACHE_TTL', 'CACHE_STORE']);
-		cache = getKeyvInstance(env['CACHE_STORE'] as Store, getMilliseconds(env['CACHE_TTL']));
+	const store = env.CACHE_STORE as Store;
+
+	if (env.CACHE_ENABLED && cache === null) {
+		cache = getKeyvInstance(store, env.CACHE_TTL);
 		cache.on('error', (err) => logger.warn(err, `[cache] ${err}`));
 	}
 
 	if (systemCache === null) {
-		systemCache = getKeyvInstance(env['CACHE_STORE'] as Store, getMilliseconds(env['CACHE_SYSTEM_TTL']), '_system');
+		systemCache = getKeyvInstance(store, env.CACHE_SYSTEM_TTL, '_system');
 		systemCache.on('error', (err) => logger.warn(err, `[system-cache] ${err}`));
 	}
 
-	if (sharedSchemaCache === null) {
-		sharedSchemaCache = getKeyvInstance(
-			env['CACHE_STORE'] as Store,
-			getMilliseconds(env['CACHE_SYSTEM_TTL']),
-			'_schema_shared',
-		);
-
-		sharedSchemaCache.on('error', (err) => logger.warn(err, `[shared-schema-cache] ${err}`));
+	if (deploymentCache === null) {
+		deploymentCache = getKeyvInstance(store, env.CACHE_DEPLOYMENT_TTL, '_deployment');
+		deploymentCache.on('error', (err) => logger.warn(err, `[deployment-cache] ${err}`));
 	}
 
 	if (localSchemaCache === null) {
-		localSchemaCache = getKeyvInstance('memory', getMilliseconds(env['CACHE_SYSTEM_TTL']), '_schema');
+		localSchemaCache = getKeyvInstance('memory', env.CACHE_SYSTEM_TTL, '_schema');
 		localSchemaCache.on('error', (err) => logger.warn(err, `[schema-cache] ${err}`));
 	}
 
 	if (lockCache === null) {
-		lockCache = getKeyvInstance(env['CACHE_STORE'] as Store, undefined, '_lock');
+		lockCache = getKeyvInstance(store, undefined, '_lock');
 		lockCache.on('error', (err) => logger.warn(err, `[lock-cache] ${err}`));
 	}
 
-	return { cache, systemCache, sharedSchemaCache, localSchemaCache, lockCache };
+	return { cache, systemCache, deploymentCache, localSchemaCache, lockCache };
 }
 
 export async function flushCaches(forced?: boolean): Promise<void> {
@@ -97,8 +91,9 @@ export async function flushCaches(forced?: boolean): Promise<void> {
 export async function clearSystemCache(opts?: {
 	forced?: boolean | undefined;
 	autoPurgeCache?: false | undefined;
+	autoPurgeSchema?: false | undefined;
 }): Promise<void> {
-	const { systemCache, localSchemaCache, lockCache, sharedSchemaCache } = getCache();
+	const { systemCache, localSchemaCache, lockCache } = getCache();
 
 	// Flush system cache when forced or when system cache lock not set
 	if (opts?.forced || !(await lockCache.get('system-cache-lock'))) {
@@ -107,9 +102,19 @@ export async function clearSystemCache(opts?: {
 		await lockCache.delete('system-cache-lock');
 	}
 
-	await sharedSchemaCache.clear();
-	await localSchemaCache.clear();
-	messenger.publish<CacheMessage>('schemaChanged', { autoPurgeCache: opts?.autoPurgeCache });
+	// Allow skipping schema purge when necessary (e.g. permission/policy/access writes)
+	if (opts?.autoPurgeSchema !== false) {
+		await localSchemaCache.clear();
+		memorySchemaCache = null;
+	}
+
+	// Since a lot of cached permission function rely on the schema it needs to be cleared as well
+	await clearPermissionCache();
+
+	messenger.publish<CacheMessage>('schemaChanged', {
+		autoPurgeCache: opts?.autoPurgeCache,
+		autoPurgeSchema: opts?.autoPurgeSchema,
+	});
 }
 
 export async function setSystemCache(key: string, value: any, ttl?: number): Promise<void> {
@@ -126,26 +131,22 @@ export async function getSystemCache(key: string): Promise<Record<string, any>> 
 	return await getCacheValue(systemCache, key);
 }
 
-export async function setSchemaCache(schema: SchemaOverview): Promise<void> {
-	const { localSchemaCache, sharedSchemaCache } = getCache();
-	const schemaHash = getSimpleHash(JSON.stringify(schema));
-
-	await sharedSchemaCache.set('hash', schemaHash);
-
-	await localSchemaCache.set('schema', schema);
-	await localSchemaCache.set('hash', schemaHash);
+export function setMemorySchemaCache(schema: SchemaOverview) {
+	if (Object.isFrozen(schema)) {
+		memorySchemaCache = schema;
+	} else {
+		memorySchemaCache = freezeSchema(schema);
+	}
 }
 
-export async function getSchemaCache(): Promise<SchemaOverview | undefined> {
-	const { localSchemaCache, sharedSchemaCache } = getCache();
+export function getMemorySchemaCache(): Readonly<SchemaOverview> | undefined {
+	if (env.CACHE_SCHEMA_FREEZE_ENABLED) {
+		return memorySchemaCache ?? undefined;
+	} else if (memorySchemaCache) {
+		return unfreezeSchema(memorySchemaCache);
+	}
 
-	const sharedSchemaHash = await sharedSchemaCache.get('hash');
-	if (!sharedSchemaHash) return;
-
-	const localSchemaHash = await localSchemaCache.get('hash');
-	if (!localSchemaHash || localSchemaHash !== sharedSchemaHash) return;
-
-	return await localSchemaCache.get('schema');
+	return undefined;
 }
 
 export async function setCacheValue(
@@ -165,6 +166,36 @@ export async function getCacheValue(cache: Keyv, key: string): Promise<any> {
 	return decompressed;
 }
 
+/**
+ * Store a value in cache with its expiration timestamp for TTL tracking
+ */
+export async function setCacheValueWithExpiry(
+	cache: Keyv,
+	key: string,
+	value: Record<string, any> | Record<string, any>[],
+	ttl: number,
+) {
+	await setCacheValue(cache, key, value, ttl);
+	await setCacheValue(cache, `${key}__expires_at`, { exp: Date.now() + ttl }, ttl);
+}
+
+/**
+ * Get a cached value along with its remaining TTL
+ */
+export async function getCacheValueWithTTL(
+	cache: Keyv,
+	key: string,
+): Promise<{ data: any; remainingTTL: number } | undefined> {
+	const value = await getCacheValue(cache, key);
+
+	if (!value) return undefined;
+
+	const expiryData = await getCacheValue(cache, `${key}__expires_at`);
+	const remainingTTL = expiryData?.exp ? Math.max(0, expiryData.exp - Date.now()) : 0;
+
+	return { data: value, remainingTTL };
+}
+
 function getKeyvInstance(store: Store, ttl: number | undefined, namespaceSuffix?: string): Keyv {
 	switch (store) {
 		case 'redis':
@@ -175,15 +206,18 @@ function getKeyvInstance(store: Store, ttl: number | undefined, namespaceSuffix?
 	}
 }
 
-function getConfig(store: Store = 'memory', ttl: number | undefined, namespaceSuffix = ''): Options<any> {
-	const config: Options<any> = {
-		namespace: `${env['CACHE_NAMESPACE']}${namespaceSuffix}`,
-		ttl,
+function getConfig(store: Store = 'memory', ttl: number | undefined, namespaceSuffix = ''): KeyvOptions {
+	const config: KeyvOptions = {
+		namespace: `${env.CACHE_NAMESPACE}${namespaceSuffix}`,
+		...(ttl && { ttl }),
 	};
 
 	if (store === 'redis') {
-		const KeyvRedis = require('@keyv/redis');
-		config.store = new KeyvRedis(env['REDIS'] || getConfigFromEnv('REDIS'), { useRedisSets: false });
+		const { default: KeyvRedis } = require('@keyv/redis');
+
+		config.store = new KeyvRedis(env['REDIS'] || getConfigFromEnv('REDIS', { omitSuffix: '_NAMESPACE' }), {
+			useRedisSets: false,
+		});
 	}
 
 	return config;

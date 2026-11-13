@@ -20,6 +20,9 @@
 #'SIMD', 'ArrayBuffer', 'DataView', 'JSON', 'Promise', 'Generator', 'GeneratorFunction', 'Reflect',
 #'Proxy', 'Intl'
 about: Относно
+continue: Продължаване
+first_name: Име
+last_name: Фамилия
 identifier: Идентификатор
 avatar: Аватар
 application: Приложение
@@ -129,7 +132,6 @@ create_role: Създаване на роля
 create_user: Създаване на потребител
 message: Съобщение
 delete_panel: Изтриване на панела
-create_webhook: Създаване на уеб-кука
 create_custom_translation: Създайте персонализиран превод
 edit_custom_translation: Редактиране на персонализиран превод
 no_custom_translations: Без персонализирани преводи
@@ -153,27 +155,15 @@ keep: Запази
 version: Версия
 version_key: Ключ на версията
 version_name: Име на версията
-main_version: Основен
 switch_version: Превключване на версията
 switch_version_copy: Сигурни ли сте, че искате да преминете към версията "{version}"? Незапазените промени ще бъдат загубени.
 create_version: Създаване на версия
 rename_version: Преименуване на версията
 compare_version: Сравнете версията
 save_version: Запазване на версията
-promote_version: Популяризирайте версията
-promote_version_disabled: Без промени
-promote_version_drawer_title: Повишете {version} до основната
-promote_version_changes: Промени
-promote_version_preview: Преглед
-outdated_notice: >-
-  Основният елемент е актуализиран след създаването на тази версия. Проверете всички стойности в следните полета и потвърдете коя версия трябва да се използва при популяризиране на тази версия в основния елемент.
-promote_notice: >-
-  Моля, прегледайте всички стойности на полетата по-долу и потвърдете коя версия трябва да се използва при повишаване на тази версия в основния елемент.
 delete_version: Изтриване на версията
 delete_version_copy: >-
   Сигурни ли сте, че искате да изтриете версията „{version}“? Това действие не може да бъде отменено.
-delete_on_promote_copy: >-
-  Искате ли да изтриете или запазите версията „{version}“ след повишението?
 reset_bookmark: Нулиране на отметки
 update_bookmark: Обновяване на отметка
 delete_bookmark: Изтриване на отметката
@@ -306,7 +296,6 @@ field_in_collection: '{field} ({collection})'
 reset_page_preferences: Нулиране на предпочитанията за страницата
 hidden_field: Скрито поле
 hidden_on_detail: Скриване в детайлния изглед
-disabled_editing_value: Без възможност за редакция
 key: Ключово име
 alias: Псевдоним
 bigInteger: Голям целочислен
@@ -435,11 +424,11 @@ confirm_revert_body: Възстановяване на записа към из�
 display: Изглед
 settings_update_success: Настройките са обновени
 title: Заглавие
+subtitle: Подзаглавие
 revision_delta_created: Създаден
 revision_delta_created_externally: Външно-създаден запис
 revision_delta_updated: '1 поле е обновено | {count} полета са обновени'
 revision_delta_deleted: Изтрито
-revision_delta_version_saved: 'Версия Запазване (Актуализирано 1 поле) | Запазване на версията (Актуализирани {count} полета)'
 revision_delta_reverted: Възстановен
 revision_delta_update_message: Това поле бе обновено, но поради мерки за сигурност стойността му е прикрита.
 revision_delta_other: Ревизия
@@ -461,6 +450,8 @@ related_collection: Релативна колекция
 related_collections: Релационни колекции
 translations_collection: Колекция с преводи
 languages_collection: Колекция с езици
+translations_preview_collections: Колекции
+translations_preview_fields: Полета
 import_data_input_placeholder: CSV или JSON...
 import_data_button: Започване на импортирането
 import_data_indeterminate: Импортиране на данните...
@@ -497,6 +488,7 @@ functions:
   minute: Минута
   second: Секунда
   count: Брой
+  json: JSON
 date-fns_date: PPP
 date-fns_time: 'HH:mm:ss'
 date-fns_time_no_seconds: 'HH:mm'
@@ -536,6 +528,7 @@ file_details: Детайли за файл
 dimensions: Размери
 size: Големина
 created: Създаден
+uploaded: Качено
 modified: Променен
 owner: Собственик
 edited_by: Променен от
@@ -613,12 +606,6 @@ file_count: 'Няма файлове | Един файл | {count} файла'
 no_files_copy: Тук не са открити файлове.
 user_count: 'Няма потребители | Един потребител | {count} потребителя'
 no_users_copy: Все още няма потребители към ролята.
-webhooks_count: 'Няма уеб-куки | 1 уеб-кука | {count} уеб-куки'
-webhooks_deprecation_notice: |
-  Webhooks са отхвърлени и по-нататъшното им използване не се препоръчва.
-
-  Моля, използвайте **Flows** с [Webhook/Request URL операция](https://docs.directus.io/app/flows/operations.html#webhook-request-url) вместо това.
-no_webhooks_copy: Няма зададени уеб-куки. Натиснете бутона по-долу за да започнете.
 no_notifications: Няма известия
 no_notifications_copy: Всичко е прегледано!
 activity_log: Дневник на активността
@@ -629,7 +616,6 @@ no_collections: Няма колекции
 create_collection: Създаване на колекция
 no_collections_copy_admin: Все още няма колекции. Натиснете бутона по-долу за да започнете.
 no_collections_copy: Все още нямате никакви колекции. Свържете се със системния администратор.
-relationship_not_setup: Релацията не е конфигурирана правилно
 no_singleton_relations: Връзките към Singletons не се поддържат
 display_template_not_setup: Настройките за показване не са конфигурирани правилно
 collection_field_not_setup: Настройките на полето от колекцията, не са конфигурирани правилно
@@ -642,13 +628,13 @@ copy_to: Копиране в...
 no_other_dashboards_copy: Все още нямате други табла.
 inactive: Неактивен
 users: Потребители
+roles: Роли
 activity: Активности
 activity_item: Предмет на дейността
 action: Действие
 ip_address: IP адрес
 user_agent: Потребителски агент
 origin: Произход
-webhooks: Уеб-куки
 decimals: Десетични знаци
 value_decimals: Десетични знаци
 min_value: Минимална стойност
@@ -732,7 +718,6 @@ errors:
   VALUE_OUT_OF_RANGE: Стойността е извън границите
   VALUE_TOO_LONG: Стойността е твърде дълга
 security: Сигурност
-value_hashed: Хеширана стойност
 bookmark_name: Име на отметката...
 create_bookmark: Създаване на отметка
 edit_bookmark: Редактиране на отметката
@@ -744,11 +729,9 @@ cannot_edit_global_bookmarks: Глобалната отметката, не мо
 bookmarks: Отметки
 presets: Заготовки
 unexpected_error: Неочаквана грешка
-unexpected_error_copy: Възникна неочаквана грешка, опитайте отново по-късно.
 copy_details: Копиране на детайли
 no_app_access: Без достъп до приложението
 no_app_access_copy: Не е позволено използването на администраторското приложение от потребителя.
-password_reset_sent: Ако профилът съществува, ще бъде изпратен имейл с подсигурена връзка за нулиране на паролата
 password_reset_successful: Паролата е нулирана успешно
 back: Назад
 filter: Филтриране
@@ -769,10 +752,6 @@ make_collection_hidden: Скриване на колекцията
 make_folder_visible: Папката е видима
 make_folder_hidden: Папката е скрита
 goto_collection_content: Преглед на съдържанието
-start_end_of_count_items: '{start}-{end} от {count} записа'
-start_end_of_count_filtered_items: '{start}-{end} от {count} филтрирани записи'
-one_item: '1 запис'
-one_filtered_item: '1 филтриран запис'
 delete_collection_are_you_sure: >-
   Сигурни ли сте, че искате да изтриете колекцията - „{collection}“? Всички записи и самата колекция ще бъдат изтрити. Действието е завинаги.
 delete_folder_are_you_sure: Сигурни ли сте, че искате да изтриете папката „{folder}“? Подпапките и колекциите ще бъдат преместени към главната папка.
@@ -836,6 +815,7 @@ operators:
   nintersects: Няма пресичане
   intersects_bbox: Прилежащи към границите
   nintersects_bbox: Не са прилежащи към границите
+  json: JSON
   regex: Отговаря на RegExp
 custom_validation_message: Собствено съобщение при валидация
 loading: Зареждане...
@@ -864,7 +844,6 @@ create_item: Създаване на запис
 display_template: Шаблон при показване
 language_display_template: Шаблон при показване на езиците
 translations_display_template: Шаблон при показване на преводите
-n_items_selected: 'Не са избрани записи | 1 избран запис | {n} избрани записа'
 per_page: На страница
 all_files: Всички файлове
 my_files: Моите файлове
@@ -908,13 +887,10 @@ label: Надпис
 flows: Автоматизирани процеси
 flow: Процес
 select_a_flow: Избор на процес
-run_flow_confirm: Сигурни ли сте, че искате да изпълните този процес?
 run_flow_on_current_collection: Стартиране на процеса за текущата колекция
 run_flow_on_current: Изпълнение на процеса на текущия елемент
-run_flow_on_current_edited_confirm: Записът може да бъде редактиран от процеса, сигурни ли сте, че искате да го изпълните?
 run_flow_on_selected: Първо изберете един или повече елементи | Изпълнение на процеса на 1 избран елемент | Стартирайте Flow върху {n} избрани елементи
 run_flow: Стартирайте процеса
-run_flow_success: Изпълнението на процеса „{flow}“ е успешно
 field_name_placeholder: Въведете име на поле...
 field_key_placeholder: Въведете ключ на полето...
 trigger: Задействане
@@ -952,6 +928,14 @@ operation_key_unique_error: Оперативните ключове трябва
 operation_handle_resolve: 'Изпълнение: Натиснете за добавяне или придърпайте за пренасочване'
 operation_handle_reject: 'Отхвърляне: Натиснете за добавяне или придърпайте за пренасочване'
 insights: Задълбочен анализ
+deployment:
+  provider:
+    settings:
+      delete_confirm: Действието е завинаги и не може да бъде отменено. Сигурни ли сте, че искате да продължите?
+    run:
+      cancel_confirm: Действието е завинаги и не може да бъде отменено. Сигурни ли сте, че искате да продължите?
+  target_value:
+    preview: Преглед
 dashboard: Табло
 panel: Панел
 panel_options: Настройки на панела
@@ -1004,8 +988,6 @@ tooltip: Подсказка
 tooltip_placeholder: Въвеждане на подсказката...
 unlimited: Неограничен
 open_link_in: Отваряне не връзката в
-new_tab: Нов таб
-current_tab: Текущ таб
 save_image: Запазване на изображението
 save_media: Запазване на медията
 wysiwyg_options:
@@ -1027,12 +1009,15 @@ wysiwyg_options:
   bullist: Списък
   numlist: Номериран списък
   hr: Хоризонтална линия
+  insertdatetime_date: Дата
+  insertdatetime_time: Час
   link: Добавяне/редактиране на връзка
   unlink: Премахване на връзка
   media: Добавяне/редактиране на медия
   image: Добавяне/редактиране на изображение
   copy: Копиране
   cut: Изрязване
+  default: По подразбиране
   paste: Поставяне
   heading: Заглавие
   h1: Заглавие 1
@@ -1055,6 +1040,8 @@ wysiwyg_options:
   source_code: Редактиране на изходния код
   fullscreen: Пълен екран
   directionality: Подравняване
+  ltr: От ляво на дясно
+  rtl: От дясно на ляво
   lazy_loading: Бавно зареждане на изображение
   lazy_loading_label: Разрешете бавно зареждане
 dropdown: Падащо меню
@@ -1079,11 +1066,19 @@ editing_unit: 'Редактиране на {unit}'
 editing_in_batch: 'Множествено редактиране на {count} записи'
 no_options_available: Не са налични настройки
 settings_data_model: Модел на данните
-settings_permissions: Контрол на достъпа
 settings_project: Настройки
+licensing:
+  unlimited: Неограничен
+  addon_manage: Управление
+  addon_update: Обновяване
+  resolve_continue: Продължаване
+  resolve_show_n_more: 'Показване на още {count}'
+  resolve_section_flows: Автоматизирани процеси
+  resolve_sso_admin_password: Парола
+  entitlements:
+    collections: Колекции
+    flows: Автоматизирани процеси
 settings_appearance: Външен вид
-settings_webhooks: Уеб-куки
-settings_flows: Автоматизирани процеси
 settings_presets: Отметки
 settings_translations: Преводи
 one_or_more_options_are_missing: Липсват една или повече настройки
@@ -1109,46 +1104,6 @@ discard_changes_copy: Сигурни ли сте, че искате да отх�
 show_x_axis: Показване на оста по X
 show_y_axis: Показване на оста по Y
 keep_editing: Редактиране
-page_help_collections_overview: '**Обзор на колекциите** — Показват се всички налични колекции до които имате достъп.'
-page_help_collections_collection: >-
-  **Преглед на записи** — Показват се всички достъпни за вас записи от {collection}. Предоставена е възможност за персонализация на оформлението, филтрите и подредбата, така, че да се впишат по-добре към вашите нужди, дори е възможно създаването на заготовка за бърз достъп от създадената конфигурация.
-page_help_collections_item: >-
-  **Детайли за запис** — Формуляр за преглед и управление на записа. Страничният панел също съдържа и пълна история на ревизиите, и коментарите към него.
-page_help_activity_collection: >-
-  **Поток на активността** — Подробен списък на цялата активност по съдържанието, записите, потребителите и системата.
-page_help_docs_global: >-
-  **Обзор на документацията** — Обща и техническа документация, специфична за версията и схемата на вашият проект.
-page_help_files_collection: >-
-  **Файлова библиотека** — Показват се всички достъпни за вас файлове. Предоставена е възможност за персонализация на оформлението, филтрите и подредбата, така, че да се впишат по-добре към вашите нужди, дори е възможно създаването на заготовка за бърз достъп от създадената конфигурация.
-page_help_files_item: >-
-  **Детайли за файл** — Формуляр за управление на мета-данните, редактиране на оригиналния файл и обновяване на настройките при достъп.
-page_help_settings_project: "**Настройки** — Опциите за глобална конфигурация на вашия проект."
-page_help_settings_appearance: "**Външен вид** — Външен вид на вашия проект и опции за тема."
-page_help_settings_extensions: '**Разширения** — Разширенията, инсталирани във вашия проект.'
-page_help_settings_datamodel_collections: >-
-  **Модел на данните: Колекции** — Показват се всички налични колекции. Това включва всички видими, невидими, системни, както и все още не конфигурираните таблици в базата от данни, които могат да бъдат добавяни като колекции.
-page_help_settings_datamodel_fields: >-
-  **Модел на данните: Колекция** — Формуляр за управление на тази колекция и нейните полета.
-page_help_settings_roles_collection: '**Преглед на роли** — Показват се администраторската, публичната и всички собствени роли.'
-page_help_settings_roles_item: "**Детайли за роля** — Управление на позволенията на ролята, както и някои други настройки."
-page_help_settings_presets_collection: >-
-  **Преглед на заготовките** — Показват се всички заготовки от изгледи, включително за отделните: потребител, роля, и глобални отметки, както и изгледите по подразбиране.
-page_help_settings_presets_item: >-
-  **Детайли за заготовка** — Формуляр за управление на отметките и заготовките от изгледи по подразбиране отнасящи се за колекциите.
-page_help_settings_webhooks_collection: '**Преглед на уеб-куки** — Показват се всички уеб-куки в проекта.'
-page_help_settings_webhooks_item: '**Детайли за уеб-кука** — Формуляр за създаване и управление на уеб-куките в проекта.'
-page_help_settings_flows_collection: '**Преглед на автоматизираните процеси** — Показват се всички налични автоматизирани процеси в проекта.'
-page_help_settings_flows_item: '**Детайлен изглед на автоматизиран процес** — Работен плот за управление на един или множество операции.'
-page_help_settings_translations_collection: '**Преглед на персонализирани преводи** — Изброява всички персонализирани преводи в рамките на проекта.'
-page_help_settings_translations_item: '**Подробности за персонализирани преводи** — Форма за преглед и управление на този елемент.'
-page_help_users_collection: '**Потребители** — Показват се всички потребители в системата на проекта.'
-page_help_users_item: >-
-  **Детайли за потребител** — Управление на информацията на вашия потребителския профил, или детайлен преглед на друг потребител.
-page_help_insights_overview: '**Задълбочен анализ** — Показване на всички налични табла до които имате достъп.'
-page_help_insights_dashboard: '**Табло** — Работен плот за управление на един или множество панели'
-page_help_marketplace_account: '**Акаунт** — Издател или поддържащ публикувано разширение.'
-page_help_marketplace_registry: '**Регистър** — Разширения, налични в Directus Marketplace.'
-page_help_marketplace_extension: '**Разширение** — Разширение в Directus Marketplace.'
 activity_feed: Поток на активността
 add_new: Добави нов запис
 create_new: Създаване
@@ -1182,13 +1137,11 @@ directus_collection:
   directus_dashboards: Табла в модула за задълбочен анализ
   directus_fields: Допълнителна кофигурация и данни
   directus_files: Мета данни за всички файлове
-  directus_flows: Автоматизирани процеси
   directus_folders: Виртуални директории за файловете
   directus_migrations: Версия на базата данни която се използва
   directus_notifications: Известия, изпратени до потребителите
   directus_operations: Задачи които се изпълняват в автоматизиран процес
   directus_panels: Панели в таблото на задълбочения анализ
-  directus_permissions: Позволения за роли
   directus_presets: Заготовки на началните стойности и отметките за колекциите
   directus_relations: Релационни настройки и мета данни
   directus_revisions: Моментни данни за цялата активност
@@ -1197,7 +1150,6 @@ directus_collection:
   directus_settings: Настройки за проекти
   directus_shares: Проследяване на външно споделените записи
   directus_users: Системни потребители за платформата
-  directus_webhooks: Конфигурация от HTTP завките базирани на събития
   directus_translations: Преводи по поръчка
   directus_versions: Версии на съдържанието за елементи
   directus_extensions: Конфигуриране на разширения
@@ -1217,6 +1169,7 @@ fields:
     collection: Колекция
     icon: Икона
     note: Бележка
+    status: Статус
     color: Цвят
     display_template: Шаблон при показване
     hidden: Скриване
@@ -1254,6 +1207,8 @@ fields:
     height: Височина
     charset: Набор символи
     duration: Продължителност
+    focal_point_x: Координата по X
+    focal_point_y: Координата по Y
   directus_users:
     first_name: Име
     last_name: Фамилия
@@ -1334,6 +1289,7 @@ fields:
     custom_aspect_ratios: Собствени аспектни съотношения
     theme_light_overrides: Персонализиране на светла тема
     theme_dark_overrides: Персонализиране на тъмна тема
+    ai_header_name: Хедър
   directus_shares:
     name: Име
     role: Роля
@@ -1354,24 +1310,9 @@ fields:
     name: Име на ролята
     icon: Икона на ролята
     description: Описание
-    app_access: Достъп до приложението
-    admin_access: Администраторски достъп
-    ip_access: IP адрес
-    enforce_tfa: Изискване за 2FA
     users: Потребители към ролята
-    module_list: Модули
-  directus_webhooks:
-    name: Име
-    method: Метод
-    status: Статус
-    data: Данни
-    header: Хедър
-    value: Стойност
-    headers: Хедъри при заявката
-    data_label: Изпращане на данните
-    triggers: Задействане
-    actions: Действия
-    collections: Колекции
+  directus_policies:
+    description: Описание
 field_options:
   directus_settings:
     project_name_placeholder: Моят проект...
@@ -1445,7 +1386,6 @@ field_options:
   directus_roles:
     name: Уникално име за ролята...
     description: Описание на ролята...
-    ip_access: Добавете разрешени IP адреси, IP диапазони и CIDR блокове. Оставете празно, за да разрешите всички...
     fields:
       icon_name: Икона
       name_name: Име
@@ -1466,19 +1406,6 @@ field_options:
     status_dropdown_suspended: Спрян
     status_dropdown_archived: Архивиран
     token: Въвеждане на сигурен токен...
-  directus_webhooks:
-    status_options_active: Активна
-    status_options_inactive: Неактивна
-    data_label: Изпращане на данните
-    triggers_divider: Задействане
-    actions_create: Създаване
-    actions_update: Обновяване
-    actions_delete: Изтриване
-    actions_login: Вход
-    headers:
-      header: Хедър
-      value: Стойност
-      add: Добавяне на хедър
 no_fields_in_collection: 'Все още няма полета в „{collection}“'
 no_value: Няма стойност
 do_nothing: Без действие
@@ -1500,11 +1427,33 @@ live_preview:
   new_window: Отваряне в нов прозорец
   close_window: Отворете в разделен изглед
   toggle_3d: Превключване на 3D
+  display_options: Опции на дисплея
 shares: Споделяния
 unlimited_usage: Неограничено използване
-uses_left: Не е налична | Остава 1 използване | Остават {n} използвания
 no_shares: Не е споделено
 new_share: Ново споделяне
+ai:
+  input: Текстово поле
+  unknown: Неизвестен
+  items: Записи
+  content: Съдържание
+  settings: Настройки
+  tool_approval:
+    disabled: Изключване
+  ask_user_submit: Изпращане
+  ask_user_next: Напред
+ai_tools:
+  items: Записи
+  files: Файлове
+  folders: Папки
+  flows: Автоматизирани процеси
+  trigger-flow: Задействане на процес
+  operations: Операции
+  schema: Схема
+  collections: Колекции
+  fields: Полета
+mcp_prompts_collection_schema:
+  messages_role_user: Потребител
 expired: Просрочен
 upcoming: Предстоящ
 share: Споделяне
@@ -1536,7 +1485,6 @@ continue_label: Продължаване
 continue_as: >-
   {name} в момента е оторизиран. Ако разпознавате профила, изберете бутона за продължаване.
 editing_role: 'Роля - {role}'
-creating_webhook: Създаване на уеб-кука
 default_label: По подразбиране
 delete_label: Изтриване
 delete_are_you_sure: >-
@@ -1615,7 +1563,6 @@ translation_placeholder: Въвеждане на превода...
 value: Стойност
 view_project: Преглед на проекта
 report_error: Докладване на грешка
-start: Начало
 table: Таблица
 list: Списък
 search_filter: Търсене и филтриране
@@ -1626,6 +1573,8 @@ navigate_to_item: Навигиране до записа
 undo_removed_item: Отмяна на премахването
 remove_item: Премахване на запис
 delete_item: Изтриване на запис
+pause: Пауза
+resume: Възобновяване
 interfaces:
   list-m2a:
     prefix_note: Използва името на колекцията на свързания елемент по подразбиране.
@@ -1656,10 +1605,10 @@ interfaces:
     all_opened: Всички са отворени
     accordion_mode: Акордионен режим
     max_one_section_open: До 1 отворена секция
+  group-tabs:
+    fill_width: Изпълване по ширина
   presentation-links:
-    presentation-links: Бутони с връзки
-    links: Връзки
-    description: Конфигуриуеми бутонни връзки за отваряне на динамични URL адреси
+    presentation-links: Бутони
     style: Стил
     primary: Главен
     link: Връзки
@@ -1790,6 +1739,9 @@ interfaces:
     preview: Преглед
     editorFont: Шрифт при редактиране
     previewFont: Шрифт при преглед
+    default_view: Изглед по подразбиране
+    default_view_editor: Редактор
+    default_view_preview: Преглед
     customSyntax: Собствени блокове
     customSyntax_label: Добавяне на собствени синтактични типове
     customSyntax_add: Добавяне на собствен синтаксис
@@ -1842,6 +1794,7 @@ interfaces:
     incompatible_data: Текущите данни не са съвместими с интерфейсът за повторение и ще бъдат заместени при добавяне на нов запис
     interface_group: Настройки на интерфейса
     display_group: Опции на дисплея
+    edit_mode_inline: Вложен
   slider:
     slider: Плъзгач
     description: Избор на число чрез плъзгач
@@ -1914,10 +1867,8 @@ interfaces:
     wysiwyg: WYSIWYG
     description: Визуален редактор на HTML съдържание
     toolbar: Лента с инструменти
+    extensions: Разширения
     custom_formats: Собтсвени формати
-    custom_formats_note: Списък с формати на съдържание на TinyMCE. Вижте документацията на TinyMCE относно [Форматиране на съдържание](https://www.tiny.cloud/docs/tinymce/latest/content-formatting/) за повече информация.
-    options_override: Преопределяне на настройки
-    options_override_note: Ключовете за потребителско форматиране на TinyMCE и техните стойности. Вижте документацията на TinyMCE относно [Потребителско форматиране](https://www.tiny.cloud/docs/tinymce/latest/user-formatting-options/) за повече информация.
     folder_note: Папка за качване на файловете. Съществуващите файлове не се променят.
     imageToken: Статичен токен за достъп
     imageToken_label: Статичния токен за достъп се добавя след URL-a на файла
@@ -1968,11 +1919,15 @@ interfaces:
     value_securely_saved: Стойността е запазена подсигурено
     generate: Генериране на токен
     regenerate: Регенериране на токен
-    generate_success_copy: Поради мерки за сигурност, след запазване и напускане на тази страница, токенът няма да бъде достъпен за повторно показване. Уверете се, че сте го записали странично.
+    regenerate_confirm_title: Регенериране на токен
     remove_token: Изтриване на токен
+    remove_confirm_title: Изтриване на токен
   system-raw-editor:
     system-raw-editor: Редактор в суров вид
     description: Позволява въвеждане на сурови стойности или mustache шаблони
+  header:
+    header: Хедър
+    links: Връзки
 displays:
   translations:
     translations: Преводи
@@ -2164,9 +2119,9 @@ layouts:
     show_ungrouped: Негрупирано показване
     show: Показване
     no_group: Без групиране
-    not_all_loaded: Може да се заредят само първите 1000 записи.
 horizontal: Хоризонтала
 vertical: Вертикална
+axis: Ос
 x_axis: Оста X
 y_axis: Оста X
 y_axis_function: Функция по Y-Axis
@@ -2187,6 +2142,7 @@ show_labels: Показване на етикети
 show_legend: Показване на легенда
 right: Дясно
 left: Ляво
+start: Начало
 donut: Поничка
 panels:
   metric:
@@ -2275,11 +2231,9 @@ triggers:
 a_flow_uuid: Избор на процес за задействане...
 any_string_or_json: Всякакъв низ или JSON...
 item_payload_placeholder: Това трябва да е JSON документа, който ще се използва при актуализирането на полетата на записа...
-operation_variables_note: Данните от операцията са достъпни чрез променливи като **{'{'}{'{'}$last{'}'}{'}'}**, **{'{'}{'{'}$trigger{'}'}{'}'}** и **{'{'}{'{'}$accountability{'}'}{'}'}**, или за достъп до предишната операция чрез **{'{'}{'{'}operation_key{'}'}{'}'}**.'
 operations:
   condition:
     name: Условие
-    description: Маршрутизиране на процес базирано на If / Else логика
   exec:
     name: Изпълняване на скрипт
     description: Изпълняване на потребителски код за промяна на съдържанието
@@ -2331,7 +2285,6 @@ operations:
     name: Изпращане на имейл
     description: Изпращане на имейл до един или няколко човека
     to: До
-    to_placeholder: Добавете имейл адрес и натиснете enter...
     body: Съдържание
     template: Шаблон
     data: Данни
@@ -2364,7 +2317,6 @@ operations:
     description: Промяна на JSON съдържанието на процеса
   trigger:
     name: Задействане на процес
-    description: Подаване на данните към друг процес
     flows: Автоматизирани процеси
     flow: Процес
     data: Данни
@@ -2416,3 +2368,8 @@ duplicate_dashboard: Дублирано табло за управление
 search_dashboard: Търсене в таблото за управление...
 search_flow: Поток на търсене...
 percent: Процент
+show_password: Показване на паролата
+hide_password: Скриване на паролата
+license_grace_key_modal:
+  optional: По желание
+set_to_now: Сегашно време

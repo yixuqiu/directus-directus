@@ -1,7 +1,7 @@
 import type { DirectusActivity } from '../../../schema/activity.js';
 import type { ApplyQueryFields, Query } from '../../../types/index.js';
-import { throwIfEmpty } from '../../utils/index.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfEmpty } from '../../utils/index.js';
 
 export type ReadActivityOutput<
 	Schema,
@@ -37,7 +37,7 @@ export const readActivity =
 		query?: TQuery,
 	): RestCommand<ReadActivityOutput<Schema, TQuery>, Schema> =>
 	() => {
-		throwIfEmpty(String(key), 'Key cannot be empty');
+		throwIfEmpty(key, 'Key cannot be empty');
 
 		return {
 			path: `/activity/${key}`,

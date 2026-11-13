@@ -1,5 +1,5 @@
+import { set } from 'lodash-es';
 import { HelperFunctions, State, StateUpdates } from '../types';
-import { set } from 'lodash';
 import { useExtension } from '@/composables/use-extension';
 import { getSpecialForType } from '@/utils/get-special-for-type';
 

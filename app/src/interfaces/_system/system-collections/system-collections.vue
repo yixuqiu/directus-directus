@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { useCollectionsStore } from '@/stores/collections';
 import { isSystemCollection } from '@directus/system-data';
 import { computed } from 'vue';
-import { useI18n } from 'vue-i18n';
+import VNotice from '@/components/v-notice.vue';
+import InterfaceSelectMultipleDropdown from '@/interfaces/select-multiple-dropdown/select-multiple-dropdown.vue';
+import { useCollectionsStore } from '@/stores/collections';
+import { isCollectionInactive } from '@/utils/collection-status';
 
 const props = withDefaults(
 	defineProps<{
@@ -18,12 +20,10 @@ defineEmits<{
 	(e: 'input', value: string[] | null): void;
 }>();
 
-const { t } = useI18n();
-
 const collectionsStore = useCollectionsStore();
 
 const collections = computed(() => {
-	let collections = collectionsStore.collections.filter((collection) => collection.type === 'table');
+	let collections = collectionsStore.sortedCollections.filter((collection) => collection.type === 'table');
 
 	if (!props.includeSingleton) {
 		collections = collections.filter((collection) => collection?.meta?.singleton === false);
@@ -40,19 +40,21 @@ const items = computed(() => {
 	return collections.value.map((collection) => ({
 		text: collection.name,
 		value: collection.collection,
+		disabled: isCollectionInactive(collection) && !props.value?.includes(collection.collection),
 	}));
 });
 </script>
 
 <template>
-	<v-notice v-if="items.length === 0">
-		{{ t('no_collections') }}
-	</v-notice>
-	<interface-select-multiple-checkbox
+	<VNotice v-if="items.length === 0">
+		{{ $t('no_collections') }}
+	</VNotice>
+	<InterfaceSelectMultipleDropdown
 		v-else
 		:choices="items"
-		:value="value"
+		:value="value ?? undefined"
 		:disabled="disabled"
+		:placeholder="$t('collections')"
 		@input="$emit('input', $event)"
 	/>
 </template>

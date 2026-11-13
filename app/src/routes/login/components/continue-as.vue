@@ -1,14 +1,20 @@
+<script lang="ts">
+/** Shared between instances: hydrating re-mounts this component, so only the first should navigate. */
+let navigating = false;
+</script>
+
 <script setup lang="ts">
+import { onMounted, ref } from 'vue';
+import { I18nT } from 'vue-i18n';
+import { RouterLink, useRouter } from 'vue-router';
 import api from '@/api';
 import { logout } from '@/auth';
+import VButton from '@/components/v-button.vue';
+import VProgressCircular from '@/components/v-progress-circular.vue';
 import { hydrate } from '@/hydrate';
+import { navigateAfterLogin } from '@/routes/login/utils/navigate-after-login';
 import { unexpectedError } from '@/utils/unexpected-error';
 import { userName } from '@/utils/user-name';
-import { onMounted, ref } from 'vue';
-import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
-
-const { t } = useI18n();
 
 const router = useRouter();
 
@@ -16,7 +22,10 @@ const loading = ref(false);
 const name = ref<string | null>(null);
 const lastPage = ref<string | null>(null);
 
-fetchUser();
+const redirectQuery = router.currentRoute.value.query.redirect;
+const initialRedirect = Array.isArray(redirectQuery) ? redirectQuery[0] : redirectQuery;
+
+const userPromise = fetchUser();
 
 onMounted(() => {
 	if ('continue' in router.currentRoute.value.query) {
@@ -48,24 +57,31 @@ async function fetchUser() {
 }
 
 async function hydrateAndLogin() {
-	await hydrate();
-	const redirectQuery = router.currentRoute.value.query.redirect as string;
-	router.push(redirectQuery || lastPage.value || `/content`);
+	if (navigating) return;
+	navigating = true;
+
+	try {
+		await hydrate();
+		await userPromise;
+		await navigateAfterLogin(router, initialRedirect || lastPage.value || `/content`);
+	} finally {
+		navigating = false;
+	}
 }
 </script>
 
 <template>
 	<div class="continue-as">
-		<v-progress-circular v-if="loading" indeterminate />
+		<VProgressCircular v-if="loading" indeterminate />
 		<template v-else>
-			<i18n-t keypath="continue_as" scope="global" tag="p">
+			<I18nT keypath="continue_as" scope="global" tag="p">
 				<template #name>
 					<b>{{ name }}</b>
 				</template>
-			</i18n-t>
+			</I18nT>
 			<div class="actions">
-				<router-link to="/logout" class="sign-out">{{ t('sign_out') }}</router-link>
-				<v-button autofocus large @click="hydrateAndLogin">{{ t('continue_label') }}</v-button>
+				<RouterLink to="/logout" class="sign-out">{{ $t('sign_out') }}</RouterLink>
+				<VButton autofocus large @click="hydrateAndLogin">{{ $t('continue_label') }}</VButton>
 			</div>
 		</template>
 	</div>
@@ -73,7 +89,7 @@ async function hydrateAndLogin() {
 
 <style scoped>
 .continue-as p {
-	margin-bottom: 32px;
+	margin-block-end: 1.8125rem;
 }
 
 .continue-as :deep(b) {

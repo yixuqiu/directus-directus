@@ -1,32 +1,35 @@
-<!--
-
-Heya! Thanks for opening a Pull Request! If your PR is implementing a new feature or fix for Directus, please make sure your PR adheres to the following requirements:
-
-- The PR closes an Issue (not Discussion)
-- Tests are added/updated and are passing locally if applicable
-- Documentation was added/updated if applicable
-
-Please make sure to "Link" the issue you're closing. Without a Linked issue, this PR won't be accepted. See https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue for more information.
-
--->
-
-## Scope
-
-What's changed:
-
-- Lorem ipsum dolor sit amet
-- Consectetur adipiscing elit
-- Sed do eiusmod tempor incididunt
-
-## Potential Risks / Drawbacks
+## What's Changed
 
 - Lorem ipsum dolor sit amet
 - Consectetur adipiscing elit
 
-## Review Notes / Questions
+## Tested Scenarios
+
+- Lorem ipsum dolor sit amet
+- Consectetur adipiscing elit
+
+## Review Notes / Questions / Concerns
 
 - I would like to lorem ipsum
 - Special attention should be paid to dolor sit amet
+
+## Checklist
+
+> Leave unchecked where not applicable
+
+- [ ] Tests added/updated
+- [ ] Documentation PR created in [directus/docs](https://github.com/directus/docs) <!-- LINK -->
+- [ ] OpenAPI updated
+  - [ ] Local specs package (`@directus/specs`)
+  - [ ] PR created in [directus/openapi](https://github.com/directus/openapi) <!-- LINK -->
+- [ ] SDK (`@directus/sdk`) updated to reflect the changes
+- [ ] Types (`@directus/types`) updated to reflect the changes
+- [ ] GraphQL schema updated to reflect the changes
+- [ ] System data (`@directus/system-data`) updated for changes to system collections/fields/relations
+- [ ] Database migration added for schema/system changes
+- [ ] Environment variables documented for new/changed config
+- [ ] App translations added for new user-facing strings
+- [ ] Security implications apply
 
 ---
 

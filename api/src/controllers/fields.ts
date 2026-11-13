@@ -1,14 +1,15 @@
 import { TYPES } from '@directus/constants';
-import { isDirectusError } from '@directus/errors';
+import { ErrorCode, InvalidPayloadError } from '@directus/errors';
+import { ForbiddenError, isDirectusError } from '@directus/errors';
+import { isSystemField } from '@directus/system-data';
 import type { Field, RawField, Type } from '@directus/types';
 import { Router } from 'express';
 import Joi from 'joi';
 import { ALIAS_TYPES } from '../constants.js';
-import { ErrorCode, InvalidPayloadError } from '@directus/errors';
-import validateCollection from '../middleware/collection-exists.js';
+import collectionExists from '../middleware/collection-exists.js';
 import { respond } from '../middleware/respond.js';
 import useCollection from '../middleware/use-collection.js';
-import { FieldsService } from '../services/fields.js';
+import { FieldsService, systemFieldUpdateSchema } from '../services/fields.js';
 import asyncHandler from '../utils/async-handler.js';
 
 const router = Router();
@@ -33,7 +34,7 @@ router.get(
 
 router.get(
 	'/:collection',
-	validateCollection,
+	collectionExists,
 	asyncHandler(async (req, res, next) => {
 		const service = new FieldsService({
 			accountability: req.accountability,
@@ -50,7 +51,7 @@ router.get(
 
 router.get(
 	'/:collection/:field',
-	validateCollection,
+	collectionExists,
 	asyncHandler(async (req, res, next) => {
 		const service = new FieldsService({
 			accountability: req.accountability,
@@ -84,7 +85,7 @@ const newFieldSchema = Joi.object({
 
 router.post(
 	'/:collection',
-	validateCollection,
+	collectionExists,
 	asyncHandler(async (req, res, next) => {
 		const service = new FieldsService({
 			accountability: req.accountability,
@@ -99,7 +100,10 @@ router.post(
 
 		const field: Partial<Field> & { field: string; type: Type | null } = req.body;
 
-		await service.createField(req.params['collection']!, field);
+		await service.createField(req.params['collection']!, field, undefined, {
+			attemptConcurrentIndex:
+				'concurrentIndexCreation' in req.query && req.query['concurrentIndexCreation'] !== 'false',
+		});
 
 		try {
 			const createdField = await service.readOne(req.params['collection']!, field.field);
@@ -119,7 +123,7 @@ router.post(
 
 router.patch(
 	'/:collection',
-	validateCollection,
+	collectionExists,
 	asyncHandler(async (req, res, next) => {
 		const service = new FieldsService({
 			accountability: req.accountability,
@@ -130,7 +134,20 @@ router.patch(
 			throw new InvalidPayloadError({ reason: 'Submitted body has to be an array' });
 		}
 
-		await service.updateFields(req.params['collection']!, req.body);
+		for (const fieldData of req.body) {
+			if (isSystemField(req.params['collection']!, fieldData['field']!)) {
+				const { error } = systemFieldUpdateSchema.safeParse(fieldData);
+
+				if (error) {
+					throw new InvalidPayloadError({ reason: 'Only "schema.is_indexed" may be modified for system fields' });
+				}
+			}
+		}
+
+		await service.updateFields(req.params['collection']!, req.body, {
+			attemptConcurrentIndex:
+				'concurrentIndexCreation' in req.query && req.query['concurrentIndexCreation'] !== 'false',
+		});
 
 		try {
 			const results: any = [];
@@ -169,24 +186,33 @@ const updateSchema = Joi.object({
 
 router.patch(
 	'/:collection/:field',
-	validateCollection,
+	collectionExists,
 	asyncHandler(async (req, res, next) => {
 		const service = new FieldsService({
 			accountability: req.accountability,
 			schema: req.schema,
 		});
 
-		const { error } = updateSchema.validate(req.body);
+		if (isSystemField(req.params['collection']!, req.params['field']!)) {
+			const { error } = systemFieldUpdateSchema.safeParse(req.body);
 
-		if (error) {
-			throw new InvalidPayloadError({ reason: error.message });
+			if (error) {
+				throw new InvalidPayloadError({ reason: 'Only "schema.is_indexed" may be modified for system fields' });
+			}
+		} else {
+			const { error } = updateSchema.validate(req.body);
+
+			if (error) throw new InvalidPayloadError({ reason: error.message });
 		}
 
 		const fieldData: RawField = req.body;
 
 		if (!fieldData.field) fieldData.field = req.params['field']!;
 
-		await service.updateField(req.params['collection']!, fieldData);
+		await service.updateField(req.params['collection']!, fieldData, {
+			attemptConcurrentIndex:
+				'concurrentIndexCreation' in req.query && req.query['concurrentIndexCreation'] !== 'false',
+		});
 
 		try {
 			const updatedField = await service.readOne(req.params['collection']!, req.params['field']!);
@@ -206,12 +232,16 @@ router.patch(
 
 router.delete(
 	'/:collection/:field',
-	validateCollection,
+	collectionExists,
 	asyncHandler(async (req, _res, next) => {
 		const service = new FieldsService({
 			accountability: req.accountability,
 			schema: req.schema,
 		});
+
+		if (isSystemField(req.params['collection']!, req.params['field']!)) {
+			throw new ForbiddenError();
+		}
 
 		await service.deleteField(req.params['collection']!, req.params['field']!);
 		return next();

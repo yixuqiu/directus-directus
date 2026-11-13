@@ -1,4 +1,6 @@
 ---
+setup_welcome: डीरेकटस पर स्वागत है
+setup_info: आपका प्रशासक खाता बनाते हैं और आपका प्रोजेक्ट शुरू करते हैं
 identifier: पहचानकर्ता
 avatar: अवतार
 application: एप्लीकेशन
@@ -26,6 +28,7 @@ duplicate_field: डुप्लिकेट फ़ील्ड
 half_width: आधी चौड़ाई
 full_width: पुरी चौड़ाई
 group: समूह
+previous: पहले का
 export_items: निर्यात आइटम
 and: और
 or: या
@@ -62,7 +65,6 @@ create_role: भूमिका बनाएं
 create_user: यूजर बनाएं
 message: संदेश
 delete_panel: पैनल हटाएं
-create_webhook: Webhook बनाएं
 invite_users: यूज़र आमंत्रित करें
 invite: आमंत्रित करें
 email_already_invited: ईमेल "{email}" पहले ही आमंत्रित किया जा चुका है
@@ -196,7 +198,6 @@ field_in_collection: '{field} ({collection})'
 reset_page_preferences: पेज सेटिंग्स रिसेट करे
 hidden_field: हिडन फील्ड
 hidden_on_detail: विवरण पर हिडन
-disabled_editing_value: डेटा संपादित करने से रोकें
 key: Key
 alias: Alias
 bigInteger: Big Integer
@@ -295,6 +296,7 @@ functions:
   minute: मिनट
   second: सेकंड
   count: गिनती
+  json: JSON
 date-fns_time: 'h:mm:ss a'
 date-fns_time_no_seconds: 'h:mm a'
 date-fns_date_short: 'MMM d, u'
@@ -345,7 +347,6 @@ information: जानकारी
 report_bug: बग रिपोर्ट करें
 request_feature: सुविधा के लिए अनुरोध करें
 csv: CSV
-webhooks: Webhooks
 upper_limit: ऊपरी सीमा
 lower_limit: निचली सीमा
 documentation: दस्तावेज़ीकरण
@@ -360,7 +361,6 @@ errors:
   NOT_NULL_VIOLATION: मान null नहीं हो सकता
 bookmarks: पृष्टस्मृतियाँ
 flip_horizontal: फ्लिप हॉरिजॉन्टल
-one_item: '1 समान'
 font: फ़ॉन्ट
 sans_serif: Sans Serif
 serif: Serif
@@ -370,6 +370,7 @@ color: Color
 circle: Circle
 operators:
   eq: Equals
+  json: JSON
 loading: लोड हो रहा है...
 item: समान
 columns: कॉलमस
@@ -393,8 +394,12 @@ flow_name: नाम
 wysiwyg_options:
   forecolor: अग्रभूमि रंग
   backcolor: पृष्ठभूमि रंग
+  insertdatetime_date: Date
+  insertdatetime_time: Time
   selectall: सभी चुनें
-settings_webhooks: Webhooks
+  ltr: बाएं से दायां
+licensing:
+  addon_update: Update
 settings_presets: पृष्टस्मृतियाँ
 fields:
   directus_collections:
@@ -420,8 +425,6 @@ fields:
     translation: फ़ील्ड नाम अनुवाद
   directus_roles:
     name: भूमिका नाम
-  directus_webhooks:
-    name: नाम
 field_options:
   directus_activity:
     create: Create
@@ -433,12 +436,18 @@ field_options:
   directus_roles:
     fields:
       name_name: नाम
-  directus_webhooks:
-    actions_create: Create
-    actions_update: Update
 live_preview:
   new_window: नए विंडो में खोलें
+ai:
+  tool_approval:
+    disabled: निष्क्रिय
+  ask_user_submit: दर्ज करें
+  ask_user_next: अगला
+mcp_prompts_collection_schema:
+  messages_role_user: यूज़र
 interfaces:
+  group-tabs:
+    fill_width: संपूर्ण चौड़ाई
   presentation-links:
     primary: प्राइमरी
   select-color:
@@ -488,6 +497,9 @@ displays:
 layouts:
   cards:
     title: शीर्षक
+triggers:
+  webhook:
+    method: विधि
 operations:
   log:
     message: संदेश
@@ -497,4 +509,5 @@ operations:
     subject: विषय
   request:
     url: URL
+    method: विधि
 standard: नार्मल फील्ड

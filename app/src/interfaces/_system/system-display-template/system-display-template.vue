@@ -1,27 +1,37 @@
 <script setup lang="ts">
+import type { Field } from '@directus/types';
+import { computed, inject, ref } from 'vue';
+import VFieldTemplate from '@/components/v-field-template/v-field-template.vue';
+import VNotice from '@/components/v-notice.vue';
+import { useFakePreviewBaseUrlField } from '@/composables/use-fake-preview-base-url-field';
+import { useFakeVersionField } from '@/composables/use-fake-version-field';
 import { FieldNode, useFieldTree } from '@/composables/use-field-tree';
 import { useCollectionsStore } from '@/stores/collections';
-import type { Field } from '@directus/types';
-import { computed, inject, ref, unref } from 'vue';
-import { useI18n } from 'vue-i18n';
+import { useSettingsStore } from '@/stores/settings';
 
-const props = defineProps<{
-	value: string | null;
-	placeholder?: string | null;
-	disabled?: boolean;
-	collectionField?: string;
-	collectionName?: string;
-	fields?: FieldNode[];
-	injectVersionField?: boolean;
-}>();
+const props = withDefaults(
+	defineProps<{
+		value: string | null;
+		placeholder?: string | null;
+		disabled?: boolean;
+		collectionField?: string;
+		collectionName?: string;
+		fields?: FieldNode[];
+		injectVersionField?: boolean;
+		injectPreviewBaseUrlField?: boolean;
+		includeRelations?: boolean;
+	}>(),
+	{
+		includeRelations: true,
+	},
+);
 
 defineEmits<{
 	(e: 'input', value: string | null): void;
 }>();
 
-const { t } = useI18n();
-
 const collectionsStore = useCollectionsStore();
+const settingsStore = useSettingsStore();
 
 const values = inject('values', ref<Record<string, any>>({}));
 
@@ -41,46 +51,24 @@ const collection = computed(() => {
 	return collectionName;
 });
 
-const injectValue = computed(() => {
-	if (!props.injectVersionField) return null;
+const versioningEnabled = computed(() => Boolean(values.value.versioning && props.injectVersionField));
+const { fakeVersionField } = useFakeVersionField(collection, versioningEnabled);
 
-	const versioningEnabled = values.value['versioning'];
+const previewBaseUrlEnabled = computed(() =>
+	Boolean(props.injectPreviewBaseUrlField && settingsStore.settings?.preview_base_url),
+);
 
-	if (!versioningEnabled) return null;
+const { fakePreviewBaseUrlField } = useFakePreviewBaseUrlField(collection, previewBaseUrlEnabled);
 
-	const fakeVersionField: Field = {
-		collection: unref(collection),
-		field: '$version',
-		schema: null,
-		name: t('version'),
-		type: 'integer',
-		meta: {
-			id: -1,
-			collection: unref(collection),
-			field: '$version',
-			sort: null,
-			special: null,
-			interface: null,
-			options: null,
-			display: null,
-			display_options: null,
-			hidden: false,
-			translations: null,
-			readonly: true,
-			width: 'full',
-			group: null,
-			note: null,
-			required: false,
-			conditions: null,
-			validation: null,
-			validation_message: null,
-		},
-	};
+const injectFields = computed(() => {
+	const fields = [fakeVersionField.value, fakePreviewBaseUrlField.value].filter(
+		(field): field is Field => field !== null,
+	);
 
-	return { fields: [fakeVersionField] };
+	return fields.length ? { fields } : null;
 });
 
-const { treeList, loadFieldRelations } = useFieldTree(collection, injectValue);
+const { treeList, loadFieldRelations } = useFieldTree(collection, injectFields, () => true, props.includeRelations);
 
 const tree = computed(() => {
 	if (props.fields) {
@@ -97,10 +85,10 @@ const tree = computed(() => {
 
 <template>
 	<div class="system-display-template">
-		<v-notice v-if="tree === null">
-			{{ t('interfaces.system-display-template.select_a_collection') }}
-		</v-notice>
-		<v-field-template
+		<VNotice v-if="tree === null">
+			{{ $t('interfaces.system-display-template.select_a_collection') }}
+		</VNotice>
+		<VFieldTemplate
 			v-else
 			:tree="tree.list"
 			:model-value="value"

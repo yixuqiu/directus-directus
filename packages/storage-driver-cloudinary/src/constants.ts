@@ -1,4 +1,5 @@
-export const IMAGE_EXTENSIONS = [
+// https://cloudinary.com/documentation/image_transformations#supported_image_formats
+export const IMAGE_EXTENSIONS: string[] = [
 	'.ai',
 	'.avif',
 	'.png',
@@ -6,6 +7,7 @@ export const IMAGE_EXTENSIONS = [
 	'.bmp',
 	'.bw',
 	'.dfvu',
+	'.dng',
 	'.ps',
 	'.ept',
 	'.eps',
@@ -42,7 +44,8 @@ export const IMAGE_EXTENSIONS = [
 	'.webp',
 ];
 
-export const VIDEO_EXTENSIONS = [
+// https://cloudinary.com/documentation/video_manipulation_and_delivery#supported_video_formats
+export const VIDEO_EXTENSIONS: string[] = [
 	'.3g2',
 	'.3gp',
 	'.avi',
@@ -61,3 +64,5 @@ export const VIDEO_EXTENSIONS = [
 	'.webm',
 	'.wmv',
 ];
+
+export const MINIMUM_CHUNK_SIZE = 5_242_880; // 5mb

@@ -1,9 +1,11 @@
-import { useFieldsStore } from '@/stores/fields';
-import { useRelationsStore } from '@/stores/relations';
 import { Field, Relation, Type } from '@directus/types';
 import { getRelationType } from '@directus/utils';
-import { isNil } from 'lodash';
+import { isNil } from 'lodash-es';
 import { Ref, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { useFieldsStore } from '@/stores/fields';
+import { useRelationsStore } from '@/stores/relations';
+import { isCollectionInactive } from '@/utils/collection-status';
 
 export type FieldNode = {
 	name: string;
@@ -15,6 +17,7 @@ export type FieldNode = {
 	type: Type;
 	children?: FieldNode[];
 	group?: boolean;
+	inactive?: boolean;
 	_loading?: boolean;
 };
 
@@ -28,14 +31,20 @@ export function useFieldTree(
 	collection: Ref<string | null>,
 	inject?: Ref<{ fields: Field[]; relations?: Relation[] } | null>,
 	filter: (field: Field, parent?: FieldNode) => boolean = () => true,
+	includeRelations = true,
+	includeAliasFields = false,
 ): FieldTreeContext {
+	const { t } = useI18n();
 	const fieldsStore = useFieldsStore();
 	const relationsStore = useRelationsStore();
 
 	const treeList = ref<FieldNode[]>([]);
 	const visitedPaths = ref<Set<string>>(new Set());
 
-	watch(() => collection.value, refresh, { immediate: true });
+	// Refresh when collection or fields of the collection are updated
+	watch([collection, () => collection.value && fieldsStore.getFieldsForCollectionSorted(collection.value)], refresh, {
+		immediate: true,
+	});
 
 	return { treeList, loadFieldRelations, refresh };
 
@@ -58,6 +67,7 @@ export function useFieldTree(
 			.concat(injectedFields || [])
 			.filter(
 				(field) =>
+					includeAliasFields ||
 					field.meta?.special?.includes('group') ||
 					(!field.meta?.special?.includes('alias') && !field.meta?.special?.includes('no-data')),
 			)
@@ -74,9 +84,8 @@ export function useFieldTree(
 	}
 
 	function makeNode(field: Field, parent?: FieldNode): FieldNode | FieldNode[] {
-		const { relationType, relatedCollections } = getRelationTypeAndRelatedCollections(field);
 		const pathContext = parent?.path ? parent.path + '.' : '';
-		const keyContext = parent?.key ? parent.key + '.' : '';
+		const ownCollectionInactive = isCollectionInactive(field.collection);
 
 		if (field?.meta?.special?.includes('group')) {
 			const node: FieldNode = {
@@ -88,15 +97,16 @@ export function useFieldTree(
 				path: pathContext + field.field,
 				group: true,
 				type: field.type,
+				...inactiveFlag(ownCollectionInactive),
 			};
 
 			const children = getTree(field.collection, node);
 
-			if (children) {
+			if (includeRelations && children) {
 				for (const child of children) {
 					if (child.relatedCollection) {
 						child.children = [
-							{ name: 'Loading...', field: '', collection: '', key: '', path: '', type: 'alias', _loading: true },
+							{ name: t('loading'), field: '', collection: '', key: '', path: '', type: 'alias', _loading: true },
 						];
 					}
 				}
@@ -108,6 +118,22 @@ export function useFieldTree(
 			};
 		}
 
+		if (!includeRelations) {
+			return {
+				name: field.name,
+				field: field.field,
+				collection: field.collection,
+				relatedCollection: undefined,
+				key: field.field,
+				path: field.field,
+				type: field.type,
+				...inactiveFlag(ownCollectionInactive),
+			};
+		}
+
+		const { relationType, relatedCollections } = getRelationTypeAndRelatedCollections(field);
+		const keyContext = parent?.key ? parent.key + '.' : '';
+
 		if (relatedCollections.length <= 1 && relationType !== 'm2a') {
 			return {
 				name: field.name,
@@ -117,6 +143,7 @@ export function useFieldTree(
 				key: keyContext + field.field,
 				path: pathContext + field.field,
 				type: field.type,
+				...inactiveFlag(ownCollectionInactive || isCollectionInactive(relatedCollections[0])),
 			};
 		}
 
@@ -129,8 +156,14 @@ export function useFieldTree(
 				key: keyContext + `${field.field}:${collection}`,
 				path: pathContext + `${field.field}:${collection}`,
 				type: field.type,
+				...inactiveFlag(ownCollectionInactive || isCollectionInactive(collection)),
 			};
 		});
+	}
+
+	/** Only present the flag when set, to keep unaffected nodes unchanged */
+	function inactiveFlag(inactive: boolean) {
+		return inactive ? { inactive: true } : null;
 	}
 
 	function getRelationTypeAndRelatedCollections(field: Field): {
@@ -167,27 +200,27 @@ export function useFieldTree(
 	}
 
 	function getNodeAtPath([field, ...path]: string[], root?: FieldNode[]): FieldNode | undefined {
-		let node = root?.find((node) => node.field === field);
+		if (!root?.length) return undefined;
 
-		if (!node) {
-			node = root
-				?.reduce<FieldNode[]>((acc, node) => {
-					if (node.group === true && node.children && node.children.length > 0) {
-						acc.push(...node.children);
-					}
+		const node = findFieldNodeInTree(field, root);
 
-					return acc;
-				}, [])
-				.find((node) => node.field === field);
-		}
+		if (node && path.length) return getNodeAtPath(path, node.children);
 
-		if (!node) return undefined;
+		return node;
+	}
 
-		if (path.length) {
-			return getNodeAtPath(path, node.children);
-		} else {
-			return node;
-		}
+	function findFieldNodeInTree(field: string | undefined, root: FieldNode[]): FieldNode | undefined {
+		const node = root.find((node) => node.field === field);
+		if (node) return node;
+
+		const childrenNodes = root.flatMap((node) => {
+			if (node.group && node.children?.length) return node.children;
+			return [];
+		});
+
+		if (!childrenNodes?.length) return undefined;
+
+		return findFieldNodeInTree(field, childrenNodes);
 	}
 
 	function loadFieldRelations(path: string) {

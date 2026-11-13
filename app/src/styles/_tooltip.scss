@@ -1,22 +1,33 @@
-.tooltip,
-#tooltip {
-	$arrow-alignment: 5px;
+// Wrapper is force-mounted and stays in the DOM; without this it intercepts pointer events after close.
+[data-reka-popper-content-wrapper]:has(> #app-tooltip-content) {
+	pointer-events: none;
+}
 
+.tooltip {
 	--tooltip-foreground-color: var(--foreground-inverted);
 	--tooltip-background-color: var(--background-inverted);
 
-	position: absolute;
-	top: 0;
-	left: 0;
 	z-index: 850;
-	display: none;
-	max-width: 260px;
-	padding: 4px 8px;
+	display: flex;
+	align-items: center;
+	max-inline-size: 14.625rem;
+	padding: 0.25rem 0.4375rem;
 	color: var(--tooltip-foreground-color);
-	word-break: break-word;
+	overflow-wrap: break-word;
 	background-color: var(--tooltip-background-color);
-	border-radius: 4px;
+	border-radius: 0.25rem;
+	opacity: 0;
 	transition: opacity 200ms;
+	pointer-events: none;
+
+	&[data-state='delayed-open'] {
+		opacity: 1;
+	}
+
+	&[data-state='instant-open'] {
+		opacity: 1;
+		transition: none;
+	}
 
 	&.inverted {
 		--tooltip-foreground-color: var(--theme--foreground);
@@ -27,94 +38,14 @@
 		font-family: var(--theme--fonts--monospace--font-family);
 	}
 
-	&.visible {
-		display: block;
+	.tooltip-kbd {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.125rem;
+		margin-inline-start: 0.375rem;
 	}
 
-	&.enter,
-	&.leave-active {
-		opacity: 0;
-	}
-
-	&.enter-active,
-	&.leave {
-		opacity: 1;
-	}
-
-	&::after {
-		position: absolute;
-		top: -5px;
-		left: calc(50% - 5px);
-		width: 0;
-		height: 0;
-		border-right: 5px solid transparent;
-		border-bottom: 5px solid var(--tooltip-background-color);
-		border-left: 5px solid transparent;
-		content: '';
-	}
-
-	&.start::after {
-		right: $arrow-alignment;
-		left: unset;
-	}
-
-	&.end::after {
-		left: $arrow-alignment;
-	}
-
-	&.top::after {
-		top: unset;
-		bottom: -5px;
-		left: calc(50% - 5px);
-		border-top: 5px solid var(--tooltip-background-color);
-		border-right: 5px solid transparent;
-		border-bottom: unset;
-		border-left: 5px solid transparent;
-	}
-
-	&.top.start::after {
-		right: $arrow-alignment;
-		left: unset;
-	}
-
-	&.top.end::after {
-		left: $arrow-alignment;
-	}
-
-	&.left::after {
-		top: calc(50% - 5px);
-		right: -5px;
-		left: unset;
-		border-top: 5px solid transparent;
-		border-right: unset;
-		border-bottom: 5px solid transparent;
-		border-left: 5px solid var(--tooltip-background-color);
-	}
-
-	&.left.start::after {
-		top: unset;
-		bottom: $arrow-alignment;
-	}
-
-	&.left.end::after {
-		top: $arrow-alignment;
-	}
-
-	&.right::after {
-		top: calc(50% - 5px);
-		left: -5px;
-		border-top: 5px solid transparent;
-		border-right: 5px solid var(--tooltip-background-color);
-		border-bottom: 5px solid transparent;
-		border-left: unset;
-	}
-
-	&.right.start::after {
-		top: unset;
-		bottom: $arrow-alignment;
-	}
-
-	&.right.end::after {
-		top: $arrow-alignment;
+	svg {
+		fill: var(--tooltip-background-color);
 	}
 }

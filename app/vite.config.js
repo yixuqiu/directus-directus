@@ -1,30 +1,50 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { APP_SHARED_DEPS } from '@directus/extensions';
 import { generateExtensionsEntrypoint, resolveFsExtensions, resolveModuleExtensions } from '@directus/extensions/node';
 import yaml from '@rollup/plugin-yaml';
-import UnheadVite from '@unhead/addons/vite';
+import { templateCompilerOptions } from '@tresjs/core';
+import { Unhead } from '@unhead/vue/vite';
 import vue from '@vitejs/plugin-vue';
-import fs from 'node:fs';
-import path from 'node:path';
 import { searchForWorkspaceRoot } from 'vite';
+import vueDevtools from 'vite-plugin-vue-devtools';
 import { defineConfig } from 'vitest/config';
 
 const API_PATH = path.join('..', 'api');
 
-/*
- * @TODO This extension path is hardcoded to the env default (./extensions). This won't work
- * as expected when extensions are read from a different location locally through the
- * EXTENSIONS_LOCATION env var
- */
-const EXTENSIONS_PATH = path.join(API_PATH, 'extensions');
+// api/.env is not loaded automatically when running `pnpm --filter app dev`
+const apiEnvFile = path.join(API_PATH, '.env');
+if (fs.existsSync(apiEnvFile)) process.loadEnvFile(apiEnvFile);
+
+// Mirror the API's getExtensionsPath() resolution so the dev server reads from
+// the same location. In remote mode (EXTENSIONS_LOCATION) the API syncs remote
+// extensions into TEMP_PATH/extensions at boot, and EXTENSIONS_PATH is ignored.
+// The './node_modules/.directus' and './extensions' fallbacks mirror the
+// TEMP_PATH and EXTENSIONS_PATH defaults from @directus/env's DEFAULTS
+const EXTENSIONS_PATH = process.env.EXTENSIONS_LOCATION
+	? path.resolve(API_PATH, process.env.TEMP_PATH ?? './node_modules/.directus', 'extensions')
+	: path.resolve(API_PATH, process.env.EXTENSIONS_PATH ?? './extensions');
 
 const extensionsPathExists = fs.existsSync(EXTENSIONS_PATH);
 
+const DEFAULT_PORT = 8080;
+const DEV_APP_PORT = process.env.NODE_ENV === 'development' ? resolveAppPort(process.env.DEV_APP_PORT) : null;
+
 // https://vitejs.dev/config/
 export default defineConfig({
+	css: {
+		preprocessorOptions: {
+			scss: {
+				api: 'modern-compiler',
+			},
+		},
+	},
 	plugins: [
 		directusExtensions(),
-		vue(),
-		UnheadVite(),
+		vue({
+			...templateCompilerOptions,
+		}),
+		...Unhead(),
 		yaml({
 			transform(data) {
 				return data === null ? {} : undefined;
@@ -39,40 +59,66 @@ export default defineConfig({
 				};
 			},
 		},
+		vueDevtools(),
 	],
 	define: {
-		__INTLIFY_JIT_COMPILATION__: true,
 		__VUE_I18N_LEGACY_API__: false,
 	},
 	resolve: {
 		alias: [{ find: '@', replacement: path.resolve(__dirname, 'src') }],
 	},
-	base: process.env.NODE_ENV === 'production' ? '' : '/admin/',
-	...(!process.env.HISTOIRE && {
-		server: {
-			port: 8080,
-			proxy: {
-				'^/(?!admin)': {
-					target: process.env.API_URL ? process.env.API_URL : 'http://127.0.0.1:8055/',
-					changeOrigin: true,
-				},
+	base: process.env.NODE_ENV === 'production' ? '' : '/admin',
+	server: {
+		port: DEV_APP_PORT ?? DEFAULT_PORT,
+		strictPort: DEV_APP_PORT !== null,
+		proxy: {
+			'^/(?!admin)': {
+				target: process.env.API_URL ? process.env.API_URL : 'http://127.0.0.1:8055/',
 			},
-			fs: {
-				allow: [searchForWorkspaceRoot(process.cwd()), ...getExtensionsRealPaths()],
+			'/websocket/logs': {
+				target: process.env.API_URL ? process.env.API_URL : 'ws://127.0.0.1:8055/',
+				changeOrigin: true,
+			},
+			'/websocket': {
+				target: process.env.API_URL ? process.env.API_URL : 'ws://127.0.0.1:8055/',
+				changeOrigin: true,
+				ws: true,
 			},
 		},
-	}),
+		fs: {
+			allow: [searchForWorkspaceRoot(process.cwd()), ...getExtensionsRealPaths()],
+		},
+	},
 	test: {
+		dir: path.resolve(__dirname, '..'),
+		include: ['app/**/*.test.ts'],
 		environment: 'happy-dom',
+		css: { include: [/input-rich-text-html\.vue/] },
+		// Node 25+ defines its own localStorage/sessionStorage globals, which stops vitest from installing happy-dom's
+		execArgv: ['--no-experimental-webstorage'],
 		deps: {
 			optimizer: {
-				web: {
+				client: {
 					exclude: ['pinia', 'url'],
 				},
 			},
 		},
 	},
 });
+
+function resolveAppPort(value) {
+	if (!value || value.trim() === '') return null;
+
+	const port = Number(value);
+
+	if (!Number.isInteger(port) || port < 1 || port > 65535) {
+		// eslint-disable-next-line no-console
+		console.warn(`[vite.config] Ignoring invalid DEV_APP_PORT "${value}", falling back to ${DEFAULT_PORT}`);
+		return null;
+	}
+
+	return port;
+}
 
 function getExtensionsRealPaths() {
 	return extensionsPathExists
@@ -137,14 +183,12 @@ function directusExtensions() {
 	];
 
 	async function loadExtensions() {
-		// eslint-disable-next-line no-undef
 		const localExtensions = extensionsPathExists ? await resolveFsExtensions(EXTENSIONS_PATH) : new Map();
 		const moduleExtensions = await resolveModuleExtensions(API_PATH);
 
 		const registryExtensions = extensionsPathExists
 			? await resolveFsExtensions(path.join(EXTENSIONS_PATH, '.registry'))
-			: // eslint-disable-next-line no-undef
-			  new Map();
+			: new Map();
 
 		const mockSetting = (source, folder, extension) => {
 			const settings = [

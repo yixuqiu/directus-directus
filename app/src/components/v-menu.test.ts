@@ -1,13 +1,15 @@
-import { directive } from '@/directives/click-outside';
-import { mount } from '@vue/test-utils';
-import { beforeEach, expect, test, vi } from 'vitest';
+import { createTestingPinia } from '@pinia/testing';
+import { flushPromises, mount } from '@vue/test-utils';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { defineComponent, h, ref } from 'vue';
 import TransitionBounce from './transition/bounce.vue';
 import VMenu from './v-menu.vue';
+import { directive } from '@/directives/click-outside';
 
-vi.mock('lodash', async () => {
-	const mod = await vi.importActual<{ default: typeof import('lodash') }>('lodash');
+vi.mock('lodash-es', async () => {
+	const mod = await vi.importActual<typeof import('lodash-es')>('lodash-es');
 	return {
-		...mod.default,
+		...mod,
 		debounce: (fn: any) => fn,
 	};
 });
@@ -31,6 +33,11 @@ const mountOptions = {
 		components: {
 			TransitionBounce,
 		},
+		plugins: [
+			createTestingPinia({
+				createSpy: vi.fn,
+			}),
+		],
 	},
 	slots: {
 		default: Content,
@@ -54,16 +61,21 @@ test('should not have click event listener when trigger is not "click"', async (
 });
 
 test('should have click event listener when trigger is "click"', async () => {
+	const button = { template: '<button type="button">Content</button>' };
+
 	const wrapper = mount(VMenu, {
 		...mountOptions,
 		props: {
 			trigger: 'click',
 		},
+		slots: {
+			default: button,
+		},
 	});
 
 	await wrapper.find('.v-menu').trigger('click');
 
-	expect(wrapper.findComponent(Content).exists()).toBe(true);
+	expect(wrapper.findComponent(button).exists()).toBe(true);
 });
 
 test('should not have click event listener when closeOnContentClick prop is false', async () => {
@@ -129,4 +141,350 @@ test('should have pointerenter and pointerleave event listener when trigger is "
 	await wrapper.findComponent(TransitionBounce).find('.v-menu-content').trigger('pointerleave');
 
 	expect(wrapper.props('modelValue')).toBe(false);
+});
+
+test('should place menu at bottom-start when menu is attached and using ltr', async () => {
+	const button = { template: '<button type="button">Content</button>' };
+
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			trigger: 'click',
+			attached: true,
+		},
+		slots: {
+			default: button,
+		},
+	});
+
+	await wrapper.find('.v-menu').trigger('click');
+
+	const menuContent = wrapper.findComponent(TransitionBounce).find('.v-menu-popper');
+
+	expect(menuContent.attributes('data-placement')).toBe('bottom-start');
+});
+
+test('should place menu at "bottom-start" when menu is not attached and placement is "bottom-start" and using ltr', async () => {
+	const button = { template: '<button type="button">Content</button>' };
+
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			trigger: 'click',
+			attached: false,
+			placement: 'bottom-start',
+		},
+		slots: {
+			default: button,
+		},
+	});
+
+	await wrapper.find('.v-menu').trigger('click');
+
+	const menuContent = wrapper.findComponent(TransitionBounce).find('.v-menu-popper');
+
+	expect(menuContent.attributes('data-placement')).toBe('bottom-start');
+});
+
+test('should place menu at "bottom-end" when menu is attached and using rtl', async () => {
+	const button = { template: '<button type="button">Content</button>' };
+
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			trigger: 'click',
+			attached: true,
+		},
+		slots: {
+			default: button,
+		},
+		global: {
+			...mountOptions.global,
+			plugins: [
+				createTestingPinia({
+					createSpy: vi.fn,
+					stubActions: false,
+					initialState: {
+						userStore: {
+							currentUser: { text_direction: 'rtl' },
+						},
+					},
+				}),
+			],
+		},
+	});
+
+	await wrapper.find('.v-menu').trigger('click');
+
+	const menuContent = wrapper.findComponent(TransitionBounce).find('.v-menu-popper');
+
+	expect(menuContent.attributes('data-placement')).toBe('bottom-end');
+});
+
+test('should place menu at "bottom-end" when menu is not attached and placement is "bottom-start" and using rtl', async () => {
+	const button = { template: '<button type="button">Content</button>' };
+
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			trigger: 'click',
+			attached: false,
+			placement: 'bottom-start',
+		},
+		slots: {
+			default: button,
+		},
+		global: {
+			...mountOptions.global,
+			plugins: [
+				createTestingPinia({
+					createSpy: vi.fn,
+					stubActions: false,
+					initialState: {
+						userStore: {
+							currentUser: { text_direction: 'rtl' },
+						},
+					},
+				}),
+			],
+		},
+	});
+
+	await wrapper.find('.v-menu').trigger('click');
+
+	const menuContent = wrapper.findComponent(TransitionBounce).find('.v-menu-popper');
+
+	expect(menuContent.attributes('data-placement')).toBe('bottom-end');
+});
+
+test('should place menu arrow at left when using placement "top-start" and using ltr', async () => {
+	const button = { template: '<button type="button">Content</button>' };
+
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			trigger: 'click',
+			attached: false,
+			placement: 'top-start',
+			showArrow: true,
+			arrowPlacement: 'start',
+		},
+		slots: {
+			default: button,
+		},
+	});
+
+	await wrapper.find('.v-menu').trigger('click');
+
+	const menuArrow = wrapper.findComponent(TransitionBounce).find('.arrow');
+
+	expect(menuArrow.attributes('style')).toContain('left: 0px');
+	expect(menuArrow.attributes('style')).toContain('transform: translate3d(6px, 0px, 0)');
+});
+
+test('should place menu arrow at left when using placement "bottom-start" and using ltr', async () => {
+	const button = { template: '<button type="button">Content</button>' };
+
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			trigger: 'click',
+			attached: false,
+			placement: 'bottom-start',
+			showArrow: true,
+			arrowPlacement: 'start',
+		},
+		slots: {
+			default: button,
+		},
+	});
+
+	await wrapper.find('.v-menu').trigger('click');
+
+	const menuArrow = wrapper.findComponent(TransitionBounce).find('.arrow');
+
+	expect(menuArrow.attributes('style')).toContain('left: 0px');
+	expect(menuArrow.attributes('style')).toContain('transform: translate3d(6px, 0px, 0)');
+});
+
+test('should place menu arrow right when using placement "top-start" and using rtl', async () => {
+	const button = { template: '<button type="button">Content</button>' };
+
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			trigger: 'click',
+			attached: false,
+			placement: 'top-start',
+			showArrow: true,
+			arrowPlacement: 'start',
+			arrowPadding: 6,
+		},
+		slots: {
+			default: button,
+		},
+		global: {
+			...mountOptions.global,
+			plugins: [
+				createTestingPinia({
+					createSpy: vi.fn,
+					stubActions: false,
+					initialState: {
+						userStore: {
+							currentUser: { text_direction: 'rtl' },
+						},
+					},
+				}),
+			],
+		},
+	});
+
+	await wrapper.find('.v-menu').trigger('click');
+
+	const menuArrow = wrapper.findComponent(TransitionBounce).find('.arrow');
+
+	expect(menuArrow.attributes('style')).toContain('left: unset');
+	expect(menuArrow.attributes('style')).toContain('right: 0px');
+	expect(menuArrow.attributes('style')).toContain('transform: translate3d(-6px, 0px, 0)');
+});
+
+test('v-menu-content should have tabindex="-1" to act as focus trap fallback target', async () => {
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			modelValue: true,
+		},
+		slots: {
+			// no tabbable elements
+			default: { template: '<span>non-interactive content</span>' },
+		},
+	});
+
+	const menuContent = wrapper.findComponent(TransitionBounce).find('.v-menu-content');
+
+	expect(menuContent.attributes('tabindex')).toBe('-1');
+});
+
+test('should not throw when menu opens with no tabbable elements', async () => {
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			trigger: 'click',
+		},
+		slots: {
+			activator: { template: '<button type="button">Open</button>' },
+			default: { template: '<span>non-interactive content</span>' },
+		},
+	});
+
+	await expect(wrapper.find('.v-menu').trigger('click')).resolves.not.toThrow();
+});
+
+test('should place menu arrow right when using placement "bottom-start" and using rtl', async () => {
+	const button = { template: '<button type="button">Content</button>' };
+
+	const wrapper = mount(VMenu, {
+		...mountOptions,
+		props: {
+			trigger: 'click',
+			attached: false,
+			placement: 'bottom-start',
+			showArrow: true,
+			arrowPlacement: 'start',
+		},
+		slots: {
+			default: button,
+		},
+		global: {
+			...mountOptions.global,
+			plugins: [
+				createTestingPinia({
+					createSpy: vi.fn,
+					stubActions: false,
+					initialState: {
+						userStore: {
+							currentUser: { text_direction: 'rtl' },
+						},
+					},
+				}),
+			],
+		},
+	});
+
+	await wrapper.find('.v-menu').trigger('click');
+
+	const menuArrow = wrapper.findComponent(TransitionBounce).find('.arrow');
+
+	expect(menuArrow.attributes('style')).toContain('left: unset');
+	expect(menuArrow.attributes('style')).toContain('right: 0px');
+	expect(menuArrow.attributes('style')).toContain('transform: translate3d(-6px, 0px, 0)');
+});
+
+describe('nested menus', () => {
+	const settle = async () => {
+		await flushPromises();
+		await new Promise((r) => setTimeout(r));
+	};
+
+	function mountNested(depth: number) {
+		const active = Array.from({ length: depth }, () => ref(true));
+
+		const renderLevel = (level: number): ReturnType<typeof h> =>
+			h(
+				VMenu,
+				{
+					modelValue: active[level]!.value,
+					'onUpdate:modelValue': (value: boolean) => (active[level]!.value = value),
+					closeOnContentClick: false,
+				},
+				{
+					activator: () => h('span'),
+					default: () =>
+						level + 1 < depth ? renderLevel(level + 1) : h('button', { class: 'deepest', type: 'button' }),
+				},
+			);
+
+		const wrapper = mount(
+			defineComponent(() => () => renderLevel(0)),
+			{ ...mountOptions, attachTo: document.body, slots: {} },
+		);
+
+		return { wrapper, active };
+	}
+
+	test('clicks inside a child menu keep the parent open', async () => {
+		const { wrapper, active } = mountNested(2);
+		await settle();
+
+		document.querySelector<HTMLButtonElement>('.deepest')!.click();
+		await settle();
+
+		expect(active.map((a) => a.value)).toEqual([true, true]);
+
+		wrapper.unmount();
+	});
+
+	test('clicks inside a grandchild menu keep every ancestor open', async () => {
+		const { wrapper, active } = mountNested(3);
+		await settle();
+
+		document.querySelector<HTMLButtonElement>('.deepest')!.click();
+		await settle();
+
+		expect(active.map((a) => a.value)).toEqual([true, true, true]);
+
+		wrapper.unmount();
+	});
+
+	test('clicks outside every menu still close them', async () => {
+		const { wrapper, active } = mountNested(2);
+		await settle();
+
+		document.body.click();
+		await settle();
+
+		expect(active.map((a) => a.value)).toEqual([false, false]);
+
+		wrapper.unmount();
+	});
 });

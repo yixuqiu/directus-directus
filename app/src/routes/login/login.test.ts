@@ -1,12 +1,6 @@
-import type { GlobalMountOptions } from '@/__utils__/types';
-import vIcon from '@/components/v-icon/v-icon.vue';
-import vImage from '@/components/v-image.vue';
-import vSelect from '@/components/v-select/v-select.vue';
-import MarkdownDirective from '@/directives/markdown';
-import { useServerStore } from '@/stores/server';
-import publicView from '@/views/public/public-view.vue';
 import { useAppStore } from '@directus/stores';
 import { createTestingPinia } from '@pinia/testing';
+import { createHead } from '@unhead/vue/client';
 import { mount } from '@vue/test-utils';
 import { setActivePinia } from 'pinia';
 import { beforeEach, expect, test, vi } from 'vitest';
@@ -16,14 +10,21 @@ import LdapForm from './components/login-form/ldap-form.vue';
 import LoginForm from './components/login-form/login-form.vue';
 import SsoLinks from './components/sso-links.vue';
 import LoginComponent from './login.vue';
+import type { GlobalMountOptions } from '@/__utils__/types';
+import vIcon from '@/components/v-icon/v-icon.vue';
+import vImage from '@/components/v-image.vue';
+import vSelect from '@/components/v-select/v-select.vue';
+import MarkdownDirective from '@/directives/markdown';
+import { useServerStore } from '@/stores/server';
+import publicView from '@/views/public/public-view.vue';
 
 const i18n = createI18n({ legacy: false });
 
 const global: GlobalMountOptions = {
 	components: { publicView, vSelect, vIcon, vImage },
 	directives: { md: MarkdownDirective },
-	stubs: { publicView: false },
-	plugins: [i18n],
+	stubs: { routerLink: true, publicView: false },
+	plugins: [i18n, createHead()],
 };
 
 // silences locale message not found warnings

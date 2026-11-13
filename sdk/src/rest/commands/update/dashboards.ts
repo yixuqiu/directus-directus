@@ -1,7 +1,7 @@
 import type { DirectusDashboard } from '../../../schema/dashboard.js';
-import type { ApplyQueryFields, Query } from '../../../types/index.js';
-import { throwIfEmpty } from '../../utils/index.js';
+import type { ApplyQueryFields, NestedPartial, Query } from '../../../types/index.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfEmpty } from '../../utils/index.js';
 
 export type UpdateDashboardOutput<
 	Schema,
@@ -20,7 +20,7 @@ export type UpdateDashboardOutput<
 export const updateDashboards =
 	<Schema, const TQuery extends Query<Schema, DirectusDashboard<Schema>>>(
 		keys: DirectusDashboard<Schema>['id'][],
-		item: Partial<DirectusDashboard<Schema>>,
+		item: NestedPartial<DirectusDashboard<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateDashboardOutput<Schema, TQuery>[], Schema> =>
 	() => {
@@ -35,6 +35,24 @@ export const updateDashboards =
 	};
 
 /**
+ * Update multiple dashboards as batch.
+ * @param items
+ * @param query
+ * @returns Returns the dashboard objects for the updated dashboards.
+ */
+export const updateDashboardsBatch =
+	<Schema, const TQuery extends Query<Schema, DirectusDashboard<Schema>>>(
+		items: NestedPartial<DirectusDashboard<Schema>>[],
+		query?: TQuery,
+	): RestCommand<UpdateDashboardOutput<Schema, TQuery>[], Schema> =>
+	() => ({
+		path: `/dashboards`,
+		params: query ?? {},
+		body: JSON.stringify(items),
+		method: 'PATCH',
+	});
+
+/**
  * Update an existing dashboard.
  * @param key
  * @param item
@@ -45,7 +63,7 @@ export const updateDashboards =
 export const updateDashboard =
 	<Schema, const TQuery extends Query<Schema, DirectusDashboard<Schema>>>(
 		key: DirectusDashboard<Schema>['id'],
-		item: Partial<DirectusDashboard<Schema>>,
+		item: NestedPartial<DirectusDashboard<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateDashboardOutput<Schema, TQuery>, Schema> =>
 	() => {

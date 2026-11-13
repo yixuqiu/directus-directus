@@ -1,16 +1,28 @@
 <script setup lang="ts">
-import { useEditsGuard } from '@/composables/use-edits-guard';
-import { useItem } from '@/composables/use-item';
-import { useShortcut } from '@/composables/use-shortcut';
-import { useCollectionsStore } from '@/stores/collections';
-import { useFieldsStore } from '@/stores/fields';
+import { useShortcut } from '@directus/composables';
 import formatTitle from '@directus/format-title';
+import { isSystemCollection } from '@directus/system-data';
+import type { Field } from '@directus/types';
 import { computed, ref, toRefs } from 'vue';
-import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
+import { RouterView, useRouter } from 'vue-router';
 import SettingsNavigation from '../../../components/navigation.vue';
 import FieldsManagement from './components/fields-management.vue';
-import { isSystemCollection } from '@directus/system-data';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VForm from '@/components/v-form/v-form.vue';
+import { useEditsGuard } from '@/composables/use-edits-guard';
+import { useItem } from '@/composables/use-item';
+import { i18n } from '@/lang';
+import { useCollectionsStore } from '@/stores/collections';
+import { useFieldsStore } from '@/stores/fields';
+import { useLicenseStore } from '@/stores/license';
+import { useServerStore } from '@/stores/server';
+import { PrivateViewHeaderBarActionButton } from '@/views/private';
+import { PrivateView } from '@/views/private';
 
 const props = defineProps<{
 	collection: string;
@@ -19,15 +31,45 @@ const props = defineProps<{
 	type?: string;
 }>();
 
-const { t } = useI18n();
-
 const router = useRouter();
 
 const { collection } = toRefs(props);
 const collectionsStore = useCollectionsStore();
 const fieldsStore = useFieldsStore();
+const licenseStore = useLicenseStore();
+const serverStore = useServerStore();
 
 const { edits, item, saving, loading, save, remove, deleting } = useItem(ref('directus_collections'), collection);
+
+const collectionMetaFields = computed<Field[]>(() => {
+	const fields = fieldsStore.getFieldsForCollection('directus_collections');
+	const envSeconds = serverStore.info.autoSave?.revisionInterval ?? 300;
+
+	const label =
+		envSeconds < 60
+			? i18n.global.t('field_options.directus_collections.interval_default_seconds', {
+					seconds: envSeconds,
+				})
+			: i18n.global.t('field_options.directus_collections.interval_default', {
+					minutes: Math.round(envSeconds / 60),
+				});
+
+	return fields.map((field) => {
+		if (field.field !== 'autosave_revision_interval') return field;
+
+		const choices = field.meta?.options?.['choices']?.map((choice: { text: string; value: unknown }) =>
+			choice.value === null ? { ...choice, text: label } : choice,
+		);
+
+		return {
+			...field,
+			meta: field.meta && {
+				...field.meta,
+				options: { ...field.meta.options, choices },
+			},
+		};
+	});
+});
 
 const hasEdits = computed<boolean>(() => {
 	if (!edits.value.meta) return false;
@@ -43,21 +85,23 @@ const confirmDelete = ref(false);
 const { confirmLeave, leaveTo } = useEditsGuard(hasEdits);
 
 async function deleteAndQuit() {
+	if (deleting.value) return;
+
 	await remove();
-	await Promise.all([collectionsStore.hydrate(), fieldsStore.hydrate()]);
+	await Promise.all([collectionsStore.hydrate(), fieldsStore.hydrate(), licenseStore.hydrate()]);
 	edits.value = {};
-	router.replace(`/settings/data-model`);
+	router.replace({ name: 'settings-collections' });
 }
 
 async function saveAndStay() {
 	await save();
-	await Promise.all([collectionsStore.hydrate(), fieldsStore.hydrate()]);
+	await Promise.all([collectionsStore.hydrate(), fieldsStore.hydrate(), licenseStore.hydrate()]);
 }
 
 async function saveAndQuit() {
 	await save();
-	await Promise.all([collectionsStore.hydrate(), fieldsStore.hydrate()]);
-	router.push(`/settings/data-model`);
+	await Promise.all([collectionsStore.hydrate(), fieldsStore.hydrate(), licenseStore.hydrate()]);
+	router.push({ name: 'settings-collections' });
 }
 
 function discardAndLeave() {
@@ -69,77 +113,64 @@ function discardAndLeave() {
 </script>
 
 <template>
-	<private-view :title="formatTitle(collection)">
-		<template #headline>
-			<v-breadcrumb :items="[{ name: t('settings_data_model'), to: '/settings/data-model' }]" />
-		</template>
-		<template #title-outer:prepend>
-			<v-button class="header-icon" rounded icon exact to="/settings/data-model">
-				<v-icon name="arrow_back" />
-			</v-button>
-		</template>
-
+	<PrivateView :title="formatTitle(collection)" show-back back-to="/settings/data-model">
 		<template #actions>
-			<v-dialog v-model="confirmDelete" @esc="confirmDelete = false">
+			<VDialog v-model="confirmDelete" @esc="confirmDelete = false" @apply="deleteAndQuit">
 				<template #activator="{ on }">
-					<v-button
+					<PrivateViewHeaderBarActionButton
 						v-if="isSystemCollection(collection) === false"
-						v-tooltip.bottom="t('delete_collection')"
-						rounded
-						icon
-						class="action-delete"
-						secondary
+						v-tooltip.bottom="$t('delete_collection')"
+						kind="danger"
+						variant="ghost"
 						:disabled="!item"
+						icon="delete"
 						@click="on"
-					>
-						<v-icon name="delete" />
-					</v-button>
+					/>
 				</template>
 
-				<v-card>
-					<v-card-title>{{ t('delete_are_you_sure') }}</v-card-title>
+				<VCard>
+					<VCardTitle>{{ $t('delete_are_you_sure') }}</VCardTitle>
 
-					<v-card-actions>
-						<v-button secondary @click="confirmDelete = false">
-							{{ t('cancel') }}
-						</v-button>
-						<v-button kind="danger" :loading="deleting" @click="deleteAndQuit">
-							{{ t('delete_label') }}
-						</v-button>
-					</v-card-actions>
-				</v-card>
-			</v-dialog>
+					<VCardActions>
+						<VButton secondary @click="confirmDelete = false">
+							{{ $t('cancel') }}
+						</VButton>
+						<VButton kind="danger" :loading="deleting" @click="deleteAndQuit">
+							{{ $t('delete_label') }}
+						</VButton>
+					</VCardActions>
+				</VCard>
+			</VDialog>
+		</template>
 
-			<v-button
-				v-tooltip.bottom="t('save')"
-				rounded
-				icon
+		<template #actions:primary>
+			<PrivateViewHeaderBarActionButton
+				:label="$t('save')"
 				:loading="saving"
 				:disabled="hasEdits === false"
+				icon="check"
 				@click="saveAndQuit"
-			>
-				<v-icon name="check" />
-			</v-button>
+			/>
 		</template>
 
 		<template #navigation>
-			<settings-navigation />
+			<SettingsNavigation />
 		</template>
 
 		<div class="collections-item">
 			<div class="fields">
 				<h2 class="title type-label">
-					{{ t('fields_and_layout') }}
-					<span class="instant-save">{{ t('saves_automatically') }}</span>
+					{{ $t('fields_and_layout') }}
+					<span class="instant-save">{{ $t('saves_automatically') }}</span>
 				</h2>
-				<fields-management :collection="collection" />
+				<FieldsManagement :collection="collection" />
 			</div>
 
-			<router-view name="field" :collection="collection" :field="field" :type="type" />
+			<RouterView name="field" :collection="collection" :field="field" :type="type" />
 
-			<v-form
+			<VForm
 				v-model="edits.meta"
-				collection="directus_collections"
+				:fields="collectionMetaFields"
 				:loading="loading"
 				:initial-values="item?.meta"
 				:primary-key="collection"
@@ -147,57 +178,38 @@ function discardAndLeave() {
 			/>
 		</div>
 
-		<template #sidebar>
-			<sidebar-detail icon="info" :title="t('information')" close>
-				<div v-md="t('page_help_settings_datamodel_fields')" class="page-description" />
-			</sidebar-detail>
-		</template>
-
-		<v-dialog v-model="confirmLeave" @esc="confirmLeave = false">
-			<v-card>
-				<v-card-title>{{ t('unsaved_changes') }}</v-card-title>
-				<v-card-text>{{ t('unsaved_changes_copy') }}</v-card-text>
-				<v-card-actions>
-					<v-button secondary @click="discardAndLeave">
-						{{ t('discard_changes') }}
-					</v-button>
-					<v-button @click="confirmLeave = false">{{ t('keep_editing') }}</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
-	</private-view>
+		<VDialog v-model="confirmLeave" @esc="confirmLeave = false" @apply="discardAndLeave">
+			<VCard>
+				<VCardTitle>{{ $t('unsaved_changes') }}</VCardTitle>
+				<VCardText>{{ $t('unsaved_changes_copy') }}</VCardText>
+				<VCardActions>
+					<VButton secondary @click="discardAndLeave">
+						{{ $t('discard_changes') }}
+					</VButton>
+					<VButton @click="confirmLeave = false">{{ $t('keep_editing') }}</VButton>
+				</VCardActions>
+			</VCard>
+		</VDialog>
+	</PrivateView>
 </template>
 
 <style lang="scss" scoped>
 .title {
-	margin-bottom: 12px;
+	margin-block-end: 0.6875rem;
 
 	.instant-save {
-		margin-left: 4px;
+		margin-inline-start: 0.25rem;
 		color: var(--theme--warning);
 	}
 }
 
 .collections-item {
-	padding: var(--content-padding);
-	padding-top: 0;
-	padding-bottom: var(--content-padding-bottom);
+	padding-inline: var(--content-padding);
+	padding-block: var(--content-padding) var(--content-padding-bottom);
 }
 
 .fields {
-	max-width: 800px;
-	margin-bottom: 48px;
-}
-
-.header-icon {
-	--v-button-background-color: var(--theme--primary-background);
-	--v-button-color: var(--theme--primary);
-	--v-button-background-color-hover: var(--theme--primary-subdued);
-	--v-button-color-hover: var(--theme--primary);
-}
-
-.action-delete {
-	--v-button-background-color-hover: var(--theme--danger) !important;
-	--v-button-color-hover: var(--white) !important;
+	max-inline-size: 45rem;
+	margin-block-end: 2.6875rem;
 }
 </style>

@@ -11,8 +11,11 @@ import {
 	createSAMLAuthRouter,
 } from '../auth/drivers/index.js';
 import { DEFAULT_AUTH_PROVIDER, REFRESH_COOKIE_OPTIONS, SESSION_COOKIE_OPTIONS } from '../constants.js';
-import { useLogger } from '../logger.js';
+import { getEntitlementManager } from '../license/index.js';
+import { isSSOBypassAllowed } from '../license/utils/is-sso-bypass-allowed.js';
+import { useLogger } from '../logger/index.js';
 import { respond } from '../middleware/respond.js';
+import { createDefaultAccountability } from '../permissions/utils/create-default-accountability.js';
 import { AuthenticationService } from '../services/authentication.js';
 import { UsersService } from '../services/users.js';
 import type { AuthenticationMode } from '../types/auth.js';
@@ -62,10 +65,6 @@ for (const authProvider of authProviders) {
 	router.use(`/login/${authProvider.name}`, authRouter);
 }
 
-if (!env['AUTH_DISABLE_DEFAULT']) {
-	router.use('/login', createLocalAuthRouter(DEFAULT_AUTH_PROVIDER));
-}
-
 function getCurrentMode(req: Request): AuthenticationMode {
 	if (req.body.mode) {
 		return req.body.mode as AuthenticationMode;
@@ -84,11 +83,11 @@ function getCurrentRefreshToken(req: Request, mode: AuthenticationMode): string 
 	}
 
 	if (mode === 'cookie') {
-		return req.cookies[env['REFRESH_TOKEN_COOKIE_NAME'] as string];
+		return req.cookies[env.REFRESH_TOKEN_COOKIE_NAME];
 	}
 
 	if (mode === 'session') {
-		const token = req.cookies[env['SESSION_COOKIE_NAME'] as string];
+		const token = req.cookies[env.SESSION_COOKIE_NAME];
 
 		if (isDirectusJWT(token)) {
 			const payload = verifyAccessJWT(token, getSecret());
@@ -99,13 +98,13 @@ function getCurrentRefreshToken(req: Request, mode: AuthenticationMode): string 
 	return undefined;
 }
 
+// Always register local auth, blocked at runtime when applicable
+router.use('/login', createLocalAuthRouter(DEFAULT_AUTH_PROVIDER));
+
 router.post(
 	'/refresh',
 	asyncHandler(async (req, res, next) => {
-		const accountability: Accountability = {
-			ip: getIPFromReq(req),
-			role: null,
-		};
+		const accountability: Accountability = createDefaultAccountability({ ip: getIPFromReq(req) });
 
 		const userAgent = req.get('user-agent')?.substring(0, 1024);
 		if (userAgent) accountability.userAgent = userAgent;
@@ -139,12 +138,12 @@ router.post(
 		}
 
 		if (mode === 'cookie') {
-			res.cookie(env['REFRESH_TOKEN_COOKIE_NAME'] as string, refreshToken, REFRESH_COOKIE_OPTIONS);
+			res.cookie(env.REFRESH_TOKEN_COOKIE_NAME, refreshToken, REFRESH_COOKIE_OPTIONS);
 			payload.access_token = accessToken;
 		}
 
 		if (mode === 'session') {
-			res.cookie(env['SESSION_COOKIE_NAME'] as string, accessToken, SESSION_COOKIE_OPTIONS);
+			res.cookie(env.SESSION_COOKIE_NAME, accessToken, SESSION_COOKIE_OPTIONS);
 		}
 
 		res.locals['payload'] = { data: payload };
@@ -156,10 +155,7 @@ router.post(
 router.post(
 	'/logout',
 	asyncHandler(async (req, res, next) => {
-		const accountability: Accountability = {
-			ip: getIPFromReq(req),
-			role: null,
-		};
+		const accountability: Accountability = createDefaultAccountability({ ip: getIPFromReq(req) });
 
 		const userAgent = req.get('user-agent')?.substring(0, 1024);
 		if (userAgent) accountability.userAgent = userAgent;
@@ -183,12 +179,12 @@ router.post(
 
 		await authenticationService.logout(currentRefreshToken);
 
-		if (req.cookies[env['REFRESH_TOKEN_COOKIE_NAME'] as string]) {
-			res.clearCookie(env['REFRESH_TOKEN_COOKIE_NAME'] as string, REFRESH_COOKIE_OPTIONS);
+		if (req.cookies[env.REFRESH_TOKEN_COOKIE_NAME]) {
+			res.clearCookie(env.REFRESH_TOKEN_COOKIE_NAME, REFRESH_COOKIE_OPTIONS);
 		}
 
-		if (req.cookies[env['SESSION_COOKIE_NAME'] as string]) {
-			res.clearCookie(env['SESSION_COOKIE_NAME'] as string, SESSION_COOKIE_OPTIONS);
+		if (req.cookies[env.SESSION_COOKIE_NAME]) {
+			res.clearCookie(env.SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS);
 		}
 
 		return next();
@@ -203,10 +199,7 @@ router.post(
 			throw new InvalidPayloadError({ reason: `"email" field is required` });
 		}
 
-		const accountability: Accountability = {
-			ip: getIPFromReq(req),
-			role: null,
-		};
+		const accountability: Accountability = createDefaultAccountability({ ip: getIPFromReq(req) });
 
 		const userAgent = req.get('user-agent')?.substring(0, 1024);
 		if (userAgent) accountability.userAgent = userAgent;
@@ -242,10 +235,7 @@ router.post(
 			throw new InvalidPayloadError({ reason: `"password" field is required` });
 		}
 
-		const accountability: Accountability = {
-			ip: getIPFromReq(req),
-			role: null,
-		};
+		const accountability: Accountability = createDefaultAccountability({ ip: getIPFromReq(req) });
 
 		const userAgent = req.get('user-agent')?.substring(0, 1024);
 		if (userAgent) accountability.userAgent = userAgent;
@@ -266,9 +256,18 @@ router.get(
 		const sessionOnly =
 			'sessionOnly' in req.query && (req.query['sessionOnly'] === '' || Boolean(req.query['sessionOnly']));
 
+		let providers = getAuthProviders({ sessionOnly });
+
+		const isSSOEnabled = getEntitlementManager().isEntitled('sso_enabled');
+
+		// Hide SSO providers when not entitled, unless the license is locked or in the v12 grace period
+		if (providers.length > 0 && !isSSOEnabled) {
+			if (!(await isSSOBypassAllowed())) providers = [];
+		}
+
 		res.locals['payload'] = {
-			data: getAuthProviders({ sessionOnly }),
-			disableDefault: env['AUTH_DISABLE_DEFAULT'],
+			data: providers,
+			disableDefault: isSSOEnabled ? env.AUTH_DISABLE_DEFAULT : false,
 		};
 
 		return next();

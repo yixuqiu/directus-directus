@@ -1,13 +1,21 @@
+import {
+	authenticateShare,
+	AuthenticationData,
+	getAuthEndpoint,
+	LoginOptions,
+	readMe,
+	RestCommand,
+} from '@directus/sdk';
+import { useAppStore } from '@directus/stores';
+import Cookies from 'universal-cookie';
+import { RouteLocationRaw } from 'vue-router';
+import { emitter, Events } from './events';
+import { useServerStore } from './stores/server';
 import { resumeQueue } from '@/api';
-import { DEFAULT_AUTH_PROVIDER } from '@/constants';
+import { DEFAULT_AUTH_PROVIDER, SDK_AUTH_REFRESH_BEFORE_EXPIRES } from '@/constants';
 import { dehydrate, hydrate } from '@/hydrate';
 import { router } from '@/router';
 import { sdk } from '@/sdk';
-import { AuthenticationData, LoginOptions, RestCommand, authenticateShare, getAuthEndpoint } from '@directus/sdk';
-import { useAppStore } from '@directus/stores';
-import { RouteLocationRaw } from 'vue-router';
-import { Events, emitter } from './events';
-import { useServerStore } from './stores/server';
 
 type LoginCredentials = {
 	identifier?: string;
@@ -22,6 +30,10 @@ type LoginParams = {
 	provider?: string;
 	share?: boolean;
 };
+
+// Plain universal-cookie instead of the reactive useCookies() composable, whose module-scoped
+// change listener would leak a permanent document.cookie polling interval.
+const cookies = new Cookies();
 
 export async function login({ credentials, provider, share }: LoginParams): Promise<void> {
 	const appStore = useAppStore();
@@ -44,7 +56,7 @@ export async function login({ credentials, provider, share }: LoginParams): Prom
 		const loginOptions: LoginOptions = { otp, ...(provider !== DEFAULT_AUTH_PROVIDER && { provider }) };
 
 		if (email) {
-			response = await sdk.login(email, password, loginOptions);
+			response = await sdk.login({ email, password }, loginOptions);
 		} else if (identifier) {
 			const login =
 				<Schema extends object>(): RestCommand<AuthenticationData, Schema> =>
@@ -63,6 +75,8 @@ export async function login({ credentials, provider, share }: LoginParams): Prom
 	}
 
 	appStore.accessTokenExpiry = Date.now() + (response.expires ?? 0);
+	cookies.remove('license-banner-dismissed', { path: '/' });
+	cookies.remove('license-login-modal-dismissed', { path: '/' });
 	appStore.authenticated = true;
 
 	// Reload server store to get authenticated data
@@ -95,6 +109,12 @@ export async function refresh({ navigate }: LogoutOptions = { navigate: true }):
 	if (!firstRefresh && !appStore.authenticated) return;
 
 	try {
+		// Skip access token refreshing if it is still fresh but validate the session
+		if (appStore.accessTokenExpiry && Date.now() < appStore.accessTokenExpiry - SDK_AUTH_REFRESH_BEFORE_EXPIRES) {
+			await sdk.request(readMe({ fields: ['id'] }));
+			return;
+		}
+
 		const response = await sdk.refresh();
 
 		appStore.accessTokenExpiry = Date.now() + (response.expires ?? 0);

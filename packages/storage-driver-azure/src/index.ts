@@ -1,8 +1,12 @@
-import { BlobServiceClient, ContainerClient, StorageSharedKeyCredential } from '@azure/storage-blob';
-import type { Driver, Range } from '@directus/storage';
-import { normalizePath } from '@directus/utils';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
+import { BlobServiceClient, ContainerClient, StorageSharedKeyCredential } from '@azure/storage-blob';
+import type { TusDriver } from '@directus/storage';
+import type { ChunkedUploadContext, ReadOptions } from '@directus/types';
+import { normalizePath } from '@directus/utils';
+
+const MAXIMUM_CHUNK_SIZE = 104_857_600; // 100mb
 
 export type DriverAzureConfig = {
 	containerName: string;
@@ -10,9 +14,13 @@ export type DriverAzureConfig = {
 	accountKey: string;
 	root?: string;
 	endpoint?: string;
+	tus?: {
+		enabled: boolean;
+		chunkSize?: number;
+	};
 };
 
-export class DriverAzure implements Driver {
+export class DriverAzure implements TusDriver {
 	private containerClient: ContainerClient;
 	private signedCredentials: StorageSharedKeyCredential;
 	private root: string;
@@ -27,13 +35,20 @@ export class DriverAzure implements Driver {
 
 		this.containerClient = client.getContainerClient(config.containerName);
 		this.root = config.root ? normalizePath(config.root, { removeLeading: true }) : '';
+
+		// https://learn.microsoft.com/en-us/rest/api/storageservices/append-block?tabs=microsoft-entra-id#remarks
+		if (config.tus?.enabled && config.tus.chunkSize && config.tus.chunkSize > MAXIMUM_CHUNK_SIZE) {
+			throw new Error('Invalid chunkSize provided');
+		}
 	}
 
 	private fullPath(filepath: string) {
 		return normalizePath(join(this.root, filepath));
 	}
 
-	async read(filepath: string, range?: Range) {
+	async read(filepath: string, options?: ReadOptions): Promise<Readable> {
+		const { range } = options || {};
+
 		const { readableStreamBody } = await this.containerClient
 			.getBlobClient(this.fullPath(filepath))
 			.download(range?.start, range?.end ? range.end - (range.start || 0) + 1 : undefined);
@@ -45,7 +60,7 @@ export class DriverAzure implements Driver {
 		return readableStreamBody as Readable;
 	}
 
-	async write(filepath: string, content: Readable, type = 'application/octet-stream') {
+	async write(filepath: string, content: Readable, type = 'application/octet-stream'): Promise<void> {
 		const blockBlobClient = this.containerClient.getBlockBlobClient(this.fullPath(filepath));
 
 		await blockBlobClient.uploadStream(content as Readable, undefined, undefined, {
@@ -53,11 +68,14 @@ export class DriverAzure implements Driver {
 		});
 	}
 
-	async delete(filepath: string) {
+	async delete(filepath: string): Promise<void> {
 		await this.containerClient.getBlockBlobClient(this.fullPath(filepath)).deleteIfExists();
 	}
 
-	async stat(filepath: string) {
+	async stat(filepath: string): Promise<{
+		size: number;
+		modified: Date;
+	}> {
 		const props = await this.containerClient.getBlobClient(this.fullPath(filepath)).getProperties();
 
 		return {
@@ -66,16 +84,16 @@ export class DriverAzure implements Driver {
 		};
 	}
 
-	async exists(filepath: string) {
+	async exists(filepath: string): Promise<boolean> {
 		return await this.containerClient.getBlockBlobClient(this.fullPath(filepath)).exists();
 	}
 
-	async move(src: string, dest: string) {
+	async move(src: string, dest: string): Promise<void> {
 		await this.copy(src, dest);
 		await this.containerClient.getBlockBlobClient(this.fullPath(src)).deleteIfExists();
 	}
 
-	async copy(src: string, dest: string) {
+	async copy(src: string, dest: string): Promise<void> {
 		const source = this.containerClient.getBlockBlobClient(this.fullPath(src));
 		const target = this.containerClient.getBlockBlobClient(this.fullPath(dest));
 
@@ -83,7 +101,7 @@ export class DriverAzure implements Driver {
 		await poller.pollUntilDone();
 	}
 
-	async *list(prefix = '') {
+	async *list(prefix = ''): AsyncGenerator<string, void, unknown> {
 		const blobs = this.containerClient.listBlobsFlat({
 			prefix: this.fullPath(prefix),
 		});
@@ -91,6 +109,50 @@ export class DriverAzure implements Driver {
 		for await (const blob of blobs) {
 			yield (blob.name as string).substring(this.root.length);
 		}
+	}
+
+	get tusExtensions(): string[] {
+		return ['creation', 'termination', 'expiration'];
+	}
+
+	async createChunkedUpload(filepath: string, context: ChunkedUploadContext): Promise<ChunkedUploadContext> {
+		await this.containerClient.getAppendBlobClient(this.fullPath(filepath)).createIfNotExists();
+
+		return context;
+	}
+
+	async writeChunk(
+		filepath: string,
+		content: Readable,
+		offset: number,
+		_context: ChunkedUploadContext,
+	): Promise<number> {
+		const client = this.containerClient.getAppendBlobClient(this.fullPath(filepath));
+
+		let bytesUploaded = offset || 0;
+
+		const chunks: Buffer[] = [];
+
+		content.on('data', (chunk: Buffer) => {
+			bytesUploaded += chunk.length;
+			chunks.push(chunk);
+		});
+
+		await finished(content);
+
+		const chunk = Buffer.concat(chunks);
+
+		if (chunk.length > 0) {
+			await client.appendBlock(chunk, chunk.length);
+		}
+
+		return bytesUploaded;
+	}
+
+	async finishChunkedUpload(_filepath: string, _context: ChunkedUploadContext): Promise<void> {}
+
+	async deleteChunkedUpload(filepath: string, _context: ChunkedUploadContext): Promise<void> {
+		await this.delete(filepath);
 	}
 }
 

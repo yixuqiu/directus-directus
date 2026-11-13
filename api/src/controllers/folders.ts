@@ -107,14 +107,14 @@ router.patch(
 			schema: req.schema,
 		});
 
-		let keys: PrimaryKey[] = [];
+		let keys: PrimaryKey[];
 
 		if (Array.isArray(req.body)) {
 			keys = await service.updateBatch(req.body);
 		} else if (req.body.keys) {
 			keys = await service.updateMany(req.body.keys, req.body.data);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			keys = await service.updateByQuery(sanitizedQuery, req.body.data);
 		}
 
@@ -174,7 +174,7 @@ router.delete(
 		} else if (req.body.keys) {
 			await service.deleteMany(req.body.keys);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			await service.deleteByQuery(sanitizedQuery);
 		}
 

@@ -1,4 +1,3 @@
-import { randomInteger } from '@directus/random';
 import type { EventLoopUtilization, IntervalHistogram } from 'node:perf_hooks';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { memoryUsage } from 'node:process';
@@ -26,17 +25,17 @@ let sample: {
 beforeEach(() => {
 	sample = {
 		config: {
-			sampleInterval: randomInteger(100, 2500),
-			resolution: randomInteger(10, 25),
-			maxMemoryHeapUsed: randomInteger(1e6, 1e9),
-			maxMemoryRss: randomInteger(1e6, 1e9),
-			maxEventLoopDelay: randomInteger(100, 1000),
-			maxEventLoopUtilization: randomInteger(2, 99) / 100,
+			sampleInterval: 1000,
+			resolution: 15,
+			maxMemoryHeapUsed: 500000000,
+			maxMemoryRss: 800000000,
+			maxEventLoopDelay: 500,
+			maxEventLoopUtilization: 0.5,
 		},
-		rss: randomInteger(1e6, 1e9),
-		heapUsed: randomInteger(1e6, 1e9),
-		eventLoopUtilization: randomInteger(2, 99) / 100,
-		meanEventLoopDelay: randomInteger(50 * 1e6, 250 * 1e6),
+		rss: 600000000,
+		heapUsed: 400000000,
+		eventLoopUtilization: 0.3,
+		meanEventLoopDelay: 150000000,
 	};
 
 	mockIntervalHistogram = {
@@ -68,10 +67,10 @@ describe('#constructor', () => {
 		expect(monitor['options']).toEqual({
 			sampleInterval: 250,
 			resolution: 10,
-			maxMemoryHeapUsed: false,
-			maxMemoryRss: false,
-			maxEventLoopDelay: false,
-			maxEventLoopUtilization: false,
+			maxMemoryHeapUsed: undefined,
+			maxMemoryRss: undefined,
+			maxEventLoopDelay: undefined,
+			maxEventLoopUtilization: undefined,
 		});
 	});
 
@@ -92,10 +91,10 @@ describe('#constructor', () => {
 describe('#overloaded', () => {
 	test('Returns false if all settings are false', () => {
 		monitor = new PressureMonitor({
-			maxMemoryHeapUsed: false,
-			maxMemoryRss: false,
-			maxEventLoopDelay: false,
-			maxEventLoopUtilization: false,
+			maxMemoryHeapUsed: undefined,
+			maxMemoryRss: undefined,
+			maxEventLoopDelay: undefined,
+			maxEventLoopUtilization: undefined,
 		});
 
 		expect(monitor.overloaded).toBe(false);

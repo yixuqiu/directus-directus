@@ -1,19 +1,10 @@
+import formatTitle from '@directus/format-title';
+import { acceptHMRUpdate, defineStore } from 'pinia';
+import { computed, reactive } from 'vue';
 import api, { replaceQueue } from '@/api';
 import { AUTH_SSO_DRIVERS, DEFAULT_AUTH_DRIVER, DEFAULT_AUTH_PROVIDER } from '@/constants';
 import { i18n } from '@/lang';
-import { setLanguage } from '@/lang/set-language';
-import { useUserStore } from '@/stores/user';
 import { AuthProvider } from '@/types/login';
-import formatTitle from '@directus/format-title';
-import { acceptHMRUpdate, defineStore } from 'pinia';
-import { computed, reactive, unref } from 'vue';
-
-type HydrateOptions = {
-	/**
-	 * Allow setting current admin language only when default language gets updated.
-	 */
-	isLanguageUpdated?: boolean;
-};
 
 export type Info = {
 	project: null | {
@@ -35,6 +26,25 @@ export type Info = {
 		public_registration: boolean | null;
 		public_registration_verify_email: boolean | null;
 	};
+	project_owner_enabled: boolean;
+	mcp_enabled: boolean;
+	ai_enabled: boolean;
+	ai_providers?: string[];
+	mcp_oauth_enabled: boolean;
+	mcp_oauth_dcr_enabled: boolean;
+	mcp_oauth_cimd_enabled: boolean;
+	files?: {
+		mimeTypeAllowList: string[];
+	};
+	setupCompleted: boolean;
+	setup: {
+		license_complete: boolean;
+		owner_complete: boolean;
+	} | null;
+	license: {
+		source: string | null;
+		entitlements: Record<string, unknown>;
+	} | null;
 	rateLimit?:
 		| false
 		| {
@@ -51,9 +61,40 @@ export type Info = {
 		default: number;
 		max: number;
 	};
+	websocket?:
+		| false
+		| {
+				logs?:
+					| false
+					| {
+							allowedLogLevels: Record<string, number>;
+					  };
+				rest?:
+					| false
+					| {
+							authentication: string;
+							path: string;
+					  };
+				graphql?:
+					| false
+					| {
+							authentication: string;
+							path: string;
+					  };
+				heartbeat?: boolean | number;
+				collaborativeEditing?: boolean;
+		  };
 	version?: string;
 	extensions?: {
 		limit: number | null;
+	};
+	uploads?: {
+		tus?: boolean;
+		chunkSize?: number;
+		maxConcurrency?: number;
+	};
+	autoSave?: {
+		revisionInterval: number;
 	};
 };
 
@@ -65,9 +106,23 @@ export type Auth = {
 export const useServerStore = defineStore('serverStore', () => {
 	const info = reactive<Info>({
 		project: null,
+		project_owner_enabled: true,
+		mcp_enabled: true,
+		ai_enabled: true,
+		ai_providers: [],
+		mcp_oauth_enabled: false,
+		mcp_oauth_dcr_enabled: false,
+		mcp_oauth_cimd_enabled: false,
+		files: undefined,
+		setupCompleted: false,
+		setup: null,
+		license: null,
 		extensions: undefined,
 		rateLimit: undefined,
 		queryLimit: undefined,
+		websocket: undefined,
+		uploads: undefined,
+		autoSave: undefined,
 	});
 
 	const auth = reactive<Auth>({
@@ -91,31 +146,33 @@ export const useServerStore = defineStore('serverStore', () => {
 		return options;
 	});
 
-	const hydrate = async (options?: HydrateOptions) => {
+	const hydrate = async () => {
 		const [serverInfoResponse, authResponse] = await Promise.all([
 			api.get(`/server/info`),
 			api.get('/auth?sessionOnly'),
 		]);
 
 		info.project = serverInfoResponse.data.data?.project;
+		info.project_owner_enabled = serverInfoResponse.data.data?.project_owner_enabled;
+		info.mcp_enabled = serverInfoResponse.data.data?.mcp_enabled;
+		info.ai_enabled = serverInfoResponse.data.data?.ai_enabled;
+		info.ai_providers = serverInfoResponse.data.data?.ai_providers ?? [];
+		info.mcp_oauth_enabled = serverInfoResponse.data.data?.mcp_oauth_enabled;
+		info.mcp_oauth_dcr_enabled = serverInfoResponse.data.data?.mcp_oauth_dcr_enabled;
+		info.mcp_oauth_cimd_enabled = serverInfoResponse.data.data?.mcp_oauth_cimd_enabled;
+		info.files = serverInfoResponse.data.data?.files;
+		info.setup = serverInfoResponse.data.data?.setup ?? null;
+		info.setupCompleted = !info.setup;
+		info.license = serverInfoResponse.data.data?.license ?? null;
 		info.queryLimit = serverInfoResponse.data.data?.queryLimit;
 		info.extensions = serverInfoResponse.data.data?.extensions;
+		info.websocket = serverInfoResponse.data.data?.websocket;
 		info.version = serverInfoResponse.data.data?.version;
+		info.uploads = serverInfoResponse.data.data?.uploads;
+		info.autoSave = serverInfoResponse.data.data?.autoSave;
 
 		auth.providers = authResponse.data.data;
 		auth.disableDefault = authResponse.data.disableDefault;
-
-		const { currentUser } = useUserStore();
-
-		// set language as default locale before login
-		// or reset language for admin when they update it without having their own language set
-		if (
-			!currentUser ||
-			(options?.isLanguageUpdated &&
-				(!('language' in currentUser) || ('language' in currentUser && !currentUser?.language)))
-		) {
-			await setLanguage(unref(info)?.project?.default_language ?? 'en-US');
-		}
 
 		if (serverInfoResponse.data.data?.rateLimit !== undefined) {
 			if (serverInfoResponse.data.data?.rateLimit === false) {
@@ -132,6 +189,7 @@ export const useServerStore = defineStore('serverStore', () => {
 
 	const dehydrate = () => {
 		info.project = null;
+		info.ai_providers = [];
 
 		auth.providers = [];
 		auth.disableDefault = false;

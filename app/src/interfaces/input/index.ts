@@ -1,7 +1,8 @@
-import { DeepPartial, Field } from '@directus/types';
 import { defineInterface } from '@directus/extensions';
+import { DeepPartial, Field } from '@directus/types';
 import InterfaceInput from './input.vue';
 import PreviewSVG from './preview.svg?raw';
+import { APP_NUMERIC_TYPES } from '@/constants';
 
 export default defineInterface({
 	id: 'input',
@@ -145,7 +146,7 @@ export default defineInterface({
 			{
 				field: 'min',
 				name: '$t:interfaces.input.minimum_value',
-				type: 'integer',
+				type: field.type,
 				meta: {
 					width: 'half',
 					interface: 'input',
@@ -154,7 +155,7 @@ export default defineInterface({
 			{
 				field: 'max',
 				name: '$t:interfaces.input.maximum_value',
-				type: 'integer',
+				type: field.type,
 				meta: {
 					width: 'half',
 					interface: 'input',
@@ -163,7 +164,7 @@ export default defineInterface({
 			{
 				field: 'step',
 				name: '$t:interfaces.input.step_interval',
-				type: 'integer',
+				type: field.type,
 				meta: {
 					width: 'half',
 					interface: 'input',
@@ -223,7 +224,7 @@ export default defineInterface({
 			},
 		];
 
-		if (field.type && ['bigInteger', 'integer', 'float', 'decimal'].includes(field.type)) {
+		if (field.type && APP_NUMERIC_TYPES.includes(field.type)) {
 			return numberOptions;
 		}
 

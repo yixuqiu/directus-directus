@@ -13,15 +13,16 @@ import { getAuthProvider } from '../../auth.js';
 import { REFRESH_COOKIE_OPTIONS, SESSION_COOKIE_OPTIONS } from '../../constants.js';
 import getDatabase from '../../database/index.js';
 import emitter from '../../emitter.js';
-import { useLogger } from '../../logger.js';
+import { useLogger } from '../../logger/index.js';
 import { respond } from '../../middleware/respond.js';
 import { AuthenticationService } from '../../services/authentication.js';
-import { UsersService } from '../../services/users.js';
 import type { AuthDriverOptions, User } from '../../types/index.js';
 import asyncHandler from '../../utils/async-handler.js';
 import { getConfigFromEnv } from '../../utils/get-config-from-env.js';
+import { getSchema } from '../../utils/get-schema.js';
+import { checkSsoEnabled } from '../utils/check-sso-enabled.js';
+import { resolveLoginRedirect } from '../utils/resolve-login-redirect.js';
 import { LocalAuthDriver } from './local.js';
-import { isLoginRedirectAllowed } from '../../utils/is-login-redirect-allowed.js';
 
 // Register the samlify schema validator
 samlify.setSchemaValidator(validator);
@@ -29,14 +30,12 @@ samlify.setSchemaValidator(validator);
 export class SAMLAuthDriver extends LocalAuthDriver {
 	sp: samlify.ServiceProviderInstance;
 	idp: samlify.IdentityProviderInstance;
-	usersService: UsersService;
 	config: Record<string, any>;
 
 	constructor(options: AuthDriverOptions, config: Record<string, any>) {
 		super(options, config);
 
 		this.config = config;
-		this.usersService = new UsersService({ knex: this.knex, schema: this.schema });
 
 		this.sp = samlify.ServiceProvider(getConfigFromEnv(`AUTH_${config['provider'].toUpperCase()}_SP`));
 		this.idp = samlify.IdentityProvider(getConfigFromEnv(`AUTH_${config['provider'].toUpperCase()}_IDP`));
@@ -86,17 +85,20 @@ export class SAMLAuthDriver extends LocalAuthDriver {
 			role: this.config['defaultRoleId'],
 		};
 
+		const schema = await getSchema();
+
 		// Run hook so the end user has the chance to augment the
 		// user that is about to be created
 		const updatedUserPayload = await emitter.emitFilter(
 			`auth.create`,
 			userPayload,
 			{ identifier: identifier.toLowerCase(), provider: this.config['provider'], providerPayload: { ...payload } },
-			{ database: getDatabase(), schema: this.schema, accountability: null },
+			{ database: getDatabase(), schema, accountability: null },
 		);
 
 		try {
-			return await this.usersService.createOne(updatedUserPayload);
+			const usersService = this.getUsersService(schema);
+			return await usersService.createOne(updatedUserPayload);
 		} catch (error) {
 			if (isDirectusError(error, ErrorCode.RecordNotUnique)) {
 				logger.warn(error, '[SAML] Failed to register user. User not unique');
@@ -117,6 +119,8 @@ export function createSAMLAuthRouter(providerName: string) {
 	const router = Router();
 	const env = useEnv();
 
+	router.use(checkSsoEnabled);
+
 	router.get(
 		'/metadata',
 		asyncHandler(async (_req, res) => {
@@ -133,9 +137,12 @@ export function createSAMLAuthRouter(providerName: string) {
 			const parsedUrl = new URL(url);
 
 			if (req.query['redirect']) {
-				const redirect = req.query['redirect'] as string;
+				let redirect = req.query['redirect'] as string;
 
-				if (isLoginRedirectAllowed(redirect, providerName) === false) {
+				try {
+					redirect = resolveLoginRedirect(redirect, { provider: providerName });
+				} catch (e) {
+					useLogger().error(e);
 					throw new InvalidPayloadError({ reason: `URL "${redirect}" can't be used to redirect after login` });
 				}
 
@@ -153,7 +160,7 @@ export function createSAMLAuthRouter(providerName: string) {
 			const { context } = sp.createLogoutRequest(idp, 'redirect', req.body);
 
 			const authService = new AuthenticationService({ accountability: req.accountability, schema: req.schema });
-			const sessionCookieName = env['SESSION_COOKIE_NAME'] as string;
+			const sessionCookieName = env.SESSION_COOKIE_NAME;
 
 			if (req.cookies[sessionCookieName]) {
 				await authService.logout(req.cookies[sessionCookieName]);
@@ -170,9 +177,18 @@ export function createSAMLAuthRouter(providerName: string) {
 		asyncHandler(async (req, res, next) => {
 			const logger = useLogger();
 
-			const relayState: string | undefined = req.body?.RelayState;
+			let redirect: string | undefined = req.body?.RelayState;
 
 			const authMode = (env[`AUTH_${providerName.toUpperCase()}_MODE`] ?? 'session') as string;
+
+			if (redirect) {
+				try {
+					redirect = resolveLoginRedirect(redirect, { provider: providerName });
+				} catch (e) {
+					useLogger().error(e);
+					throw new InvalidPayloadError({ reason: `URL "${redirect}" can't be used to redirect after login` });
+				}
+			}
 
 			try {
 				const { sp, idp } = getAuthProvider(providerName) as SAMLAuthDriver;
@@ -192,19 +208,19 @@ export function createSAMLAuthRouter(providerName: string) {
 					},
 				};
 
-				if (relayState) {
+				if (redirect) {
 					if (authMode === 'session') {
-						res.cookie(env['SESSION_COOKIE_NAME'] as string, accessToken, SESSION_COOKIE_OPTIONS);
+						res.cookie(env.SESSION_COOKIE_NAME, accessToken, SESSION_COOKIE_OPTIONS);
 					} else {
-						res.cookie(env['REFRESH_TOKEN_COOKIE_NAME'] as string, refreshToken, REFRESH_COOKIE_OPTIONS);
+						res.cookie(env.REFRESH_TOKEN_COOKIE_NAME, refreshToken, REFRESH_COOKIE_OPTIONS);
 					}
 
-					return res.redirect(relayState);
+					return res.redirect(redirect);
 				}
 
 				return next();
 			} catch (error) {
-				if (relayState) {
+				if (redirect) {
 					let reason = 'UNKNOWN_EXCEPTION';
 
 					if (isDirectusError(error)) {
@@ -213,7 +229,7 @@ export function createSAMLAuthRouter(providerName: string) {
 						logger.warn(error, `[SAML] Unexpected error during SAML login`);
 					}
 
-					return res.redirect(`${relayState.split('?')[0]}?reason=${reason}`);
+					return res.redirect(`${redirect.split('?')[0]}?reason=${reason}`);
 				}
 
 				logger.warn(error, `[SAML] Unexpected error during SAML login`);

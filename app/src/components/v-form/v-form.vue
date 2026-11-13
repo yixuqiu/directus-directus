@@ -1,25 +1,27 @@
 <script setup lang="ts">
+import { useElementSize } from '@directus/composables';
+import { Field, ValidationError } from '@directus/types';
+import { assign, cloneDeep, isEmpty, isEqual, isNil, omit } from 'lodash-es';
+import { computed, onBeforeUpdate, provide, ref, watch } from 'vue';
+import VDivider from '../v-divider.vue';
+import VInfo from '../v-info.vue';
+import type { MenuOptions } from './components/form-field-menu.vue';
+import FormField from './components/form-field.vue';
+import ValidationErrors from './components/validation-errors.vue';
+import { useAiTools } from './composables/use-ai-tools';
+import type { ComparisonContext, FieldValues, FormField as TFormField } from './types';
+import { getFormFields } from './utils/get-form-fields';
+import { selectiveClone } from './utils/selective-clone';
+import { updateFieldWidths } from './utils/update-field-widths';
+import { updateSystemDivider } from './utils/update-system-divider';
+import { CollabContext } from '@/composables/use-collab';
 import { useFieldsStore } from '@/stores/fields';
+import type { ContentVersionMaybeNew } from '@/types/versions';
 import { applyConditions } from '@/utils/apply-conditions';
+import { isFieldCollectionInactive } from '@/utils/collection-status';
 import { extractFieldFromFunction } from '@/utils/extract-field-from-function';
 import { getDefaultValuesFromFields } from '@/utils/get-default-values-from-fields';
 import { pushGroupOptionsDown } from '@/utils/push-group-options-down';
-import { useElementSize } from '@directus/composables';
-import { Field, ValidationError } from '@directus/types';
-import { assign, cloneDeep, isEqual, isNil, omit } from 'lodash';
-import { computed, onBeforeUpdate, provide, ref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
-import type { MenuOptions } from './form-field-menu.vue';
-import FormField from './form-field.vue';
-import type { FormField as TFormField } from './types';
-import { getFormFields } from './utils/get-form-fields';
-import { updateFieldWidths } from './utils/update-field-widths';
-import { updateSystemDivider } from './utils/update-system-divider';
-import ValidationErrors from './validation-errors.vue';
-
-type FieldValues = {
-	[field: string]: any;
-};
 
 const props = withDefaults(
 	defineProps<{
@@ -31,6 +33,7 @@ const props = withDefaults(
 		batchMode?: boolean;
 		primaryKey?: string | number;
 		disabled?: boolean;
+		nonEditable?: boolean;
 		validationErrors?: ValidationError[];
 		autofocus?: boolean;
 		group?: string | null;
@@ -40,9 +43,15 @@ const props = withDefaults(
 		/* Enable the raw editor toggler on fields */
 		rawEditorEnabled?: boolean;
 		disabledMenuOptions?: MenuOptions[];
+		disabledMenu?: boolean;
 		direction?: string;
 		showDivider?: boolean;
 		inline?: boolean;
+		version?: ContentVersionMaybeNew | null;
+		// when true, an edit moves the item to a Draft version; interfaces use it to gate edit-on-open intents
+		canAutoSwitchToDraft?: boolean;
+		comparison?: ComparisonContext;
+		collabContext?: CollabContext;
 	}>(),
 	{
 		collection: undefined,
@@ -56,15 +65,36 @@ const props = withDefaults(
 		showValidationErrors: true,
 		showNoVisibleFields: true,
 		direction: undefined,
+		version: null,
 	},
 );
 
-const { t } = useI18n();
-
 const emit = defineEmits(['update:modelValue']);
 
+const fieldsStore = useFieldsStore();
+
+const fieldDefinitions = computed<Field[]>(() => {
+	if (props.collection) {
+		return fieldsStore.getFieldsForCollection(props.collection);
+	}
+
+	if (props.fields) {
+		return props.fields;
+	}
+
+	return [];
+});
+
+const fieldDefinitionsMap = computed<Record<string, Field | undefined>>(() => {
+	return Object.fromEntries(fieldDefinitions.value.map((field) => [field.field, field]));
+});
+
 const values = computed(() => {
-	return Object.assign({}, cloneDeep(props.initialValues), cloneDeep(props.modelValue));
+	return Object.assign(
+		{},
+		selectiveClone(props.initialValues, fieldDefinitionsMap.value),
+		selectiveClone(props.modelValue, fieldDefinitionsMap.value),
+	);
 });
 
 const el = ref<Element>();
@@ -74,7 +104,9 @@ const { width } = useElementSize(el);
 const gridClass = computed<string | null>(() => {
 	if (el.value === null) return null;
 
-	if (width.value > 792) {
+	// 342px (--form-column-max-width) * 2 + 28 (--theme--form--column-gap) = 712 (44.5rem)
+	// Keep the value in sync with the `@container (inline-size > 44.5rem)` breakpoint in the app/src/styles/mixins/_form-grid.scss
+	if (width.value > 712) {
 		return 'grid with-fill';
 	} else {
 		return 'grid';
@@ -87,7 +119,18 @@ onBeforeUpdate(() => {
 	formFieldEls.value = {};
 });
 
-const { fieldNames, fieldsMap, getFieldsForGroup, fieldsForGroup, isDisabled } = useForm();
+const {
+	fields: finalFields,
+	fieldNames,
+	fieldsMap,
+	fieldsForGroup,
+	isDisabled,
+	getFieldsForGroup,
+	isFieldVisible,
+} = useForm();
+
+useAiTools({ finalFields, fieldNames, setValue, values, collabContext: props.collabContext });
+
 const { toggleBatchField, batchActiveFields } = useBatch();
 const { toggleRawField, rawActiveFields } = useRawEditor();
 
@@ -95,7 +138,7 @@ const firstEditableFieldIndex = computed(() => {
 	for (const [index, fieldName] of fieldNames.value.entries()) {
 		const field = fieldsMap.value[fieldName];
 
-		if (field?.meta && !field.meta?.readonly && !field.meta?.hidden) {
+		if (field?.meta && !field.meta?.readonly && isFieldVisible(field)) {
 			return index;
 		}
 	}
@@ -107,7 +150,7 @@ const firstVisibleFieldIndex = computed(() => {
 	for (const [index, fieldName] of fieldNames.value.entries()) {
 		const field = fieldsMap.value[fieldName];
 
-		if (field?.meta && !field.meta?.hidden) {
+		if (field?.meta && isFieldVisible(field)) {
 			return index;
 		}
 	}
@@ -117,7 +160,7 @@ const firstVisibleFieldIndex = computed(() => {
 
 const noVisibleFields = computed(() => {
 	return Object.keys(fieldsMap.value).every((fieldKey) => {
-		return fieldsMap.value[fieldKey]?.meta?.hidden === true;
+		return !isFieldVisible(fieldsMap.value[fieldKey]!);
 	});
 });
 
@@ -154,11 +197,13 @@ function useForm() {
 	const fieldsWithConditions = computed(() => {
 		const valuesWithDefaults = Object.assign({}, defaultValues.value, values.value);
 
-		let fields = formFields.value.map((field) => applyConditions(valuesWithDefaults, setPrimaryKeyReadonly(field)));
+		let fields = formFields.value.map((field) =>
+			applyConditions(valuesWithDefaults, setPrimaryKeyReadonly(field), props.version),
+		);
 
 		fields = pushGroupOptionsDown(fields);
-		updateSystemDivider(fields);
-		updateFieldWidths(fields);
+		updateSystemDivider(fields, isFieldVisible);
+		updateFieldWidths(fields, isFieldVisible);
 
 		return fields;
 	});
@@ -179,7 +224,11 @@ function useForm() {
 		return fieldNames.value.map((name) => getFieldsForGroup(fieldsMap.value[name]?.meta?.field || null));
 	});
 
-	return { fieldNames, fieldsMap, isDisabled, getFieldsForGroup, fieldsForGroup };
+	const fieldsWithInactiveRelation = computed(() => {
+		return new Set(fields.value.filter(isFieldCollectionInactive).map((field) => field.field));
+	});
+
+	return { fields, fieldNames, fieldsMap, fieldsForGroup, isDisabled, getFieldsForGroup, isFieldVisible };
 
 	function isDisabled(field: TFormField | undefined) {
 		if (!field) return true;
@@ -189,6 +238,7 @@ function useForm() {
 			props.disabled === true ||
 			meta?.readonly === true ||
 			field.schema?.is_generated === true ||
+			fieldsWithInactiveRelation.value.has(field.field) ||
 			(props.batchMode && batchActiveFields.value.includes(field.field) === false)
 		);
 	}
@@ -237,6 +287,18 @@ function useForm() {
 
 		return field;
 	}
+
+	function isFieldVisible(field: Field | TFormField): boolean {
+		if (props.comparison?.showDifferencesOnly) {
+			return !!props.comparison.fields.has(field.field);
+		}
+
+		return (
+			field.meta?.hidden !== true ||
+			!!props.comparison?.fields?.has(field.field) ||
+			!!props.comparison?.revisionFields?.has(field.field)
+		);
+	}
 }
 
 function setValue(fieldKey: string, value: any, opts?: { force?: boolean }) {
@@ -244,7 +306,7 @@ function setValue(fieldKey: string, value: any, opts?: { force?: boolean }) {
 
 	if (opts?.force !== true && (!field || isDisabled(field))) return;
 
-	const edits = props.modelValue ? cloneDeep(props.modelValue) : {};
+	const edits = props.modelValue ? selectiveClone(props.modelValue, fieldDefinitionsMap.value) : {};
 	edits[fieldKey] = value;
 	emit('update:modelValue', edits);
 }
@@ -255,8 +317,10 @@ function apply(updates: { [field: string]: any }) {
 		: Object.keys(updates).filter((key) => {
 				const field = fieldsMap.value[key];
 				if (!field) return false;
-				return field.schema?.is_primary_key || !isDisabled(field);
-		  });
+				return (
+					(updates.$type === 'created' && field.meta?.readonly) || field.schema?.is_primary_key || !isDisabled(field)
+				);
+			});
 
 	if (!isNil(props.group)) {
 		const groupFields = getFieldsForGroup(props.group)
@@ -265,7 +329,28 @@ function apply(updates: { [field: string]: any }) {
 
 		emit('update:modelValue', assign({}, omit(props.modelValue, groupFields), pickKeepMeta(updates, updatableKeys)));
 	} else {
-		emit('update:modelValue', pickKeepMeta(assign({}, props.modelValue, updates), updatableKeys));
+		// Preserve existing values for fields that belong to groups
+		const updatableGroupKeys = Object.keys(updates).filter((key) => {
+			if (key.startsWith('$')) return false;
+			const field = fieldsMap.value[key];
+			return !isNil(field?.meta?.group) && props.modelValue && key in props.modelValue;
+		});
+
+		// Preserve readonly field values when unchanged
+		const preservedReadonlyKeys = Object.keys(updates).filter((key) => {
+			if (key.startsWith('$') || updatableKeys.includes(key)) return false;
+			const field = fieldsMap.value[key];
+			return field && isDisabled(field) && isEqual(props.modelValue?.[key], updates[key]);
+		});
+
+		emit(
+			'update:modelValue',
+			pickKeepMeta(assign({}, props.modelValue, updates), [
+				...updatableKeys,
+				...updatableGroupKeys,
+				...preservedReadonlyKeys,
+			]),
+		);
 	}
 }
 
@@ -289,6 +374,16 @@ function unsetValue(field: TFormField | undefined) {
 
 function useBatch() {
 	const batchActiveFields = ref<string[]>([]);
+
+	watch(
+		() => props.modelValue,
+		(newModelValue) => {
+			if (!props.batchMode || isEmpty(newModelValue) || !isEmpty(batchActiveFields.value)) return;
+
+			batchActiveFields.value = Object.keys(newModelValue);
+		},
+		{ immediate: true },
+	);
 
 	return { batchActiveFields, toggleBatchField };
 
@@ -327,31 +422,65 @@ function useRawEditor() {
 		}
 	}
 }
+
+function getFirstVisibleFieldClass(index: number) {
+	return index === firstVisibleFieldIndex.value ? 'first-visible-field' : '';
+}
+
+function isGroupFieldVisible(field: TFormField, groupFields: Field[]): boolean {
+	if (props.comparison?.showDifferencesOnly) {
+		return groupFields.some((f) => props.comparison!.fields.has(f.field));
+	}
+
+	return isFieldVisible(field);
+}
+
+function getComparisonIndicatorClasses(field: TFormField, isGroup = false) {
+	if (isComparisonDiff()) {
+		if (field.indicatorStyle === 'active') return 'indicator-active';
+		if (field.indicatorStyle === 'muted') return 'indicator-muted';
+	}
+
+	return '';
+
+	function isComparisonDiff() {
+		if (field.indicatorStyle === 'hidden' || !props.comparison) return false;
+
+		if (isGroup) {
+			const groupFields = getFieldsForGroup(field.meta?.field ?? null);
+			return groupFields.some((groupField) => props.comparison!.fields.has(groupField.field));
+		}
+
+		return props.comparison.fields.has(field.field);
+	}
+}
 </script>
 
 <template>
 	<div ref="el" :class="['v-form', gridClass, { inline }]">
-		<validation-errors
+		<ValidationErrors
 			v-if="showValidationErrors && validationErrors.length > 0"
 			:validation-errors="validationErrors"
-			:fields="fields ? fields : []"
+			:fields="finalFields"
 			@scroll-to-field="scrollToField"
 		/>
-		<v-info
+		<VInfo
 			v-if="noVisibleFields && showNoVisibleFields && !loading"
 			class="no-fields-info"
-			:title="t('no_visible_fields')"
+			:title="$t('no_visible_fields')"
 			:icon="inline ? false : 'search'"
 			:center="!inline"
 		>
-			{{ t('no_visible_fields_copy') }}
-		</v-info>
+			{{ $t('no_visible_fields_copy') }}
+		</VInfo>
 		<template v-for="(fieldName, index) in fieldNames" :key="fieldName">
 			<template v-if="fieldsMap[fieldName]">
 				<component
 					:is="`interface-${fieldsMap[fieldName]!.meta?.interface || 'group-standard'}`"
-					v-if="fieldsMap[fieldName]!.meta?.special?.includes('group')"
-					v-show="!fieldsMap[fieldName]!.meta?.hidden"
+					v-if="
+						fieldsMap[fieldName]!.meta?.special?.includes('group') &&
+						isGroupFieldVisible(fieldsMap[fieldName]!, fieldsForGroup[index] || [])
+					"
 					:ref="
 						(el: Element) => {
 							formFieldEls[fieldName] = el;
@@ -359,13 +488,15 @@ function useRawEditor() {
 					"
 					:class="[
 						fieldsMap[fieldName]!.meta?.width || 'full',
-						index === firstVisibleFieldIndex ? 'first-visible-field' : '',
+						getFirstVisibleFieldClass(index),
+						getComparisonIndicatorClasses(fieldsMap[fieldName]!, true),
 					]"
 					:field="fieldsMap[fieldName]"
 					:fields="fieldsForGroup[index] || []"
 					:values="modelValue || {}"
 					:initial-values="initialValues || {}"
-					:disabled="disabled"
+					:disabled="disabled || nonEditable"
+					:non-editable="nonEditable"
 					:batch-mode="batchMode"
 					:batch-active-fields="batchActiveFields"
 					:primary-key="primaryKey"
@@ -374,25 +505,32 @@ function useRawEditor() {
 					:badge="badge"
 					:raw-editor-enabled="rawEditorEnabled"
 					:direction="direction"
+					:version
+					:comparison="comparison"
+					:collab-context="collabContext"
 					v-bind="fieldsMap[fieldName]!.meta?.options || {}"
 					@apply="apply"
 				/>
 
-				<form-field
-					v-else-if="!fieldsMap[fieldName]!.meta?.hidden"
+				<FormField
+					v-else-if="isFieldVisible(fieldsMap[fieldName])"
 					:ref="
 						(el) => {
 							formFieldEls[fieldName] = el;
 						}
 					"
-					:class="index === firstVisibleFieldIndex ? 'first-visible-field' : ''"
+					:class="[getFirstVisibleFieldClass(index), getComparisonIndicatorClasses(fieldsMap[fieldName]!)]"
 					:field="fieldsMap[fieldName]!"
 					:autofocus="index === firstEditableFieldIndex && autofocus"
 					:model-value="(values || {})[fieldName]"
 					:initial-value="(initialValues || {})[fieldName]"
-					:disabled="isDisabled(fieldsMap[fieldName]!)"
+					:disabled="isDisabled(fieldsMap[fieldName]!) || nonEditable"
+					:non-editable="nonEditable"
 					:batch-mode="batchMode"
 					:batch-active="batchActiveFields.includes(fieldName)"
+					:comparison="comparison"
+					:comparison-active="comparison?.selectedFields.includes(fieldName)"
+					:collab-field-context="collabContext?.registerField(fieldName)"
 					:primary-key="primaryKey"
 					:loading="loading"
 					:validation-error="
@@ -406,7 +544,10 @@ function useRawEditor() {
 					:raw-editor-enabled="rawEditorEnabled"
 					:raw-editor-active="rawActiveFields.has(fieldName)"
 					:disabled-menu-options="disabledMenuOptions"
+					:disabled-menu="disabledMenu"
 					:direction="direction"
+					:version
+					:can-auto-switch-to-draft="canAutoSwitchToDraft"
 					@update:model-value="setValue(fieldName, $event)"
 					@set-field-value="setValue($event.field, $event.value, { force: true })"
 					@unset="unsetValue(fieldsMap[fieldName]!)"
@@ -415,18 +556,18 @@ function useRawEditor() {
 				/>
 			</template>
 		</template>
-		<v-divider v-if="showDivider && !noVisibleFields" />
+		<VDivider v-if="showDivider && !noVisibleFields" />
 	</div>
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
 
 .v-form {
-	@include form-grid;
+	@include mixins.form-grid;
 
-	.first-visible-field :deep(.v-divider) {
-		margin-top: 0;
+	.first-visible-field :deep(.presentation-divider) {
+		margin-block-start: 0;
 	}
 
 	&.inline > .no-fields-info {
@@ -435,8 +576,15 @@ function useRawEditor() {
 }
 
 .v-divider {
-	margin-bottom: 50px;
-	grid-column-start: 1;
-	grid-column-end: 3;
+	margin-block-end: 2.8125rem;
+	grid-column: 1 / 3;
+}
+
+.indicator-active {
+	@include mixins.field-indicator;
+}
+
+.indicator-muted {
+	@include mixins.field-indicator('muted');
 }
 </style>

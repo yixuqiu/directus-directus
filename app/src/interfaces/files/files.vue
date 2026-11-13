@@ -1,17 +1,38 @@
 <script setup lang="ts">
+import type { ContentVersion, Filter } from '@directus/types';
+import { deepMap, getFieldsFromTemplate } from '@directus/utils';
+import { clamp, get, isEmpty, isNil, set } from 'lodash-es';
+import { render } from 'micromustache';
+import { computed, inject, ref, toRef, toRefs } from 'vue';
+import Draggable from 'vuedraggable';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VMenu from '@/components/v-menu.vue';
+import VNotice from '@/components/v-notice.vue';
+import VPagination from '@/components/v-pagination.vue';
+import VRemove from '@/components/v-remove.vue';
+import VSkeletonLoader from '@/components/v-skeleton-loader.vue';
+import VUpload from '@/components/v-upload.vue';
+import { useMimeTypeFilter } from '@/composables/use-mime-type-filter';
 import { useRelationM2M } from '@/composables/use-relation-m2m';
 import { DisplayItem, RelationQueryMultiple, useRelationMultiple } from '@/composables/use-relation-multiple';
 import { useRelationPermissionsM2M } from '@/composables/use-relation-permissions';
 import { adjustFieldsForDisplays } from '@/utils/adjust-fields-for-displays';
 import { getAssetUrl } from '@/utils/get-asset-url';
+import { parseFilter } from '@/utils/parse-filter';
+import { PrivateViewHeaderBarActionButton } from '@/views/private';
 import DrawerFiles from '@/views/private/components/drawer-files.vue';
 import DrawerItem from '@/views/private/components/drawer-item.vue';
-import { Filter } from '@directus/types';
-import { getFieldsFromTemplate } from '@directus/utils';
-import { clamp, get, isEmpty, isNil, set } from 'lodash';
-import { computed, ref, toRefs } from 'vue';
-import { useI18n } from 'vue-i18n';
-import Draggable from 'vuedraggable';
+import RenderTemplate from '@/views/private/components/render-template.vue';
 
 const props = withDefaults(
 	defineProps<{
@@ -19,15 +40,20 @@ const props = withDefaults(
 		primaryKey: string | number;
 		collection: string;
 		field: string;
-		template?: string | null;
 		disabled?: boolean;
+		nonEditable?: boolean;
+		version: ContentVersion | null;
+		template?: string | null;
 		enableCreate?: boolean;
 		enableSelect?: boolean;
 		folder?: string;
+		filter?: Filter;
 		showNavigation?: boolean;
 		limit?: number;
+		allowedMimeTypes?: string[];
 	}>(),
 	{
+		nonEditable: false,
 		template: null,
 		enableCreate: true,
 		enableSelect: true,
@@ -39,8 +65,7 @@ const emit = defineEmits<{
 	input: [value: (number | string | Record<string, any>)[] | Record<string, any> | null];
 }>();
 
-const { t } = useI18n();
-const { collection, field, primaryKey, limit } = toRefs(props);
+const { collection, field, primaryKey, limit, version } = toRefs(props);
 const { relationInfo } = useRelationM2M(collection, field);
 
 const value = computed({
@@ -49,6 +74,8 @@ const value = computed({
 		emit('input', val);
 	},
 });
+
+const { mimeTypeFilter, combinedAcceptString } = useMimeTypeFilter(toRef(props, 'allowedMimeTypes'));
 
 const templateWithDefaults = computed(() => {
 	if (!relationInfo.value) return null;
@@ -105,17 +132,11 @@ const {
 	isItemSelected,
 	isLocalItem,
 	getItemEdits,
-} = useRelationMultiple(value, query, relationInfo, primaryKey);
+} = useRelationMultiple(value, query, relationInfo, primaryKey, version);
 
 const { createAllowed, updateAllowed, selectAllowed, deleteAllowed } = useRelationPermissionsM2M(relationInfo);
 
 const pageCount = computed(() => Math.ceil(totalItemCount.value / limit.value));
-
-function getDeselectIcon(item: DisplayItem) {
-	if (item.$type === 'deleted') return 'settings_backup_restore';
-	if (isLocalItem(item)) return 'delete';
-	return 'close';
-}
 
 function sortItems(items: DisplayItem[]) {
 	const info = relationInfo.value;
@@ -226,7 +247,7 @@ const downloadName = computed(() => {
 
 const downloadUrl = computed(() => {
 	if (relatedPrimaryKey.value === null || relationInfo.value?.relatedCollection.collection !== 'directus_files') return;
-	return getAssetUrl(String(relatedPrimaryKey.value), true);
+	return getAssetUrl(String(relatedPrimaryKey.value), { isDownload: true });
 });
 
 function getFilename(junctionRow: Record<string, any>) {
@@ -245,6 +266,8 @@ function getDownloadName(junctionRow: Record<string, any>) {
 
 	return junctionRow[junctionField]?.filename_download;
 }
+
+const values = inject('values', ref<Record<string, unknown>>({}));
 
 const customFilter = computed(() => {
 	if (!relationInfo.value) return;
@@ -275,6 +298,24 @@ const customFilter = computed(() => {
 
 	if (props.primaryKey !== '+') filter._and.push(selectFilter);
 
+	if (props.filter) {
+		filter._and.push(
+			parseFilter(
+				deepMap(props.filter, (val: unknown) => {
+					if (val && typeof val === 'string') {
+						return render(val, values.value);
+					}
+
+					return val;
+				}),
+			),
+		);
+	}
+
+	if (mimeTypeFilter.value) {
+		filter._and.push(mimeTypeFilter.value);
+	}
+
 	return filter;
 });
 
@@ -285,24 +326,28 @@ const allowDrag = computed(
 		!props.disabled &&
 		updateAllowed.value,
 );
+
+const menuActive = computed(() => editModalActive.value || selectModalActive.value || showUpload.value);
 </script>
 
 <template>
-	<v-notice v-if="!relationInfo" type="warning">{{ t('relationship_not_setup') }}</v-notice>
-	<div v-else class="many-to-many">
+	<VNotice v-if="!relationInfo" type="warning">{{ $t('relationship_not_setup') }}</VNotice>
+	<div v-else v-prevent-focusout="menuActive" class="many-to-many">
 		<template v-if="loading">
-			<v-skeleton-loader
+			<VSkeletonLoader
 				v-for="n in clamp(totalItemCount - (page - 1) * limit, 1, limit)"
 				:key="n"
 				:type="totalItemCount > 4 ? 'block-list-item-dense' : 'block-list-item'"
 			/>
 		</template>
 
-		<v-list v-else class="files">
-			<v-notice v-if="displayItems.length === 0">{{ t('no_items') }}</v-notice>
+		<template v-else>
+			<VNotice v-if="displayItems.length === 0">{{ $t('no_items') }}</VNotice>
 
-			<draggable
+			<Draggable
+				v-else
 				:model-value="displayItems"
+				tag="v-list"
 				item-key="id"
 				handle=".drag-handle"
 				:disabled="!allowDrag"
@@ -310,65 +355,81 @@ const allowDrag = computed(
 				@update:model-value="sortItems($event)"
 			>
 				<template #item="{ element }">
-					<v-list-item
+					<VListItem
 						:class="{ deleted: element.$type === 'deleted' }"
 						:dense="totalItemCount > 4"
-						:disabled="disabled || !updateAllowed"
+						:disabled="disabled && !nonEditable"
 						block
 						clickable
 						@click="editItem(element)"
 					>
-						<v-icon v-if="allowDrag" name="drag_handle" class="drag-handle" left @click.stop="() => {}" />
-						<render-template
+						<VIcon v-if="allowDrag" name="drag_handle" class="drag-handle" left @click.stop="() => {}" />
+
+						<RenderTemplate
 							:collection="relationInfo.junctionCollection.collection"
 							:item="element"
 							:template="templateWithDefaults"
 						/>
+
 						<div class="spacer" />
-						<v-icon
-							v-if="!disabled && (deleteAllowed || isLocalItem(element))"
-							:name="getDeselectIcon(element)"
-							class="deselect"
-							@click.stop="deleteItem(element)"
-						/>
-						<v-menu show-arrow placement="bottom-end">
-							<template #activator="{ toggle }">
-								<v-icon name="more_vert" clickable @click.stop="toggle" />
-							</template>
 
-							<v-list>
-								<v-list-item clickable :href="getAssetUrl(getFilename(element))">
-									<v-list-item-icon><v-icon name="launch" /></v-list-item-icon>
-									<v-list-item-content>{{ t('open_file_in_tab') }}</v-list-item-content>
-								</v-list-item>
-								<v-list-item
-									clickable
-									:download="getDownloadName(element)"
-									:href="getAssetUrl(getFilename(element), true)"
-								>
-									<v-list-item-icon><v-icon name="download" /></v-list-item-icon>
-									<v-list-item-content>{{ t('download_file') }}</v-list-item-content>
-								</v-list-item>
-							</v-list>
-						</v-menu>
-					</v-list-item>
+						<div v-if="!nonEditable" class="item-actions">
+							<VRemove
+								v-if="deleteAllowed || isLocalItem(element)"
+								:disabled
+								:item-type="element.$type"
+								:item-info="relationInfo"
+								:item-is-local="isLocalItem(element)"
+								:item-edits="getItemEdits(element)"
+								@action="deleteItem(element)"
+							/>
+
+							<VMenu show-arrow placement="bottom-end" :disabled>
+								<template #activator="{ toggle, active }">
+									<VIcon name="more_vert" clickable class="menu" :class="{ active }" :disabled @click.stop="toggle" />
+								</template>
+
+								<VList>
+									<VListItem clickable :href="getAssetUrl(getFilename(element))">
+										<VListItemIcon><VIcon name="launch" /></VListItemIcon>
+										<VListItemContent>{{ $t('open_file_in_tab') }}</VListItemContent>
+									</VListItem>
+									<VListItem
+										clickable
+										:download="getDownloadName(element)"
+										:href="getAssetUrl(getFilename(element), { isDownload: true })"
+									>
+										<VListItemIcon><VIcon name="download" /></VListItemIcon>
+										<VListItemContent>{{ $t('download_file') }}</VListItemContent>
+									</VListItem>
+								</VList>
+							</VMenu>
+						</div>
+					</VListItem>
 				</template>
-			</draggable>
-		</v-list>
+			</Draggable>
+		</template>
 
-		<div class="actions">
-			<v-button v-if="enableCreate && createAllowed" :disabled="disabled" @click="showUpload = true">
-				{{ t('upload_file') }}
-			</v-button>
-			<v-button v-if="enableSelect && selectAllowed" :disabled="disabled" @click="selectModalActive = true">
-				{{ t('add_existing') }}
-			</v-button>
-			<v-pagination v-if="pageCount > 1" v-model="page" :length="pageCount" :total-visible="5" />
+		<div v-if="!nonEditable || pageCount > 1" class="actions">
+			<template v-if="!nonEditable">
+				<VButton v-if="enableCreate && createAllowed" :disabled="disabled" @click="showUpload = true">
+					{{ $t('upload_file') }}
+				</VButton>
+
+				<VButton v-if="enableSelect && selectAllowed" :disabled="disabled" @click="selectModalActive = true">
+					{{ $t('add_existing') }}
+				</VButton>
+			</template>
+
+			<div class="spacer" />
+
+			<VPagination v-if="pageCount > 1" v-model="page" :length="pageCount" :total-visible="2" show-first-last />
 		</div>
 
-		<drawer-item
+		<DrawerItem
 			v-model:active="editModalActive"
-			:disabled="disabled || (!updateAllowed && currentlyEditing !== null)"
+			:disabled="disabled"
+			:non-editable="nonEditable"
 			:collection="relationInfo.junctionCollection.collection"
 			:primary-key="currentlyEditing || '+'"
 			:related-primary-key="relatedPrimaryKey || '+'"
@@ -378,85 +439,65 @@ const allowDrag = computed(
 			@input="stageEdits"
 		>
 			<template #actions>
-				<v-button
+				<PrivateViewHeaderBarActionButton
 					v-if="currentlyEditing !== '+' && relationInfo.relatedCollection.collection === 'directus_files'"
-					secondary
-					rounded
-					icon
+					icon="download"
+					variant="ghost"
 					:download="downloadName"
 					:href="downloadUrl"
-				>
-					<v-icon name="download" />
-				</v-button>
+				/>
 			</template>
-		</drawer-item>
+		</DrawerItem>
 
-		<drawer-files
+		<DrawerFiles
 			v-if="!disabled"
 			v-model:active="selectModalActive"
 			:collection="relationInfo.relatedCollection.collection"
 			:folder="folder"
+			:field="field"
 			:filter="customFilter"
 			multiple
 			@input="onSelect"
 		/>
 
-		<v-dialog v-if="!disabled" v-model="showUpload">
-			<v-card>
-				<v-card-title>{{ t('upload_file') }}</v-card-title>
-				<v-card-text>
-					<v-upload multiple from-url :folder="folder" @input="onUpload" />
-				</v-card-text>
-				<v-card-actions>
-					<v-button @click="showUpload = false">{{ t('done') }}</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+		<VDialog v-if="!disabled" v-model="showUpload">
+			<VCard>
+				<VCardTitle>{{ $t('upload_file') }}</VCardTitle>
+				<VCardText>
+					<VUpload multiple from-url :folder="folder" :accept="combinedAcceptString" @input="onUpload" />
+				</VCardText>
+				<VCardActions>
+					<VButton @click="showUpload = false">{{ $t('done') }}</VButton>
+				</VCardActions>
+			</VCard>
+		</VDialog>
 	</div>
 </template>
 
 <style lang="scss" scoped>
-.v-list.files {
-	--v-list-padding: 0 0 4px;
+@use '@/styles/mixins';
 
-	.v-list-item.deleted {
-		--v-list-item-border-color: var(--danger-25);
-		--v-list-item-border-color-hover: var(--danger-50);
-		--v-list-item-background-color: var(--danger-10);
-		--v-list-item-background-color-hover: var(--danger-25);
+.v-list {
+	@include mixins.list-interface($deleteable: true);
+}
 
-		::v-deep(.v-icon) {
-			color: var(--danger-75);
-		}
-	}
+.v-list-item.disabled:not(.non-editable) {
+	--v-list-item-background-color: var(--theme--form--field--input--background-subdued);
+}
+
+.item-actions {
+	@include mixins.list-interface-item-actions;
 }
 
 .actions {
-	margin-top: 8px;
-	display: flex;
-	gap: 8px;
-
-	.v-pagination {
-		margin-left: auto;
-
-		::v-deep(.v-button) {
-			display: inline-flex;
-		}
-	}
+	@include mixins.list-interface-actions($pagination: true);
 }
 
-.deselect {
-	--v-icon-color: var(--theme--form--field--input--foreground-subdued);
-	margin-right: 4px;
-	transition: color var(--fast) var(--transition);
-	cursor: pointer;
+.menu {
+	--v-icon-color-hover: var(--theme--form--field--input--foreground);
 
-	&:hover {
-		--v-icon-color: var(--theme--danger);
+	&.active {
+		--v-icon-color: var(--theme--form--field--input--foreground);
 	}
-}
-
-.render-template {
-	height: 100%;
 }
 </style>

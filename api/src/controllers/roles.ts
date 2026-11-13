@@ -1,4 +1,4 @@
-import { ErrorCode, isDirectusError } from '@directus/errors';
+import { ErrorCode, ForbiddenError, isDirectusError } from '@directus/errors';
 import type { PrimaryKey } from '@directus/types';
 import express from 'express';
 import { respond } from '../middleware/respond.js';
@@ -74,6 +74,36 @@ router.get('/', validateBatch('read'), readHandler, respond);
 router.search('/', validateBatch('read'), readHandler, respond);
 
 router.get(
+	'/me',
+	asyncHandler(async (req, res, next) => {
+		if (!req.accountability?.user && !req.accountability?.role) throw new ForbiddenError();
+
+		const service = new RolesService({
+			accountability: req.accountability,
+			schema: req.schema,
+		});
+
+		const query = { ...req.sanitizedQuery, limit: -1 };
+
+		try {
+			const roles = await service.readMany(req.accountability.roles, query);
+
+			res.locals['payload'] = { data: roles || null };
+		} catch (error: any) {
+			if (isDirectusError(error, ErrorCode.Forbidden)) {
+				res.locals['payload'] = { data: req.accountability.roles.map((id) => ({ id })) };
+				return next();
+			}
+
+			throw error;
+		}
+
+		return next();
+	}),
+	respond,
+);
+
+router.get(
 	'/:pk',
 	asyncHandler(async (req, res, next) => {
 		const service = new RolesService({
@@ -98,14 +128,14 @@ router.patch(
 			schema: req.schema,
 		});
 
-		let keys: PrimaryKey[] = [];
+		let keys: PrimaryKey[];
 
 		if (Array.isArray(req.body)) {
 			keys = await service.updateBatch(req.body);
 		} else if (req.body.keys) {
 			keys = await service.updateMany(req.body.keys, req.body.data);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			keys = await service.updateByQuery(sanitizedQuery, req.body.data);
 		}
 
@@ -165,7 +195,7 @@ router.delete(
 		} else if (req.body.keys) {
 			await service.deleteMany(req.body.keys);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			await service.deleteByQuery(sanitizedQuery);
 		}
 

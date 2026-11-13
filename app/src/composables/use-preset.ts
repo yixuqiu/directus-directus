@@ -1,10 +1,10 @@
+import type { User } from '@directus/types';
+import { Filter, Preset } from '@directus/types';
+import { assign, cloneDeep, debounce, isEqual } from 'lodash-es';
+import { computed, ComputedRef, ref, Ref, watch } from 'vue';
 import { usePresetsStore } from '@/stores/presets';
 import { useUserStore } from '@/stores/user';
 import { translate } from '@/utils/translate-literal';
-import type { User } from '@directus/types';
-import { Filter, Preset } from '@directus/types';
-import { assign, debounce, isEqual } from 'lodash';
-import { ComputedRef, Ref, computed, ref, watch } from 'vue';
 
 type UsablePreset = {
 	bookmarkExists: ComputedRef<boolean>;
@@ -43,9 +43,9 @@ export function usePreset(
 	});
 
 	const localPreset = ref<Partial<Preset>>({});
+	const bookmarkSaved = ref(true);
 	initLocalPreset();
 
-	const bookmarkSaved = ref(true);
 	const bookmarkIsMine = computed(() => localPreset.value.user === (userStore.currentUser as User).id);
 
 	/**
@@ -69,8 +69,8 @@ export function usePreset(
 		return updatedValues;
 	};
 
-	const autoSave = debounce(async () => {
-		savePreset();
+	const autoSave = debounce(async (preset?: Partial<Preset>) => {
+		savePreset(preset);
 	}, 450);
 
 	/**
@@ -82,13 +82,19 @@ export function usePreset(
 			const bookmarkInStore = presetsStore.getBookmark(Number(bookmark.value));
 			bookmarkSaved.value = isEqual(localPreset.value, bookmarkInStore);
 		} else {
-			autoSave();
+			const preset = cloneDeep(localPreset.value);
+			autoSave(preset);
 		}
 	}
 
 	function updatePreset(preset: Partial<Preset>, immediate?: boolean) {
 		localPreset.value = assign({}, localPreset.value, preset);
-		immediate ? savePreset() : handleChanges();
+
+		if (immediate) {
+			savePreset();
+		} else {
+			handleChanges();
+		}
 	}
 
 	watch([collection, bookmark], () => {
@@ -100,6 +106,8 @@ export function usePreset(
 		if (!bookmarkExists.value) return;
 		const newBookmark = presetsStore.getBookmark(Number(bookmark.value));
 		localPreset.value.bookmark = newBookmark?.bookmark;
+		localPreset.value.icon = newBookmark?.icon;
+		localPreset.value.color = newBookmark?.color;
 	});
 
 	const layoutOptions = computed<Record<string, any>>({
@@ -199,6 +207,7 @@ export function usePreset(
 		}
 
 		localPreset.value = preset;
+		bookmarkSaved.value = true;
 	}
 
 	/**

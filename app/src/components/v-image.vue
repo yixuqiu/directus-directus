@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, useAttrs, watch } from 'vue';
-import { omit } from 'lodash';
+import { omit } from 'lodash-es';
+import { computed, onMounted, onUnmounted, ref, useAttrs, watch } from 'vue';
 import { requestQueue } from '@/api';
 
 defineOptions({

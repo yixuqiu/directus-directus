@@ -1,9 +1,14 @@
-import type { Accountability, Query, SchemaOverview } from '@directus/types';
+import type { AbstractServiceOptions, Accountability, Permission, Query, SchemaOverview } from '@directus/types';
+import { mergeFilters } from '@directus/utils';
 import type { Knex } from 'knex';
+import { isArray } from 'lodash-es';
 import getDatabase from '../database/index.js';
-import { ForbiddenError } from '@directus/errors';
-import type { AbstractServiceOptions } from '../types/index.js';
-import { applyFilter, applySearch } from '../utils/apply-query.js';
+import applyQuery from '../database/run-ast/lib/apply-query/index.js';
+import { fetchPermissions } from '../permissions/lib/fetch-permissions.js';
+import { fetchPolicies } from '../permissions/lib/fetch-policies.js';
+import { getCases } from '../permissions/modules/process-ast/lib/get-cases.js';
+import { validateAccess } from '../permissions/modules/validate-access/validate-access.js';
+import { isAdmin } from '../utils/is-admin.js';
 
 export class MetaService {
 	knex: Knex;
@@ -36,65 +41,58 @@ export class MetaService {
 	}
 
 	async totalCount(collection: string): Promise<number> {
-		const dbQuery = this.knex(collection).count('*', { as: 'count' }).first();
-
-		if (this.accountability?.admin !== true) {
-			const permissionsRecord = this.accountability?.permissions?.find((permission) => {
-				return permission.action === 'read' && permission.collection === collection;
-			});
-
-			if (!permissionsRecord) throw new ForbiddenError();
-
-			const permissions = permissionsRecord.permissions ?? {};
-
-			applyFilter(this.knex, this.schema, dbQuery, permissions, collection, {});
-		}
-
-		const result = await dbQuery;
-
-		return Number(result?.count ?? 0);
+		return this.filterCount(collection, {});
 	}
 
 	async filterCount(collection: string, query: Query): Promise<number> {
-		const dbQuery = this.knex(collection);
+		let permissions: Permission[] = [];
 
-		let filter = query.filter || {};
-		let hasJoins = false;
+		let filter = query.filter ?? null;
 
-		if (this.accountability?.admin !== true) {
-			const permissionsRecord = this.accountability?.permissions?.find((permission) => {
-				return permission.action === 'read' && permission.collection === collection;
-			});
+		if (!isAdmin(this.accountability)) {
+			const context = { knex: this.knex, schema: this.schema };
 
-			if (!permissionsRecord) throw new ForbiddenError();
+			await validateAccess(
+				{
+					accountability: this.accountability,
+					action: 'read',
+					collection,
+				},
+				context,
+			);
 
-			const permissions = permissionsRecord.permissions ?? {};
+			const policies = await fetchPolicies(this.accountability, context);
 
-			if (Object.keys(filter).length > 0) {
-				filter = { _and: [permissions, filter] };
-			} else {
-				filter = permissions;
+			permissions = await fetchPermissions({ action: 'read', accountability: this.accountability, policies }, context);
+
+			if (collection === 'directus_folders') {
+				filter = mergeFilters(filter, { type: { _neq: 'flows' } });
 			}
 		}
 
-		if (Object.keys(filter).length > 0) {
-			({ hasJoins } = applyFilter(this.knex, this.schema, dbQuery, filter, collection, {}));
-		}
+		const { cases } = getCases(collection, permissions, []);
 
-		if (query.search) {
-			applySearch(this.knex, this.schema, dbQuery, query.search, collection);
-		}
+		const { query: dbQuery, hasJoins } = applyQuery(
+			this.knex,
+			collection,
+			this.knex(collection),
+			{
+				filter,
+				search: query.search ?? null,
+			},
+			this.schema,
+			cases,
+			permissions,
+		);
 
 		if (hasJoins) {
-			const primaryKeyName = this.schema.collections[collection]!.primary;
-
-			dbQuery.countDistinct({ count: [`${collection}.${primaryKeyName}`] });
+			dbQuery.countDistinct({ count: [`${collection}.${this.schema.collections[collection]!.primary}`] });
 		} else {
 			dbQuery.count('*', { as: 'count' });
 		}
 
 		const records = await dbQuery;
 
-		return Number(records[0]!['count']);
+		return Number((isArray(records) ? records[0]?.['count'] : records?.['count']) ?? 0);
 	}
 }

@@ -1,7 +1,7 @@
 import type { ActionHandler, EventContext, FilterHandler, InitHandler } from '@directus/types';
 import ee2 from 'eventemitter2';
 import getDatabase from './database/index.js';
-import { useLogger } from './logger.js';
+import { useLogger } from './logger/index.js';
 
 export class Emitter {
 	private filterEmitter;
@@ -92,6 +92,36 @@ export class Emitter {
 
 	public onInit(event: string, handler: InitHandler): void {
 		this.initEmitter.on(event, handler);
+	}
+
+	/**
+	 * Count the filter handlers subscribed to an event.
+	 *
+	 * @param event Event name. Required as the emitter throws without one due to `wildcard: true`
+	 * @returns Number of registered filters matching the given event
+	 */
+	public countFilterListeners(event: string): number {
+		return this.filterEmitter.listenerCount(event);
+	}
+
+	/**
+	 * Count the action handlers subscribed to an event.
+	 *
+	 * @param event Event name. Required as the emitter throws without one due to `wildcard: true`
+	 * @returns Number of registered action handlers matching the given event
+	 */
+	public countActionListeners(event: string): number {
+		return this.actionEmitter.listenerCount(event);
+	}
+
+	/**
+	 * Count the init handlers subscribed to an event.
+	 *
+	 * @param event Event name. Required as the emitter throws without one due to `wildcard: true`
+	 * @returns Number of registered init handlers matching the given event
+	 */
+	public countInitListeners(event: string): number {
+		return this.initEmitter.listenerCount(event);
 	}
 
 	public offFilter<T = unknown>(event: string, handler: FilterHandler<T>): void {

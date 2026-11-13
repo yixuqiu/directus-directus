@@ -1,18 +1,17 @@
+import path from 'path';
 import { useEnv } from '@directus/env';
 import { ErrorCode, InvalidPayloadError, isDirectusError } from '@directus/errors';
 import formatTitle from '@directus/format-title';
 import type { BusboyFileStream, PrimaryKey } from '@directus/types';
-import { toArray } from '@directus/utils';
 import Busboy from 'busboy';
-import bytes from 'bytes';
 import type { RequestHandler } from 'express';
 import express from 'express';
 import Joi from 'joi';
-import { minimatch } from 'minimatch';
-import path from 'path';
+import checkIsLocked from '../middleware/is-locked.js';
 import { respond } from '../middleware/respond.js';
 import useCollection from '../middleware/use-collection.js';
 import { validateBatch } from '../middleware/validate-batch.js';
+import { isMimeTypeAllowed } from '../services/files/lib/is-mime-type-allowed.js';
 import { FilesService } from '../services/files.js';
 import { MetaService } from '../services/meta.js';
 import asyncHandler from '../utils/async-handler.js';
@@ -22,6 +21,7 @@ const router = express.Router();
 const env = useEnv();
 
 router.use(useCollection('directus_files'));
+router.use(checkIsLocked('files'));
 
 export const multipartHandler: RequestHandler = (req, res, next) => {
 	if (req.is('multipart/form-data') === false) return next();
@@ -41,7 +41,7 @@ export const multipartHandler: RequestHandler = (req, res, next) => {
 		headers,
 		defParamCharset: 'utf8',
 		limits: {
-			fileSize: env['FILES_MAX_UPLOAD_SIZE'] ? bytes(env['FILES_MAX_UPLOAD_SIZE'] as string) : undefined,
+			fileSize: env.FILES_MAX_UPLOAD_SIZE,
 		},
 	});
 
@@ -56,7 +56,6 @@ export const multipartHandler: RequestHandler = (req, res, next) => {
 	 * the row in directus_files async during the upload of the actual file.
 	 */
 
-	let disk: string = toArray(env['STORAGE_LOCATIONS'] as string)[0]!;
 	let payload: any = {};
 	let fileCount = 0;
 
@@ -67,10 +66,6 @@ export const multipartHandler: RequestHandler = (req, res, next) => {
 		if (typeof fieldValue === 'string' && fieldValue.trim() === 'false') fieldValue = false;
 		if (typeof fieldValue === 'string' && fieldValue.trim() === 'true') fieldValue = true;
 
-		if (fieldname === 'storage') {
-			disk = val;
-		}
-
 		payload[fieldname] = fieldValue;
 	});
 
@@ -79,10 +74,7 @@ export const multipartHandler: RequestHandler = (req, res, next) => {
 			return busboy.emit('error', new InvalidPayloadError({ reason: `File is missing filename` }));
 		}
 
-		const allowedPatterns = toArray(env['FILES_MIME_TYPE_ALLOW_LIST'] as string | string[]);
-		const mimeTypeAllowed = allowedPatterns.some((pattern) => minimatch(mimeType, pattern));
-
-		if (mimeTypeAllowed === false) {
+		if (isMimeTypeAllowed(mimeType, env.FILES_MIME_TYPE_ALLOW_LIST) === false) {
 			return busboy.emit('error', new InvalidPayloadError({ reason: `File is of invalid content type` }));
 		}
 
@@ -94,12 +86,11 @@ export const multipartHandler: RequestHandler = (req, res, next) => {
 			}
 		}
 
-		payload.filename_download = filename;
+		payload.filename_download ||= filename;
 
 		const payloadWithRequiredFields = {
 			...payload,
 			type: mimeType,
-			storage: payload.storage || disk,
 		};
 
 		// Clear the payload for the next to-be-uploaded file
@@ -147,7 +138,7 @@ router.post(
 			schema: req.schema,
 		});
 
-		let keys: PrimaryKey | PrimaryKey[] = [];
+		let keys: PrimaryKey | PrimaryKey[];
 
 		if (req.is('multipart/form-data')) {
 			keys = res.locals['savedFiles'];
@@ -186,6 +177,7 @@ router.post(
 const importSchema = Joi.object({
 	url: Joi.string().required(),
 	data: Joi.object(),
+	options: Joi.object({ filterMimeType: Joi.array().items(Joi.string()) }),
 });
 
 router.post(
@@ -202,7 +194,7 @@ router.post(
 			schema: req.schema,
 		});
 
-		const primaryKey = await service.importOne(req.body.url, req.body.data);
+		const primaryKey = await service.importOne(req.body.url, req.body.data, req.body.options);
 
 		try {
 			const record = await service.readOne(primaryKey, req.sanitizedQuery);
@@ -274,14 +266,14 @@ router.patch(
 			schema: req.schema,
 		});
 
-		let keys: PrimaryKey[] = [];
+		let keys: PrimaryKey[];
 
 		if (Array.isArray(req.body)) {
 			keys = await service.updateBatch(req.body);
 		} else if (req.body.keys) {
 			keys = await service.updateMany(req.body.keys, req.body.data);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			keys = await service.updateByQuery(sanitizedQuery, req.body.data);
 		}
 
@@ -342,7 +334,7 @@ router.delete(
 		} else if (req.body.keys) {
 			await service.deleteMany(req.body.keys);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			await service.deleteByQuery(sanitizedQuery);
 		}
 

@@ -1,3 +1,5 @@
+import type { OpenAICompatibleHeader, OpenAICompatibleModel, OpenRouterModel } from '@directus/ai';
+
 export type SettingsModuleBarModule = {
 	type: 'module';
 	id: string;
@@ -39,13 +41,20 @@ export type Settings = {
 	report_error_url: string | null;
 	report_bug_url: string | null;
 	report_feature_url: string | null;
-	default_language: string | null;
-	project_color: string | null;
+	default_language: string;
+	default_save_action: 'save-and-quit' | 'save-and-stay' | 'save-and-create-new';
+	project_color: string;
 	project_logo: string | null;
 	public_foreground: string | null;
 	public_background: { id: string; type: string } | null;
 	public_favicon: string | null;
 	public_note: string | null;
+	public_registration: boolean;
+	public_registration_verify_email: boolean;
+	public_registration_role: string | null;
+	public_registration_email_filter: Record<string, any> | null;
+	preview_base_url: string | null;
+	visual_editor_urls: Array<{ url: string }> | null;
 	auth_login_attempts: number;
 	auth_password_policy: string | null;
 	storage_asset_transform: string;
@@ -53,12 +62,63 @@ export type Settings = {
 	custom_aspect_ratios: CustomAspectRatio[] | null;
 	custom_css: string | null;
 	storage_default_folder: string | null;
+	default_exports_folder: string | null;
 	basemaps: any[] | null;
 	mapbox_key: string | null;
-	module_bar: (SettingsModuleBarLink | SettingsModuleBarModule)[];
+	module_bar: (SettingsModuleBarLink | SettingsModuleBarModule)[] | null;
 	default_appearance: 'auto' | 'light' | 'dark';
 	default_theme_light: string | null;
 	default_theme_dark: string | null;
 	theme_light_overrides: Record<string, unknown> | null;
 	theme_dark_overrides: Record<string, unknown> | null;
+	project_id: string | null;
+	ai_openai_api_key: '**********' | null;
+	ai_anthropic_api_key: '**********' | null;
+	ai_google_api_key: '**********' | null;
+	ai_openrouter_api_key: '**********' | null;
+	ai_openai_compatible_api_key: '**********' | null;
+	ai_openai_compatible_base_url: string | null;
+	ai_openai_compatible_name: string | null;
+	ai_openai_compatible_models: OpenAICompatibleModel[] | null;
+	ai_openai_compatible_headers: OpenAICompatibleHeader[] | null;
+	ai_openai_allowed_models: string[] | null;
+	ai_anthropic_allowed_models: string[] | null;
+	ai_google_allowed_models: string[] | null;
+	ai_openrouter_models: OpenRouterModel[] | null;
+	ai_system_prompt: string | null;
+	ai_translation_default_model: string | null;
+	ai_translation_glossary: Array<{ term: string; translation_note?: string }> | null;
+	ai_translation_style_guide: string | null;
+	mcp_enabled: boolean;
+	mcp_oauth_enabled: boolean;
+	mcp_oauth_dcr_enabled: boolean;
+	mcp_oauth_cimd_enabled: boolean;
+	mcp_allow_deletes: boolean;
+	mcp_prompts_collection: string | null;
+	mcp_system_prompt_enabled: boolean;
+	mcp_system_prompt: string | null;
+	collaborative_editing_enabled: boolean;
+	license_key: string | null;
+	license_token: string | null;
+	project_status: string | null;
+} & OwnerInformation;
+
+export type OwnerInformation = {
+	project_owner: string | null;
+	product_updates: boolean | null;
+	project_usage: 'personal' | 'commercial' | 'community' | null;
+	org_name: string | null;
+};
+
+export type SetupForm = {
+	admin: {
+		email: string | null;
+		password: string | null;
+		first_name: string | null;
+		last_name: string | null;
+	};
+	password_confirm: string | null;
+	license: boolean;
+	license_key: string | null;
+	owner: OwnerInformation;
 };

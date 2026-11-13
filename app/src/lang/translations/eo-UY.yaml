@@ -1,4 +1,28 @@
 ---
+## Be aware:
+#Due to the way this is imported, JavaScript reserved words, including "delete", "private",
+#"void", etc are stripped out. See
+#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/pluginutils/src/makeLegalIdentifier.ts#L4
+#and
+#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/yaml/src/index.js#L45
+#Illegal words:
+#'break', 'case', 'class', 'catch', 'const', 'continue', 'debugger', 'default', 'delete', 'do',
+#'else', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof',
+#'let', 'new', 'return', 'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void',
+#'while', 'with', 'yield', 'enum', 'await', 'implements', 'package', 'protected', 'static',
+#'interface', 'private', 'public', 'arguments', 'Infinity', 'NaN', 'undefined', 'null', 'true',
+#'false', 'eval', 'uneval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt', 'decodeURI',
+#'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'escape', 'unescape', 'Object',
+#'Function', 'Boolean', 'Symbol', 'Error', 'EvalError', 'InternalError', 'RangeError',
+#'ReferenceError', 'SyntaxError', 'TypeError', 'URIError', 'Number', 'Math', 'Date', 'String',
+#'RegExp', 'Array', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array',
+#'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'Map', 'Set', 'WeakMap', 'WeakSet',
+#'SIMD', 'ArrayBuffer', 'DataView', 'JSON', 'Promise', 'Generator', 'GeneratorFunction', 'Reflect',
+#'Proxy', 'Intl'
+about: Pri
+continue: Daŭrigi
+first_name: Pesona nomo
+last_name: Familia nomo
 identifier: Identigilo
 avatar: Profilbildo
 application: Aplikaĵo
@@ -10,6 +34,7 @@ archived: Arĥivita
 modules: Moduloj
 module_bar: Modula breto
 logs: Protokoloj
+unknown: Nekonata
 edit_field: Redakti la kampon
 conditions: Kondiĉoj
 location: Loko
@@ -30,10 +55,24 @@ modifier: Ŝanĝilo
 extension_interface: Interfaco
 extension_display: Montri
 extension_layout: Aranĝo
+extension_module: Modulo
 extension_panel: Panelo
 extension_hook: Hoko
+extension_operation: Operacio
+extension_interfaces: Interfacoj
 extension_modules: Moduloj
+extension_panels: Paneloj
+extension_hooks: Hokoj
+extension_operations: Operacioj
+extension_missing: Mankanta
+n_files: '{n} dosieroj'
+repository: Deponejo
+website: Retejo
+github: GitHub
+n_downloads: '{n} elŝutoj'
+downloads: Elŝutoj
 enable: Ŝalti
+disable: Malŝalti
 custom: Propra
 hook: Hoko
 enter_password_to_enable_tfa: Entajpu vian pasvorton por ŝalti dufaktoran kontroladon
@@ -57,7 +96,6 @@ create_role: Krei rolon
 create_user: Krei uzanton
 message: Mesaĝo
 delete_panel: Forigi la panelon
-create_webhook: Krei rethokon
 invite_users: Inviti uzantojn
 invite: Inviti
 email_already_invited: La retpoŝtadreso "{email}" jam estas invitita
@@ -72,6 +110,8 @@ rename_folder: Alinomi la dosierujon
 delete_folder: Forigi la dosierujon
 prefix: Prefikso
 suffix: Sufikso
+version: Versio
+create_version: Krei version
 delete_bookmark: Forigi la legosignon
 delete_bookmark_copy: >-
   Ĉu vi certas, ke vi volas forigi la legosignon "{bookmark}"? La ago ne estas malfarebla.
@@ -80,6 +120,7 @@ logoutReason:
   SIGN_OUT: Elsalutinta
   SESSION_EXPIRED: Seanco eksvalidiĝinta
 public_label: Publika
+no_description: Neniu priskribo...
 not_allowed: Ne permesita
 archive: Arĥivi
 archive_confirm: Ĉu vi certas, ke vi volas arĥivi la eron?
@@ -143,7 +184,6 @@ create_field: Krei kampon
 creating_new_field: 'Nova kampo ({collection})'
 field_in_collection: '{field} ({collection})'
 hidden_field: Kaŝita kampo
-disabled_editing_value: Malŝalti redaktadon de la valoro
 key: Ŝlosilo
 alias: Kromnomo
 boolean: Bulea valoro
@@ -156,6 +196,8 @@ text: Teksto
 time: Tempo
 timestamp: Tempindiko
 uuid: UUID
+theme_light: Hela reĝimo
+theme_dark: Malhela reĝimo
 not_available_for_type: Ne disponebla por la tipo
 create_translations: Krei tradukojn
 auto_refresh: Aŭtomate aktualigi
@@ -213,6 +255,7 @@ notifications: Sciigoj
 page_not_found: Paĝo ne trovita
 display: Montri
 title: Titolo
+subtitle: Subtitolo
 revision_delta_created: Kreita
 revision_delta_created_externally: Ekstere kreita
 revision_delta_deleted: Forigita
@@ -228,6 +271,8 @@ related_collection: Rilata kolekto
 related_collections: Rilataj kolektoj
 translations_collection: Kolekto de tradukoj
 languages_collection: Kolekto de lingvoj
+translations_preview_collections: Kolektoj
+translations_preview_fields: Kampoj
 import_data_input_placeholder: CSV aŭ JSON...
 import_data_button: Komenci importi
 import_data_success: Datumoj sukcese importitaj de {filename}
@@ -253,6 +298,7 @@ functions:
   hour: Horo
   minute: Minuto
   second: Sekundo
+  json: JSON
 date-fns_date: PPP
 date-fns_time: 'H:mm:ss'
 date-fns_time_no_seconds: 'H:mm'
@@ -333,7 +379,6 @@ file_count: 'Neniu dosiero | 1 dosiero | {count} dosieroj'
 no_files_copy: Ne estas dosiero ĉi tie.
 user_count: 'Neniu uzanto | 1 uzanto | {count} uzantoj'
 no_users_copy: Ankoraŭ ne estas uzanto en la rolo.
-webhooks_count: 'Neniu rethoko | 1 rethoko | {count} rethokoj'
 no_notifications: Neniu sciigo
 all_items: Ĉiuj eroj
 any: Ajna
@@ -353,7 +398,6 @@ action: Ago
 ip_address: IP-adreso
 user_agent: Aplikaĵo de la uzanto
 origin: Origino
-webhooks: Rethokoj
 min_value: Minimuma valoro
 max_value: Maksimuma valoro
 automatic: Aŭtomata
@@ -424,10 +468,6 @@ make_collection_hidden: Igi la kolekton kaŝita
 make_folder_visible: Igi la dosierujon videbla
 make_folder_hidden: Igi la dosierujon kaŝita
 goto_collection_content: Vidi la enhavon
-start_end_of_count_items: '{start}-{end} de {count} eroj'
-start_end_of_count_filtered_items: '{start}-{end} de {count} filtritaj eroj'
-one_item: '1 ero'
-one_filtered_item: '1 filtrita ero'
 visible_collections: Videblaj kolektoj
 hidden_collections: Kaŝitaj kolektoj
 show_hidden_collections: Montri kaŝitajn kolektojn
@@ -470,6 +510,7 @@ operators:
   nbetween: Ne estas inter
   empty: Estas malplena
   nempty: Ne estas malplena
+  json: JSON
 loading: Ŝargado...
 item: Ero
 items: Eroj
@@ -543,8 +584,6 @@ interface_group_relational: Rilata
 interface_group_groups: Grupoj
 interface_group_other: Alia
 unlimited: Senlima
-new_tab: Nova langeto
-current_tab: Nuna langeto
 save_image: Konservi la bildon
 wysiwyg_options:
   forecolor: Malfona koloro
@@ -554,10 +593,13 @@ wysiwyg_options:
   underline: Substrekita
   strikethrough: Trastrekita
   codeblock: Kodo
+  insertdatetime_date: Dato
+  insertdatetime_time: Tempo
   link: Aldoni/redakti ligilon
   unlink: Forigi la ligilon
   copy: Kopii
   cut: Eltondi
+  default: Defaŭlta
   paste: Alglui
   fontselect: Elekti tiparon
   undo: Malfari
@@ -576,8 +618,15 @@ adding_user: Aldoni uzanton
 unknown_user: Nekonata uzanto
 settings_data_model: Datummodelo
 settings_project: Agordoj
-settings_webhooks: Rethokoj
-settings_flows: Fluoj
+licensing:
+  unlimited: Senlima
+  resolve_continue: Daŭrigi
+  resolve_section_flows: Fluoj
+  resolve_sso_admin_password: Pasvorto
+  entitlements:
+    collections: Kolektoj
+    flows: Fluoj
+settings_appearance: Aspekto
 settings_presets: Legosignoj
 settings_translations: Tradukoj
 actions: Agoj
@@ -591,8 +640,6 @@ discard_all_changes: Forĵeti ĉiujn ŝanĝojn
 discard_changes_copy: Ĉu vi certas, ke vi volas forĵeti ĉiujn viajn ŝanĝojn?
 show_x_axis: Montri la X-akson
 show_y_axis: Montri la Y-akson
-page_help_collections_overview: '**Superrigaro de kolektoj** — Listo de ĉiuj kolektoj, kiujn vi povas atingi.'
-page_help_insights_dashboard: '**Stirpanelo** — Laborspaco por administri unu aŭ pliajn panelojn'
 add_new: Aldoni novan
 create_new: Krei novan
 all: Ĉiuj
@@ -600,12 +647,15 @@ none: Neniu
 batch_delete_confirm: >-
   Neniu ero estas elektita | Ĉu vi certas, ke vi volas forigi la eron? La ago ne estas malfarebla. | Ĉu vi certas, ke vi volas forigi {count} erojn? La ago ne estas malfarebla.
 cancel: Nuligi
+uninstall: Malinstali
+installed: Instalita
+reinstall: Reinstali
+source_local: Loka
+source_module: Node-modulo
 collection: Kolekto
 collections: Kolektoj
 content: Enhavo
 system_fields_locked: Sistemaj valoroj estas ŝlositaj kaj ne povas esti redaktitaj
-directus_collection:
-  directus_flows: Aŭtomatigaj fluoj
 fields:
   directus_activity:
     item: Ĉefa ŝlosilo de la ero
@@ -622,6 +672,7 @@ fields:
     collection: Kolekto
     icon: Emblemo
     note: Noto
+    status: Stato
     color: Koloro
     hidden: Kaŝita
     archive_value: Arĥivi la valoron
@@ -669,6 +720,7 @@ fields:
     provider: Provizanto
     external_identifier: Ekstera identigilo
     last_page: Lasta paĝo
+    appearance: Aspekto
   directus_settings:
     jpg: JPEG
     png: PNG
@@ -708,18 +760,8 @@ fields:
     name: Nomo de la rolo
     icon: Emblemo de la rolo
     description: Priskribo
-    ip_access: IP-adreso
-    enforce_tfa: Postuli dufaktoran kontroladon
-  directus_webhooks:
-    name: Nomo
-    method: Metodo
-    status: Stato
-    data: Datumoj
-    value: Valoro
-    data_label: Sendi eventodatumojn
-    triggers: Ekagiloj
-    actions: Agoj
-    collections: Kolektoj
+  directus_policies:
+    description: Priskribo
 field_options:
   directus_settings:
     project_name_placeholder: Mia projekto...
@@ -771,16 +813,6 @@ field_options:
     status_dropdown_invited: Invitita
     status_dropdown_active: Aktiva
     status_dropdown_archived: Arĥivita
-  directus_webhooks:
-    status_options_active: Aktiva
-    status_options_inactive: Neaktiva
-    data_label: Sendi eventodatumojn
-    triggers_divider: Ekagiloj
-    actions_create: Krei
-    actions_delete: Forigi
-    actions_login: Ensaluti
-    headers:
-      value: Valoro
 no_fields_in_collection: 'Ankoraŭ ne estas kampo en "{collection}"'
 no_value: Neniu valoro
 do_nothing: Fari nenion
@@ -791,6 +823,24 @@ live_preview:
 shares: Konigoj
 unlimited_usage: Senlima uzado
 new_share: Nova konigo
+ai:
+  unknown: Nekonata
+  items: Eroj
+  content: Enhavo
+  settings: Agordoj
+  tool_approval:
+    disabled: Malŝaltita
+  ask_user_next: Sekva
+ai_tools:
+  items: Eroj
+  files: Dosieroj
+  flows: Fluoj
+  operations: Operacioj
+  schema: Skemo
+  collections: Kolektoj
+  fields: Kampoj
+mcp_prompts_collection_schema:
+  messages_role_user: Uzanto
 expired: Eksvalidiĝinta
 share: Konigi
 share_item: Konigi la eron
@@ -802,7 +852,6 @@ referential_action_set_null: Igi la kampon {field} NULL
 choose_action: Elekti agon
 continue_label: Daŭrigi
 editing_role: 'Rolo {role}'
-creating_webhook: Krei rethokon
 default_label: Defaŭlta
 delete_label: Forigi
 delete_field_are_you_sure: >-
@@ -860,7 +909,6 @@ translation_placeholder: Entajpu tradukon...
 value: Valoro
 view_project: Vidi la projekton
 report_error: Raporti eraron
-start: Komenci
 table: Tabelo
 list: Listo
 search_filter: Serĉi kaj filtri
@@ -885,7 +933,7 @@ interfaces:
     start: Komenci
     accordion_mode: Akordiona reĝimo
   presentation-links:
-    links: Ligiloj
+    presentation-links: Butonoj
     style: Stilo
     primary: Ĉefa
     link: Ligiloj
@@ -940,6 +988,7 @@ interfaces:
     many-to-one: Pluraj-al-unu-rilato
   input-rich-text-md:
     edit: Redakti
+    default_view: Defaŭlta vido
   map:
     map: Mapo
     zoom: Zomi
@@ -1015,9 +1064,13 @@ interfaces:
     system-token: Ĵetono
     generate: Generi ĵetonon
     regenerate: Regeneri ĵetonon
+    regenerate_confirm_title: Regeneri ĵetonon
     remove_token: Forigi la ĵetonon
+    remove_confirm_title: Forigi la ĵetonon
   system-raw-editor:
     system-raw-editor: Kruda redaktilo
+  header:
+    links: Ligiloj
 displays:
   translations:
     translations: Tradukoj
@@ -1150,6 +1203,7 @@ broad: Larĝa
 show_labels: Montri etikedojn
 right: Dekstra
 left: Maldekstra
+start: Komenci
 panels:
   metric:
     field: Kampo
@@ -1189,7 +1243,6 @@ triggers:
     cron: Intervalo
   manual:
     name: Mana
-operation_variables_note: Vi povas atingi datumojn de la fluo per variabloj kiel **{'{'}{'{'}$last{'}'}{'}'}**, **{'{'}{'{'}$trigger{'}'}{'}'}** kaj **{'{'}{'{'}$accountability{'}'}{'}'}**, aŭ referenci antaŭajn operaciojn per **{'{'}{'{'}operation_key{'}'}{'}'}**.'
 operations:
   condition:
     name: Kondiĉo
@@ -1216,7 +1269,6 @@ operations:
   mail:
     name: Sendi retpoŝtmesaĝon
     to: Al
-    to_placeholder: Aldoni retpoŝtadresojn kaj premi Enter...
     body: Enhavo
     template: Ŝablono
     data: Datumoj
@@ -1254,3 +1306,5 @@ fonts:
   black: Nigra
   italic: Kursiva
   auto: Aŭtomata
+license_grace_key_modal:
+  optional: Nedeviga

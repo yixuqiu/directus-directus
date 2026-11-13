@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n';
-import DrawerItem from '@/views/private/components/drawer-item.vue';
-import { RelationO2M } from '@/composables/use-relation-o2m';
 import { ref } from 'vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VRemove from '@/components/v-remove.vue';
+import { RelationO2M } from '@/composables/use-relation-o2m';
+import DrawerItem from '@/views/private/components/drawer-item.vue';
+import RenderTemplate from '@/views/private/components/render-template.vue';
 
 const props = withDefaults(
 	defineProps<{
@@ -12,38 +14,55 @@ const props = withDefaults(
 		edits: Record<string, any>;
 		relationInfo: RelationO2M;
 		disabled?: boolean;
+		nonEditable?: boolean;
 		open?: boolean;
 		deleted: boolean;
-		deleteIcon: string;
+		isLocalItem: boolean;
 	}>(),
 	{
 		disabled: false,
+		nonEditable: false,
 		open: false,
 	},
 );
 
-const { t } = useI18n();
 const emit = defineEmits(['update:open', 'deselect', 'input']);
 const editActive = ref(false);
 </script>
 
 <template>
-	<div class="preview" :class="{ open, deleted }">
-		<v-icon
+	<div class="preview" :class="{ open, deleted, disabled }" @click="nonEditable ? (editActive = true) : undefined">
+		<VIcon
 			v-if="relationInfo.relatedPrimaryKeyField.field in item"
 			:name="props.open ? 'expand_more' : 'chevron_right'"
+			:disabled="disabled && !nonEditable"
+			:class="{ disabled: disabled && !nonEditable }"
+			class="chevron"
 			clickable
-			@click="emit('update:open', !props.open)"
+			@click.stop="emit('update:open', !props.open)"
 		/>
-		<render-template :collection="collection" :template="template" :item="item" />
+
+		<RenderTemplate :collection="collection" :template="template" :item="item" />
+
 		<div class="spacer" />
-		<div v-if="!disabled" class="actions">
-			<v-icon v-tooltip="t('edit')" name="launch" clickable @click="editActive = true" />
-			<v-icon v-tooltip="t('deselect')" :name="deleteIcon" class="deselect" clickable @click="$emit('deselect')" />
+
+		<div v-if="!nonEditable" class="item-actions">
+			<VIcon v-tooltip="!disabled && $t('edit_item')" name="edit" clickable :disabled @click="editActive = true" />
+
+			<VRemove
+				:disabled
+				:item-type="item.$type"
+				:item-info="relationInfo"
+				:item-is-local="isLocalItem"
+				:item-edits="edits"
+				@action="$emit('deselect')"
+			/>
 		</div>
 
-		<drawer-item
+		<DrawerItem
 			v-model:active="editActive"
+			:disabled
+			:non-editable
 			:collection="collection"
 			:primary-key="item[props.relationInfo.relatedPrimaryKeyField.field] || '+'"
 			:edits="edits"
@@ -54,42 +73,40 @@ const editActive = ref(false);
 </template>
 
 <style lang="scss" scoped>
+@use '@/styles/mixins';
+
+.chevron.disabled {
+	--v-icon-color: var(--theme--form--field--input--foreground-subdued);
+	--v-icon-color-hover: var(--v-icon-color);
+}
+
 .preview {
 	display: flex;
-	height: var(--theme--form--field--input--height);
+	block-size: var(--theme--form--field--input--height);
 	align-items: center;
-
-	&:not(.open) {
-		margin-bottom: 12px;
-	}
 
 	.spacer {
 		flex-grow: 1;
 	}
 
-	.actions {
-		--v-icon-color: var(--theme--form--field--input--foreground-subdued);
-		--v-icon-color-hover: var(--theme--form--field--input--foreground);
-		flex-shrink: 0;
-		margin-left: 8px;
-
-		.v-icon + .v-icon {
-			margin-left: 4px;
-		}
-
-		.deselect {
-			--v-icon-color-hover: var(--theme--danger);
-		}
-	}
-
-	&.deleted {
+	.row &.deleted:not(.disabled) {
 		color: var(--theme--danger);
 		background-color: var(--danger-10);
+		border-color: var(--danger-25);
 
-		.actions {
-			--v-icon-color: var(--danger-50);
+		&:hover {
+			background-color: var(--danger-25);
+			border-color: var(--danger-50);
+		}
+
+		.item-actions .v-icon {
+			--v-icon-color: var(--danger-75);
 			--v-icon-color-hover: var(--theme--danger);
 		}
 	}
+}
+
+.item-actions {
+	@include mixins.list-interface-item-actions;
 }
 </style>

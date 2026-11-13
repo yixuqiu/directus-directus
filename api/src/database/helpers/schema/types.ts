@@ -1,11 +1,29 @@
+import assert from 'node:assert';
 import type { KNEX_TYPES } from '@directus/constants';
-import type { Field, Relation, Type } from '@directus/types';
+import type { Column } from '@directus/schema';
+import type { DatabaseClient, Field, RawField, Relation, Type } from '@directus/types';
+import { toArray } from '@directus/utils';
 import type { Knex } from 'knex';
-import type { DatabaseClient } from '../../../types/index.js';
+import { getDefaultIndexName } from '../../../utils/get-default-index-name.js';
 import { getDatabaseClient } from '../../index.js';
 import { DatabaseHelper } from '../types.js';
 
 export type Options = { nullable?: boolean; default?: any; length?: number };
+
+export type Sql = {
+	sql: string;
+	bindings: readonly Knex.Value[];
+};
+
+export type SortRecord = {
+	alias: string;
+	column: Knex.Raw;
+};
+
+export type CreateIndexOptions = {
+	attemptConcurrentIndex?: boolean;
+	unique?: boolean;
+};
 
 export abstract class SchemaHelper extends DatabaseHelper {
 	isOneOfClients(clients: DatabaseClient[]): boolean {
@@ -20,6 +38,17 @@ export abstract class SchemaHelper extends DatabaseHelper {
 				builder.dropNullable(column);
 			}
 		});
+	}
+
+	generateIndexName(type: 'unique' | 'foreign' | 'index', collection: string, fields: string | string[]): string {
+		return getDefaultIndexName(type, collection, fields);
+	}
+
+	/**
+	 * Whether the given collection has database triggers. Only meaningful for MS SQL.
+	 */
+	async hasTriggers(_collection: string): Promise<boolean> {
+		return false;
 	}
 
 	async changeToType(
@@ -44,6 +73,31 @@ export abstract class SchemaHelper extends DatabaseHelper {
 			}
 
 			b.alter();
+		});
+	}
+
+	/**
+	 * Change a tables primary key
+	 *
+	 * @param table - The name of the table
+	 * @param to - The new primary key column name(s)
+	 *
+	 * * @example
+	 * // Changing a single primary key
+	 * await changePrimaryKey('users', 'uuid');
+	 * * // Creating a composite primary key
+	 * await changePrimaryKey('order_items', ['order_id', 'product_id']);
+	 */
+	async changePrimaryKey(table: string, to: string | string[]): Promise<void> {
+		const primaryColumns = toArray(to);
+
+		// validate input
+		assert(primaryColumns.length > 0, 'At least 1 "to" column is required');
+		assert(primaryColumns[0] && primaryColumns[0].length > 0, '"to" column cannot be empty');
+
+		await this.knex.schema.alterTable(table, (builder) => {
+			builder.dropPrimary();
+			builder.primary(primaryColumns);
 		});
 	}
 
@@ -96,6 +150,16 @@ export abstract class SchemaHelper extends DatabaseHelper {
 		return;
 	}
 
+	setNullable(column: Knex.ColumnBuilder, field: RawField | Field, existing: Column | null): void {
+		const isNullable = field.schema?.is_nullable ?? existing?.is_nullable ?? true;
+
+		if (isNullable) {
+			column.nullable();
+		} else {
+			column.notNullable();
+		}
+	}
+
 	processFieldType(field: Field): Type {
 		return field.type;
 	}
@@ -120,23 +184,50 @@ export abstract class SchemaHelper extends DatabaseHelper {
 		return 'CAST(?? AS CHAR(255))';
 	}
 
-	applyMultiRelationalSort(
-		knex: Knex,
-		dbQuery: Knex.QueryBuilder,
-		table: string,
-		primaryKey: string,
-		orderByString: string,
-		orderByFields: Knex.Raw[],
-	): Knex.QueryBuilder {
-		dbQuery.rowNumber(
-			knex.ref('directus_row_number').toQuery(),
-			knex.raw(`partition by ?? order by ${orderByString}`, [`${table}.${primaryKey}`, ...orderByFields]),
-		);
-
-		return dbQuery;
-	}
-
 	formatUUID(uuid: string): string {
 		return uuid; // no-op by default
+	}
+
+	/**
+	 * @returns Size of the database in bytes
+	 */
+	async getDatabaseSize(): Promise<number | null> {
+		return null;
+	}
+
+	prepQueryParams(queryParams: Sql): Sql {
+		return queryParams;
+	}
+
+	prepBindings(bindings: Knex.Value[]): any {
+		return bindings;
+	}
+
+	addInnerSortFieldsToGroupBy(
+		_groupByFields: (string | Knex.Raw)[],
+		_sortRecords: SortRecord[],
+		_hasRelationalSort: boolean,
+	): void {
+		// no-op by default
+	}
+
+	getColumnNameMaxLength() {
+		return 64;
+	}
+
+	getTableNameMaxLength() {
+		return 64;
+	}
+
+	async createIndex(collection: string, field: string, options: CreateIndexOptions = {}): Promise<Knex.SchemaBuilder> {
+		// fall back to concurrent index creation
+		const isUnique = Boolean(options.unique);
+		const constraintName = this.generateIndexName(isUnique ? 'unique' : 'index', collection, field);
+
+		return this.knex.raw(`CREATE ${isUnique ? 'UNIQUE ' : ''}INDEX ?? ON ?? (??)`, [constraintName, collection, field]);
+	}
+
+	async parseCollectionName(collection: string): Promise<string> {
+		return collection;
 	}
 }

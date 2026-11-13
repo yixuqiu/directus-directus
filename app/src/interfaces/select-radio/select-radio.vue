@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { useCustomSelection } from '@directus/composables';
 import { computed, toRefs } from 'vue';
-import { useI18n } from 'vue-i18n';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VNotice from '@/components/v-notice.vue';
+import VRadio from '@/components/v-radio.vue';
+import { getMinimalGridClass } from '@/utils/get-minimal-grid-class';
 
 type Option = {
 	text: string;
@@ -12,11 +15,10 @@ const props = withDefaults(
 	defineProps<{
 		value: string | number | null;
 		disabled?: boolean;
+		nonEditable?: boolean;
 		choices?: Option[];
-
 		allowOther?: boolean;
 		width?: string;
-
 		iconOn?: string;
 		iconOff?: string;
 		color?: string;
@@ -30,32 +32,13 @@ const props = withDefaults(
 
 const emit = defineEmits(['input']);
 
-const { t } = useI18n();
-
 const { choices, value } = toRefs(props);
 
-const gridClass = computed(() => {
-	if (choices?.value === undefined) return null;
+const items = computed(() => choices.value || []);
 
-	const widestOptionLength = choices.value.reduce((acc, val) => {
-		if (val.text.length > acc.length) acc = val.text;
-		return acc;
-	}, '').length;
+const gridClass = computed(() => getMinimalGridClass(items.value, props.width));
 
-	if (props.width?.startsWith('half')) {
-		if (widestOptionLength <= 10) return 'grid-2';
-		return 'grid-1';
-	}
-
-	if (widestOptionLength <= 10) return 'grid-4';
-	if (widestOptionLength > 10 && widestOptionLength <= 15) return 'grid-3';
-	if (widestOptionLength > 15 && widestOptionLength <= 25) return 'grid-2';
-	return 'grid-1';
-});
-
-const { otherValue, usesOtherValue } = useCustomSelection(value as any, choices as any, (value) =>
-	emit('input', value),
-);
+const { otherValue, usesOtherValue } = useCustomSelection(value as any, items as any, (value) => emit('input', value));
 
 const customIcon = computed(() => {
 	if (!otherValue.value) return 'add';
@@ -65,9 +48,9 @@ const customIcon = computed(() => {
 </script>
 
 <template>
-	<v-notice v-if="!choices" type="warning">
-		{{ t('choices_option_configured_incorrectly') }}
-	</v-notice>
+	<VNotice v-if="!items" type="warning">
+		{{ $t('choices_option_configured_incorrectly') }}
+	</VNotice>
 	<div
 		v-else
 		class="radio-buttons"
@@ -76,56 +59,75 @@ const customIcon = computed(() => {
 			'--v-radio-color': color,
 		}"
 	>
-		<v-radio
-			v-for="item in choices"
+		<VRadio
+			v-for="item in items"
 			:key="item.value"
 			block
 			:value="item.value"
 			:label="item.text"
 			:disabled="disabled"
+			:non-editable="nonEditable"
 			:icon-on="iconOn"
 			:icon-off="iconOff"
 			:model-value="value"
 			@update:model-value="$emit('input', $event)"
 		/>
+		<VNotice v-if="items.length === 0 && !allowOther" type="info">
+			{{ $t('no_options_available') }}
+		</VNotice>
 		<div
-			v-if="allowOther"
+			v-if="allowOther && !(nonEditable && !usesOtherValue && !otherValue)"
 			class="custom"
 			:class="{
-				active: !disabled && usesOtherValue,
-				'has-value': !disabled && otherValue,
+				active: (!disabled || nonEditable) && usesOtherValue,
+				'has-value': otherValue,
 				disabled,
+				'non-editable': nonEditable,
 			}"
 		>
-			<v-icon :disabled="disabled" :name="customIcon" clickable @click="$emit('input', otherValue)" />
-			<input v-model="otherValue" :placeholder="t('other')" :disabled="disabled" @focus="$emit('input', otherValue)" />
+			<VIcon
+				:name="customIcon"
+				class="radio-icon"
+				:disabled="disabled"
+				clickable
+				@click="otherValue ? $emit('input', otherValue) : ($refs.customInput as HTMLInputElement).focus()"
+			/>
+			<input
+				ref="customInput"
+				v-model="otherValue"
+				:placeholder="$t('other')"
+				:disabled="disabled"
+				@change="$emit('input', otherValue)"
+			/>
 		</div>
 	</div>
 </template>
 
 <style lang="scss" scoped>
+@use '@/styles/mixins';
+
 .radio-buttons {
 	--columns: 1;
 
 	display: grid;
-	grid-gap: 12px 32px;
+	gap: 0.6875rem 1.8125rem;
 	grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
 }
 
 .grid-2 {
-	@media (min-width: 600px) {
+	@include mixins.breakpoint-up('sm') {
 		--columns: 2;
 	}
 }
 
 .grid-3 {
-	@media (min-width: 600px) {
+	@include mixins.breakpoint-up('sm') {
 		--columns: 3;
 	}
 }
 
 .grid-4 {
-	@media (min-width: 600px) {
+	@include mixins.breakpoint-up('sm') {
 		--columns: 4;
 	}
 }
@@ -135,18 +137,18 @@ const customIcon = computed(() => {
 
 	display: flex;
 	align-items: center;
-	width: 100%;
-	height: var(--theme--form--field--input--height);
-	padding: 10px;
+	inline-size: 100%;
+	block-size: var(--theme--form--field--input--height);
+	padding: 0.5625rem;
 	border: var(--theme--border-width) dashed var(--theme--form--field--input--border-color);
 	border-radius: var(--theme--border-radius);
 
 	input {
 		display: block;
 		flex-grow: 1;
-		width: 20px; /* this will auto grow with flex above */
+		inline-size: 1.125rem; /* this will auto grow with flex above */
 		margin: 0;
-		margin-left: 8px;
+		margin-inline-start: 0.4375rem;
 		padding: 0;
 		background-color: transparent;
 		border: none;
@@ -158,6 +160,8 @@ const customIcon = computed(() => {
 	}
 
 	&.has-value {
+		--v-icon-color-hover: var(--v-icon-color);
+
 		background-color: var(--theme--form--field--input--background-subdued);
 		border: var(--theme--border-width) solid var(--theme--form--field--input--background-subdued);
 	}
@@ -171,10 +175,10 @@ const customIcon = computed(() => {
 
 		&::before {
 			position: absolute;
-			top: 0;
-			left: 0;
-			width: 100%;
-			height: 100%;
+			inset-block-start: 0;
+			inset-inline-start: 0;
+			inline-size: 100%;
+			block-size: 100%;
 			background-color: var(--v-radio-color, var(--theme--primary));
 			opacity: 0.1;
 			content: '';
@@ -183,13 +187,23 @@ const customIcon = computed(() => {
 	}
 
 	&.disabled {
-		background-color: var(--theme--form--field--input--background-subdued);
-		border-color: transparent;
 		cursor: not-allowed;
+
+		input,
+		.radio-icon {
+			cursor: not-allowed;
+		}
+	}
+
+	&.disabled:not(.non-editable) {
+		background-color: var(--theme--form--field--input--background-subdued);
+
+		&.has-value {
+			border-color: var(--theme--form--field--input--border-color);
+		}
 
 		input {
 			color: var(--theme--form--field--input--foreground-subdued);
-			cursor: not-allowed;
 
 			&::placeholder {
 				color: var(--theme--form--field--input--foreground-subdued);

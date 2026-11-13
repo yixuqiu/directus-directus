@@ -1,16 +1,12 @@
+import path from 'path';
+import { EXTENSION_TYPES, HYBRID_EXTENSION_TYPES } from '@directus/constants';
 import type {
 	ExtensionOptions,
 	ExtensionOptionsBundleEntry,
-	NestedExtensionType,
 	ExtensionManifest as TExtensionManifest,
 } from '@directus/extensions';
-import {
-	EXTENSION_LANGUAGES,
-	EXTENSION_PKG_KEY,
-	EXTENSION_TYPES,
-	ExtensionManifest,
-	HYBRID_EXTENSION_TYPES,
-} from '@directus/extensions';
+import { EXTENSION_LANGUAGES, EXTENSION_PKG_KEY, ExtensionManifest } from '@directus/extensions';
+import type { NestedExtensionType } from '@directus/types';
 import { isIn, isTypeIn } from '@directus/utils';
 import { pathToRelativeUrl } from '@directus/utils/node';
 import chalk from 'chalk';
@@ -18,13 +14,13 @@ import { execa } from 'execa';
 import fse from 'fs-extra';
 import inquirer from 'inquirer';
 import ora from 'ora';
-import path from 'path';
 import type { Language } from '../types.js';
 import detectJsonIndent from '../utils/detect-json-indent.js';
 import getPackageManager from '../utils/get-package-manager.js';
 import { getLanguageFromPath, isLanguage, languageToShort } from '../utils/languages.js';
 import { log } from '../utils/logger.js';
 import copyTemplate from './helpers/copy-template.js';
+import getBundleHost from './helpers/get-bundle-host.js';
 import getExtensionDevDeps from './helpers/get-extension-dev-deps.js';
 
 type AddOptions = { install?: boolean };
@@ -43,7 +39,7 @@ export default async function add(options: AddOptions): Promise<void> {
 	let extensionManifestFile: string;
 
 	try {
-		extensionManifestFile = await fse.readFile(packagePath, 'utf8');
+		extensionManifestFile = (await fse.readFile(packagePath, 'utf8')) as string;
 	} catch {
 		log(`Failed to read "package.json" file from current directory.`, 'error');
 		process.exit(1);
@@ -78,7 +74,7 @@ export default async function add(options: AddOptions): Promise<void> {
 				type: 'list',
 				name: 'type',
 				message: 'Choose the extension type',
-				choices: EXTENSION_TYPES,
+				choices: () => EXTENSION_TYPES.filter((e) => e !== 'bundle'),
 			},
 			{
 				type: 'input',
@@ -126,15 +122,22 @@ export default async function add(options: AddOptions): Promise<void> {
 							app: `${pathToRelativeUrl(source)}/${name}/app.${languageToShort(language)}`,
 							api: `${pathToRelativeUrl(source)}/${name}/api.${languageToShort(language)}`,
 						},
-				  }
+					}
 				: {
 						type,
 						name,
 						source: `${pathToRelativeUrl(source)}/${name}/index.${languageToShort(language)}`,
-				  },
+					},
 		];
 
-		const newExtensionOptions: ExtensionOptions = { ...extensionOptions, entries: newEntries };
+		const newExtensionOptions: ExtensionOptions = {
+			...extensionOptions,
+			entries: newEntries,
+			host: getBundleHost(
+				extensionOptions.host,
+				newEntries.map((entry) => entry.type),
+			),
+		};
 
 		const newExtensionManifest = {
 			...extensionManifest,
@@ -174,19 +177,17 @@ export default async function add(options: AddOptions): Promise<void> {
 			process.exit(1);
 		}
 
-		const { type, name, language, convertName, extensionName, alternativeSource } = await inquirer.prompt<{
+		const { type, name, language, convertName } = await inquirer.prompt<{
 			type: NestedExtensionType;
 			name: string;
 			language: Language;
 			convertName: string;
-			extensionName: string;
-			alternativeSource?: string;
 		}>([
 			{
 				type: 'list',
 				name: 'type',
 				message: 'Choose the extension type',
-				choices: EXTENSION_TYPES,
+				choices: () => EXTENSION_TYPES.filter((e) => e !== 'bundle'),
 			},
 			{
 				type: 'input',
@@ -207,12 +208,17 @@ export default async function add(options: AddOptions): Promise<void> {
 				default: extensionManifest.name,
 				validate: (name: string) => (name.length === 0 ? 'Entry name can not be empty.' : true),
 			},
+		]);
+
+		const { extensionName, alternativeSource } = await inquirer.prompt<{
+			extensionName: string;
+			alternativeSource?: string;
+		}>([
 			{
 				type: 'input',
 				name: 'extensionName',
 				message: 'Choose a name for the extension',
-				default: ({ convertName }: { convertName: string }) =>
-					convertName !== extensionManifest.name ? extensionManifest.name : null,
+				...(convertName !== extensionManifest.name && { default: extensionManifest.name }),
 				validate: (name: string) => (name.length === 0 ? 'Extension name can not be empty.' : true),
 			},
 			{
@@ -230,7 +236,7 @@ export default async function add(options: AddOptions): Promise<void> {
 		const convertSourcePath = path.resolve(source, convertName);
 		const entrySourcePath = path.resolve(source, name);
 
-		const convertFiles = await fse.readdir(source);
+		const convertFiles = (await fse.readdir(source, 'utf8')) as string[];
 
 		await Promise.all(
 			convertFiles.map((file) => fse.move(path.resolve(source, file), path.join(convertSourcePath, file))),
@@ -251,12 +257,12 @@ export default async function add(options: AddOptions): Promise<void> {
 							app: toConvertSourceUrl(extensionOptions.source.app),
 							api: toConvertSourceUrl(extensionOptions.source.api),
 						},
-				  }
+					}
 				: {
 						type: extensionOptions.type,
 						name: convertName,
 						source: toConvertSourceUrl(extensionOptions.source),
-				  },
+					},
 			isIn(type, HYBRID_EXTENSION_TYPES)
 				? {
 						type,
@@ -265,19 +271,22 @@ export default async function add(options: AddOptions): Promise<void> {
 							app: `${pathToRelativeUrl(source)}/${name}/app.${languageToShort(language)}`,
 							api: `${pathToRelativeUrl(source)}/${name}/api.${languageToShort(language)}`,
 						},
-				  }
+					}
 				: {
 						type,
 						name,
 						source: `${pathToRelativeUrl(source)}/${name}/index.${languageToShort(language)}`,
-				  },
+					},
 		];
 
 		const newExtensionOptions: ExtensionOptions = {
 			type: 'bundle',
 			path: { app: 'dist/app.js', api: 'dist/api.js' },
 			entries,
-			host: extensionOptions.host,
+			host: getBundleHost(
+				extensionOptions.host,
+				entries.map((entry) => entry.type),
+			),
 			hidden: extensionOptions.hidden,
 		};
 

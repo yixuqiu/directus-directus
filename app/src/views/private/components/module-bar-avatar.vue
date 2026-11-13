@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { useNotificationsStore } from '@/stores/notifications';
-import { useUserStore } from '@/stores/user';
-import { getAssetUrl } from '@/utils/get-asset-url';
 import { useAppStore } from '@directus/stores';
 import { User } from '@directus/types';
 import { storeToRefs } from 'pinia';
 import { computed, ref } from 'vue';
-import { useI18n } from 'vue-i18n';
-
-const { t } = useI18n();
+import ModuleBarButton from './module-bar-button.vue';
+import VAvatar from '@/components/v-avatar.vue';
+import VBadge from '@/components/v-badge.vue';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import { useNotificationsStore } from '@/stores/notifications';
+import { useUserStore } from '@/stores/user';
+import { getAssetUrl } from '@/utils/get-asset-url';
 
 const appStore = useAppStore();
 const notificationsStore = useNotificationsStore();
@@ -18,11 +24,17 @@ const { unread } = storeToRefs(notificationsStore);
 
 const userStore = useUserStore();
 
+(async () => await userStore.hydrateAdditionalFields(['avatar.modified_on']))();
+
 const signOutActive = ref(false);
 
 const avatarURL = computed<string | null>(() => {
 	if (!userStore.currentUser || !('avatar' in userStore.currentUser) || !userStore.currentUser?.avatar) return null;
-	return getAssetUrl(`${userStore.currentUser.avatar.id}?key=system-medium-cover`);
+
+	return getAssetUrl(userStore.currentUser.avatar.id, {
+		imageKey: 'system-medium-cover',
+		cacheBuster: userStore.currentUser.avatar.modified_on,
+	});
 });
 
 const avatarError = ref<null | Event>(null);
@@ -41,42 +53,35 @@ const userFullName = userStore.fullName ?? undefined;
 
 <template>
 	<div class="module-bar-avatar">
-		<v-badge :value="unread" :disabled="unread == 0" class="notifications-badge">
-			<v-button
-				v-tooltip.right="t('notifications')"
-				tile
-				icon
-				x-large
-				class="notifications"
-				@click="notificationsDrawerOpen = true"
-			>
-				<v-icon name="notifications" />
-			</v-button>
-		</v-badge>
+		<VBadge :value="unread" :disabled="unread == 0" class="notifications-badge">
+			<ModuleBarButton v-tooltip.right="$t('notifications')" @click="notificationsDrawerOpen = true">
+				<VIcon name="notifications" />
+			</ModuleBarButton>
+		</VBadge>
 
-		<v-hover v-slot="{ hover }">
-			<v-dialog v-model="signOutActive" @esc="signOutActive = false">
+		<div class="space-bar">
+			<VDialog v-model="signOutActive" @esc="signOutActive = false">
 				<template #activator="{ on }">
-					<transition name="sign-out">
-						<v-button v-if="hover" v-tooltip.right="t('sign_out')" tile icon x-large class="sign-out" @click="on">
-							<v-icon name="logout" />
-						</v-button>
-					</transition>
+					<div class="sign-out-wrapper">
+						<ModuleBarButton v-tooltip.right="$t('sign_out')" @click="on">
+							<VIcon name="logout" />
+						</ModuleBarButton>
+					</div>
 				</template>
 
-				<v-card>
-					<v-card-title>{{ t('sign_out_confirm') }}</v-card-title>
-					<v-card-actions>
-						<v-button secondary @click="signOutActive = !signOutActive">
-							{{ t('cancel') }}
-						</v-button>
-						<v-button :to="signOutLink">{{ t('sign_out') }}</v-button>
-					</v-card-actions>
-				</v-card>
-			</v-dialog>
+				<VCard>
+					<VCardTitle>{{ $t('sign_out_confirm') }}</VCardTitle>
+					<VCardActions>
+						<VButton secondary @click="signOutActive = !signOutActive">
+							{{ $t('cancel') }}
+						</VButton>
+						<VButton :to="signOutLink">{{ $t('sign_out') }}</VButton>
+					</VCardActions>
+				</VCard>
+			</VDialog>
 
-			<router-link :to="userProfileLink">
-				<v-avatar v-tooltip.right="userFullName" tile large :class="{ 'no-avatar': !avatarURL }">
+			<ModuleBarButton v-tooltip.right="userFullName" :to="userProfileLink" :active="false" class="avatar-btn">
+				<VAvatar small>
 					<img
 						v-if="avatarURL && !avatarError"
 						:src="avatarURL"
@@ -84,95 +89,90 @@ const userFullName = userStore.fullName ?? undefined;
 						class="avatar-image"
 						@error="avatarError = $event"
 					/>
-					<v-icon v-else name="account_circle" />
-				</v-avatar>
-			</router-link>
-		</v-hover>
+					<VIcon v-else name="account_circle" />
+				</VAvatar>
+			</ModuleBarButton>
+		</div>
 	</div>
 </template>
 
 <style lang="scss" scoped>
 .module-bar-avatar {
 	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding-block-start: calc(var(--module-bar-gap) / 2);
+	gap: calc(var(--module-bar-gap) / 2);
 
 	.v-avatar {
-		--v-button-color: var(--theme--navigation--modules--button--foreground);
-		--v-button-color-hover: var(--white);
 		--v-avatar-color: var(--theme--navigation--modules--background);
-
-		position: relative;
 		z-index: 3;
-		overflow: visible;
+		color: inherit;
 
 		.avatar-image {
 			opacity: 0.8;
 			transition: opacity var(--fast) var(--transition);
 		}
 
-		&.no-avatar {
-			&::after {
-				position: absolute;
-				top: -1px;
-				right: 8px;
-				left: 8px;
-				height: var(--theme--border-width);
-				background-color: var(--theme--navigation--modules--button--foreground);
-				opacity: 0.25;
-				content: '';
-			}
-		}
-
-		.v-icon {
-			--v-icon-color: var(--theme--navigation--modules--button--foreground);
-		}
-
-		&:hover {
-			.avatar-image {
-				opacity: 1;
-			}
-
-			.v-icon {
-				--v-icon-color: var(--theme--navigation--modules--button--foreground-hover);
-			}
+		&:hover .avatar-image {
+			opacity: 1;
 		}
 	}
 
 	.notifications-badge {
-		--v-badge-offset-x: 16px;
-		--v-badge-offset-y: 16px;
+		--v-badge-offset-x: 0.1875rem;
+		--v-badge-offset-y: var(--v-badge-offset-x);
 	}
 
-	.notifications {
-		--v-button-color: var(--theme--navigation--modules--button--foreground);
-		--v-button-color-hover: var(--theme--navigation--modules--button--foreground-hover);
-		--v-button-background-color: var(--theme--navigation--modules--background);
-		--v-button-background-color-hover: var(--theme--navigation--modules--background);
+	.avatar-btn {
+		:deep(a) {
+			border: none;
+		}
+
+		position: relative;
+
+		&::after {
+			content: '';
+			position: absolute;
+			inset-block-start: calc(-1 * var(--module-bar-gap) / 2);
+			inset-inline: 0;
+			block-size: var(--theme--border-width);
+			background-color: var(--theme--navigation--modules--button--foreground);
+			opacity: 0.5;
+			z-index: 3;
+		}
 	}
 
-	.sign-out {
-		--v-button-color: var(--theme--navigation--modules--button--foreground);
-		--v-button-color-hover: var(--theme--navigation--modules--button--foreground-hover);
-		--v-button-background-color: var(--theme--navigation--modules--background);
-		--v-button-background-color-hover: var(--theme--navigation--modules--background);
-
+	.sign-out-wrapper {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		block-size: var(--module-bar-width);
+		inline-size: var(--module-bar-width);
 		position: absolute;
-		top: 0;
-		left: 0;
+		inset-block-start: 0;
+		inset-inline-start: 0;
 		z-index: 2;
 		transition: transform var(--fast) var(--transition);
+		opacity: 0;
+		transform: translateY(100%);
+		background-color: var(--theme--navigation--modules--background);
 	}
 
-	.sign-out-enter-active,
-	.sign-out-leave-active {
-		transform: translateY(0%);
-	}
+	.space-bar {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		block-size: var(--module-bar-width);
+		inline-size: var(--module-bar-width);
 
-	.sign-out-enter-from,
-	.sign-out-leave-to {
-		transform: translateY(-100%);
-
-		@media (min-width: 960px) {
-			transform: translateY(100%);
+		&:focus-within,
+		&:hover {
+			.sign-out-wrapper {
+				opacity: 1;
+				transform: translateY(0%);
+			}
 		}
 	}
 }

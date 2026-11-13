@@ -1,42 +1,91 @@
 <script setup lang="ts">
-import api from '@/api';
-import { useCollectionsStore } from '@/stores/collections';
-import { Collection } from '@/types/collections';
-import { translate } from '@/utils/translate-object-values';
-import { unexpectedError } from '@/utils/unexpected-error';
-import SearchInput from '@/views/private/components/search-input.vue';
-import { merge, sortBy } from 'lodash';
+import { saveAs } from 'file-saver';
+import { merge } from 'lodash-es';
 import { computed, ref } from 'vue';
-import { useI18n } from 'vue-i18n';
+import { RouterLink, RouterView } from 'vue-router';
 import Draggable from 'vuedraggable';
 import SettingsNavigation from '../../../components/navigation.vue';
 import CollectionDialog from './components/collection-dialog.vue';
-import CollectionItem from './components/collection-item.vue';
 import CollectionOptions from './components/collection-options.vue';
-import { isSystemCollection } from '@directus/system-data';
-
-const { t } = useI18n();
+import CollectionItem from './components/CollectionItem.vue';
+import { useExpandCollapse } from './composables/use-expand-collapse';
+import api from '@/api';
+import TransitionExpand from '@/components/transition/expand.vue';
+import VButton from '@/components/v-button.vue';
+import VDetail from '@/components/v-detail.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInfo from '@/components/v-info.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import { useCollectionsStore } from '@/stores/collections';
+import { useFieldsStore } from '@/stores/fields';
+import { useLicenseStore } from '@/stores/license';
+import { useRelationsStore } from '@/stores/relations';
+import { Collection } from '@/types/collections';
+import type { CollectionStatus } from '@/utils/collection-status';
+import { translate } from '@/utils/translate-object-values';
+import { unexpectedError } from '@/utils/unexpected-error';
+import { PrivateViewHeaderBarActionButton } from '@/views/private';
+import { PrivateView } from '@/views/private';
+import EntitlementLimitModal from '@/views/private/components/license/entitlement-limit-modal.vue';
+import EntitlementRemaining from '@/views/private/components/license/entitlement-remaining.vue';
+import MaxCapacityAlert from '@/views/private/components/license/max-capacity-alert.vue';
+import { useLicenseGuard } from '@/views/private/components/license/use-license-guard';
+import SearchInput from '@/views/private/components/search-input.vue';
+import SidebarDetail from '@/views/private/components/sidebar-detail.vue';
 
 const search = ref<string | null>(null);
 const collectionDialogActive = ref(false);
 const editCollection = ref<Collection | null>();
 
 const collectionsStore = useCollectionsStore();
+const fieldsStore = useFieldsStore();
+const relationsStore = useRelationsStore();
+const licenseStore = useLicenseStore();
+
+const { limitModalOpen: collectionsLimitModalOpen, navigate } = useLicenseGuard(
+	() => licenseStore.limits.collections.hasRemaining,
+);
+
+const navigateToNewCollection = () => navigate({ name: 'settings-add-new' });
+
+const { collapsedIds, hasExpandableCollections, expandAll, collapseAll, toggleCollapse } = useExpandCollapse();
 
 const collections = computed(() => {
-	return translate(
-		sortBy(
-			collectionsStore.collections.filter(
-				(collection) => isSystemCollection(collection.collection) === false && collection.meta,
-			),
-			['meta.sort', 'collection'],
-		),
-	);
+	return translate(collectionsStore.allCollections.filter((collection) => collection.meta)).map((collection) => ({
+		...collection,
+		isCollapsed: collapsedIds.value?.includes(collection.collection),
+	}));
 });
 
 const rootCollections = computed(() => {
-	return collections.value.filter((collection) => !collection.meta?.group);
+	return collections.value.filter((collection) => !collection.meta?.group && collection.meta?.status === 'active');
 });
+
+const deactivatedRootCollections = computed(() => {
+	return collections.value.filter((collection) => !collection.meta?.group && collection.meta?.status !== 'active');
+});
+
+async function setCollectionStatus(collectionKey: string, status: CollectionStatus) {
+	try {
+		await api.patch(`/collections/${collectionKey}`, { meta: { status } });
+
+		// Inactive collections are left out of the schema, so their fields and relations disappear
+		// from those endpoints as well. Rehydrate everything to avoid holding on to a stale copy.
+		await Promise.all([
+			collectionsStore.hydrate(),
+			fieldsStore.hydrate(),
+			relationsStore.hydrate(),
+			licenseStore.hydrate(),
+		]);
+	} catch (error) {
+		unexpectedError(error);
+	}
+}
+
+const activateCollection = (collectionKey: string) => setCollectionStatus(collectionKey, 'active');
+const deactivateCollection = (collectionKey: string) => setCollectionStatus(collectionKey, 'inactive');
 
 export type CollectionTree = {
 	collection: string;
@@ -58,7 +107,9 @@ const visibilityTree = computed(() => {
 	const propagateBackwards: CollectionTree[] = [];
 
 	function makeTree(parent: string | null = null): CollectionTree[] {
-		const children = collectionsStore.collections.filter((collection) => (collection.meta?.group ?? null) === parent);
+		const children = collectionsStore.sortedCollections.filter(
+			(collection) => (collection.meta?.group ?? null) === parent,
+		);
 
 		const normalizedSearch = search.value?.toLowerCase();
 
@@ -94,28 +145,13 @@ const visibilityTree = computed(() => {
 	return tree;
 });
 
-const tableCollections = computed(() => {
-	return translate(
-		sortBy(
-			collectionsStore.collections.filter(
-				(collection) =>
-					isSystemCollection(collection.collection) === false && !!collection.meta === false && collection.schema,
-			),
-			['meta.sort', 'collection'],
-		),
-	);
-});
+const tableCollections = computed(() =>
+	translate(collectionsStore.databaseCollections.filter((collection) => !collection.meta)),
+);
 
-const systemCollections = computed(() => {
-	return translate(
-		sortBy(
-			collectionsStore.collections
-				.filter((collection) => isSystemCollection(collection.collection) === true)
-				.map((collection) => ({ ...collection, icon: 'settings' })),
-			'collection',
-		),
-	);
-});
+const systemCollections = computed(() =>
+	translate(collectionsStore.systemCollections.map((collection) => ({ ...collection, icon: 'settings' }))),
+);
 
 async function onSort(updates: Collection[], removeGroup = false) {
 	const updatesWithSortValue = updates.map((collection, index) =>
@@ -144,134 +180,188 @@ async function onSort(updates: Collection[], removeGroup = false) {
 		unexpectedError(error);
 	}
 }
+
+async function downloadSnapshot() {
+	const snapshot = await api.get(`/schema/snapshot`);
+
+	saveAs(
+		new Blob([JSON.stringify(snapshot.data, null, 2)], { type: 'application/json;charset=utf-8' }),
+		`snapshot.json`,
+	);
+}
 </script>
 
 <template>
-	<private-view :title="t('settings_data_model')">
-		<template #headline><v-breadcrumb :items="[{ name: t('settings'), to: '/settings' }]" /></template>
-
-		<template #title-outer:prepend>
-			<v-button class="header-icon" rounded icon exact disabled>
-				<v-icon name="database" />
-			</v-button>
+	<PrivateView :title="$t('settings_data_model')" icon="database">
+		<template #actions:prepend>
+			<EntitlementRemaining />
 		</template>
 
 		<template #actions>
-			<search-input
+			<SearchInput
 				v-model="search"
 				:show-filter="false"
 				:autofocus="collectionsStore.collections.length - systemCollections.length > 25"
-				:placeholder="t('search_collection')"
+				:placeholder="$t('search_collection')"
+				small
 			/>
 
-			<collection-dialog v-model="collectionDialogActive">
+			<CollectionDialog v-model="collectionDialogActive">
 				<template #activator="{ on }">
-					<v-button v-tooltip.bottom="t('create_folder')" rounded icon secondary @click="on">
-						<v-icon name="create_new_folder" />
-					</v-button>
+					<PrivateViewHeaderBarActionButton
+						v-tooltip.bottom="$t('create_folder')"
+						variant="ghost"
+						icon="create_new_folder"
+						@click="on"
+					/>
 				</template>
-			</collection-dialog>
+			</CollectionDialog>
+		</template>
 
-			<v-button v-tooltip.bottom="t('create_collection')" rounded icon to="/settings/data-model/+">
-				<v-icon name="add" />
-			</v-button>
+		<template #actions:primary>
+			<PrivateViewHeaderBarActionButton :label="$t('create')" icon="add" @click="navigateToNewCollection" />
 		</template>
 
 		<template #navigation>
-			<settings-navigation />
+			<SettingsNavigation />
 		</template>
 
-		<div class="padding-box">
-			<v-info v-if="collections.length === 0" icon="box" :title="t('no_collections')">
-				{{ t('no_collections_copy_admin') }}
+		<div class="padding-box" :class="{ 'has-action': hasExpandableCollections }">
+			<MaxCapacityAlert />
+
+			<VInfo v-if="collections.length === 0" icon="box" :title="$t('no_collections')">
+				{{ $t('no_collections_copy_admin') }}
 
 				<template #append>
-					<v-button to="/settings/data-model/+">{{ t('create_collection') }}</v-button>
+					<VButton @click="navigateToNewCollection">{{ $t('create_collection') }}</VButton>
 				</template>
-			</v-info>
+			</VInfo>
 
-			<v-list v-else class="draggable-list">
-				<draggable
+			<template v-else>
+				<TransitionExpand>
+					<div v-if="hasExpandableCollections" class="expand-collapse-button">
+						{{ $t('expand') }}
+						<button @click="expandAll">{{ $t('all') }}</button>
+						/
+						<button @click="collapseAll">{{ $t('none') }}</button>
+					</div>
+				</TransitionExpand>
+				<Draggable
+					tag="v-list"
 					:model-value="rootCollections"
 					:group="{ name: 'collections' }"
 					:swap-threshold="0.3"
-					class="root-drag-container"
+					class="root-drag-container draggable-list"
 					item-key="collection"
 					handle=".drag-handle"
 					v-bind="{ 'force-fallback': true }"
 					@update:model-value="onSort($event, true)"
 				>
 					<template #item="{ element }">
-						<collection-item
+						<CollectionItem
 							:collection="element"
 							:collections="collections"
+							:is-collapsed="element.isCollapsed"
 							:visibility-tree="findVisibilityChild(element.collection)!"
 							@edit-collection="editCollection = $event"
 							@set-nested-sort="onSort"
+							@toggle-collapse="toggleCollapse"
+							@activate-collection="activateCollection"
+							@deactivate-collection="deactivateCollection"
 						/>
 					</template>
-				</draggable>
-			</v-list>
+				</Draggable>
 
-			<v-list class="db-only">
-				<v-list-item
+				<VDetail v-if="deactivatedRootCollections.length" :label="$t('deactivated_collections')" start-open>
+					<CollectionItem
+						v-for="collection of deactivatedRootCollections"
+						:key="collection.collection"
+						:collection="collection"
+						:collections="collections"
+						:is-collapsed="false"
+						:visibility-tree="findVisibilityChild(collection.collection)!"
+						disable-drag
+						@activate-collection="activateCollection"
+						@deactivate-collection="deactivateCollection"
+					/>
+				</VDetail>
+			</template>
+
+			<VList class="db-only">
+				<VListItem
 					v-for="collection of tableCollections"
 					v-show="findVisibilityChild(collection.collection)!.visible"
 					:key="collection.collection"
-					v-tooltip="t('db_only_click_to_configure')"
+					v-tooltip="$t('db_only_click_to_configure')"
 					class="collection-row hidden"
 					block
 					dense
 					clickable
 				>
-					<v-list-item-icon>
-						<v-icon name="add" />
-					</v-list-item-icon>
+					<VListItemIcon>
+						<VIcon name="add" />
+					</VListItemIcon>
 
-					<router-link class="collection-name" :to="`/settings/data-model/${collection.collection}`">
-						<v-icon class="collection-icon" name="dns" />
+					<RouterLink
+						class="collection-name"
+						:to="{ name: 'settings-fields', params: { collection: collection.collection } }"
+					>
+						<VIcon class="collection-icon" name="dns" />
 						<span class="collection-name">{{ collection.name }}</span>
-					</router-link>
+					</RouterLink>
 
-					<collection-options :collection="collection" :has-nested-collections="false" />
-				</v-list-item>
-			</v-list>
+					<CollectionOptions :collection="collection" :has-nested-collections="false" />
+				</VListItem>
+			</VList>
 
-			<v-detail
+			<VDetail
 				v-show="systemCollections.some((collection) => findVisibilityChild(collection.collection)?.visible)"
-				:label="t('system_collections')"
+				:label="$t('system_collections')"
 			>
-				<collection-item
+				<CollectionItem
 					v-for="collection of systemCollections"
 					:key="collection.collection"
 					:collection="collection"
 					:collections="systemCollections"
 					:visibility-tree="findVisibilityChild(collection.collection)!"
+					:is-collapsed="false"
 					disable-drag
 				/>
-			</v-detail>
+			</VDetail>
 		</div>
 
-		<router-view name="add" />
+		<RouterView name="add" />
 
 		<template #sidebar>
-			<sidebar-detail icon="info" :title="t('information')" close>
-				<div v-md="t('page_help_settings_datamodel_collections')" class="page-description" />
-			</sidebar-detail>
+			<SidebarDetail id="download-snapshot" icon="download" :title="$t('snapshot.export')">
+				<div v-md="$t('snapshot.info')" class="page-description" />
+				<VButton small full-width class="snapshot-download" @click="downloadSnapshot">
+					{{ $t('snapshot.download') }}
+				</VButton>
+			</SidebarDetail>
 		</template>
 
-		<collection-dialog
+		<CollectionDialog
 			:model-value="!!editCollection"
 			:collection="editCollection"
 			@update:model-value="editCollection = null"
 		/>
-	</private-view>
+
+		<EntitlementLimitModal v-model="collectionsLimitModalOpen" entitlement-key="collections" is-admin />
+	</PrivateView>
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/mixins';
+
 .padding-box {
 	padding: var(--content-padding);
-	padding-top: 0;
+
+	&.has-action {
+		@include mixins.breakpoint-up('sm') {
+			padding-block-start: 1.875rem;
+		}
+	}
 }
 
 .v-info {
@@ -279,7 +369,7 @@ async function onSort(updates: Collection[], removeGroup = false) {
 }
 
 .root-drag-container {
-	padding: 8px 0;
+	padding: 0.4375rem 0;
 	overflow: hidden;
 }
 
@@ -295,7 +385,7 @@ async function onSort(updates: Collection[], removeGroup = false) {
 }
 
 .collection-icon {
-	margin-right: 8px;
+	margin-inline-end: 0.4375rem;
 }
 
 .hidden .collection-name {
@@ -317,6 +407,30 @@ async function onSort(updates: Collection[], removeGroup = false) {
 }
 
 .db-only {
-	margin-bottom: 16px;
+	margin-block-end: 0.875rem;
+}
+
+.expand-collapse-button {
+	padding-block: 0.25rem 0.4375rem;
+	text-align: end;
+	color: var(--theme--foreground-subdued);
+
+	button {
+		color: var(--theme--foreground-subdued);
+		transition: color var(--fast) var(--transition);
+	}
+
+	button:hover {
+		color: var(--theme--foreground);
+		transition: none;
+	}
+}
+
+.v-list.draggable-list {
+	padding-block-start: 0;
+}
+
+.snapshot-download {
+	margin-block-start: 0.6875rem;
 }
 </style>

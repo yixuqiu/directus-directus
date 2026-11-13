@@ -1,20 +1,35 @@
 <script setup lang="ts">
+import type { ContentVersion, Filter } from '@directus/types';
+import { getFieldsFromTemplate } from '@directus/utils';
+import { clamp, get, isEmpty, isNil, set } from 'lodash-es';
+import { computed, ref, toRefs, unref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
+import Draggable from 'vuedraggable';
+import VButton from '@/components/v-button.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VMenu from '@/components/v-menu.vue';
+import VNotice from '@/components/v-notice.vue';
+import VPagination from '@/components/v-pagination.vue';
+import VRemove from '@/components/v-remove.vue';
+import VSelect from '@/components/v-select/v-select.vue';
+import VSkeletonLoader from '@/components/v-skeleton-loader.vue';
+import VTextOverflow from '@/components/v-text-overflow.vue';
 import { usePageSize } from '@/composables/use-page-size';
 import { useRelationM2A } from '@/composables/use-relation-m2a';
 import { DisplayItem, RelationQueryMultiple, useRelationMultiple } from '@/composables/use-relation-multiple';
 import { useRelationPermissionsM2A } from '@/composables/use-relation-permissions';
 import { addRelatedPrimaryKeyToFields } from '@/utils/add-related-primary-key-to-fields';
 import { adjustFieldsForDisplays } from '@/utils/adjust-fields-for-displays';
+import { isCollectionInactive } from '@/utils/collection-status';
+import { getM2ACollectionTemplates } from '@/utils/get-m2a-collection-templates';
 import { hideDragImage } from '@/utils/hide-drag-image';
 import { renderStringTemplate } from '@/utils/render-string-template';
 import DrawerCollection from '@/views/private/components/drawer-collection.vue';
 import DrawerItem from '@/views/private/components/drawer-item.vue';
-import { Filter } from '@directus/types';
-import { getFieldsFromTemplate } from '@directus/utils';
-import { clamp, get, isEmpty, isNil, set } from 'lodash';
-import { computed, ref, toRefs, unref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
-import Draggable from 'vuedraggable';
+import RenderTemplate from '@/views/private/components/render-template.vue';
 
 const props = withDefaults(
 	defineProps<{
@@ -23,6 +38,8 @@ const props = withDefaults(
 		collection: string;
 		field: string;
 		disabled?: boolean;
+		nonEditable?: boolean;
+		version: ContentVersion | null;
 		enableCreate?: boolean;
 		enableSelect?: boolean;
 		limit?: number;
@@ -32,6 +49,7 @@ const props = withDefaults(
 	{
 		value: () => [],
 		disabled: false,
+		nonEditable: false,
 		enableCreate: true,
 		enableSelect: true,
 		limit: 15,
@@ -41,7 +59,7 @@ const props = withDefaults(
 
 const emit = defineEmits(['input']);
 const { t, te } = useI18n();
-const { collection, field, primaryKey, limit } = toRefs(props);
+const { collection, field, primaryKey, limit, version } = toRefs(props);
 const { relationInfo } = useRelationM2A(collection, field);
 
 const value = computed({
@@ -56,23 +74,15 @@ const allowedCollections = computed(() => {
 	return relationInfo.value.allowedCollections.filter((collection) => collection.meta?.singleton !== true);
 });
 
-const templates = computed(() => {
-	if (!relationInfo.value) return {};
-	const templates: Record<string, string> = {};
-
-	for (const collection of allowedCollections.value) {
-		const primaryKeyField = relationInfo.value.relationPrimaryKeyFields[collection.collection];
-		templates[collection.collection] = collection.meta?.display_template || `{{${primaryKeyField?.field}}}`;
-	}
-
-	return templates;
-});
+const templates = computed(() => (relationInfo.value ? getM2ACollectionTemplates(relationInfo.value) : {}));
 
 const fields = computed(() => {
 	if (!relationInfo.value) return [];
 	const fields: string[] = [];
 
 	for (const collection of allowedCollections.value) {
+		if (isCollectionInactive(collection)) continue;
+
 		const displayFields: string[] = adjustFieldsForDisplays(
 			getFieldsFromTemplate(templates.value[collection.collection]),
 			collection.collection,
@@ -121,13 +131,7 @@ const {
 	isItemSelected,
 	isLocalItem,
 	getItemEdits,
-} = useRelationMultiple(value, query, relationInfo, primaryKey);
-
-function getDeselectIcon(item: DisplayItem) {
-	if (item.$type === 'deleted') return 'settings_backup_restore';
-	if (isLocalItem(item)) return 'delete';
-	return 'close';
-}
+} = useRelationMultiple(value, query, relationInfo, primaryKey, version);
 
 function sortItems(items: DisplayItem[]) {
 	const info = relationInfo.value;
@@ -137,7 +141,7 @@ function sortItems(items: DisplayItem[]) {
 	const sortedItems = items.map((item, index) => {
 		const junctionId = item?.[info.junctionPrimaryKeyField.field];
 		const collection = item?.[info.collectionField.field];
-		const pkField = info.relationPrimaryKeyFields[collection].field;
+		const pkField = info.relationPrimaryKeyFields[collection]!.field;
 		const relatedId = item?.[info.junctionField.field]?.[pkField];
 
 		const changes: Record<string, any> = {
@@ -191,9 +195,11 @@ function createItem(collection: string) {
 
 function editItem(item: DisplayItem) {
 	if (!relationInfo.value) return;
+	// The row renders as a non-clickable list item, but the click listener stays bound to it
+	if (isInactiveItem(item)) return;
 
 	const relationPkField =
-		relationInfo.value.relationPrimaryKeyFields[item[relationInfo.value.collectionField.field]].field;
+		relationInfo.value.relationPrimaryKeyFields[item[relationInfo.value.collectionField.field]]!.field;
 
 	const junctionField = relationInfo.value.junctionField.field;
 	const junctionPkField = relationInfo.value.junctionPrimaryKeyField.field;
@@ -250,6 +256,12 @@ function hasAllowedCollection(item: DisplayItem) {
 	);
 }
 
+function isInactiveItem(item: DisplayItem) {
+	const info = relationInfo.value;
+	if (!info) return false;
+	return isCollectionInactive(item[info.collectionField.field]);
+}
+
 function getPrefix(item: DisplayItem) {
 	if (props.prefix) return renderStringTemplate(props.prefix, item).displayValue.value;
 
@@ -303,7 +315,7 @@ const customFilter = computed(() => {
 
 	const selectedPrimaryKeys = selected.value.reduce(
 		(acc, item) => {
-			const relatedPKField = info.relationPrimaryKeyFields[item[info.collectionField.field]].field;
+			const relatedPKField = info.relationPrimaryKeyFields[item[info.collectionField.field]]!.field;
 			if (item[info.collectionField.field] === selectingFrom.value) acc.push(item[junctionField][relatedPKField]);
 			return acc;
 		},
@@ -312,7 +324,7 @@ const customFilter = computed(() => {
 
 	if (selectedPrimaryKeys.length > 0) {
 		filter._and.push({
-			[info.relationPrimaryKeyFields[selectingFrom.value].field]: {
+			[info.relationPrimaryKeyFields[selectingFrom.value]!.field]: {
 				_nin: selectedPrimaryKeys,
 			},
 		});
@@ -334,125 +346,158 @@ const createCollections = computed(() => {
 	});
 });
 
-const canDrag = computed(() => relationInfo.value?.sortField !== undefined && !props.disabled && updateAllowed.value);
+const canDrag = computed(() => relationInfo.value?.sortField !== undefined && updateAllowed.value);
 const allowDrag = computed(() => canDrag.value && totalItemCount.value <= limitWritable.value);
+const createOpen = ref(false);
+const selectOpen = ref(false);
+
+const menuActive = computed(
+	() => Boolean(selectingFrom.value) || editModalActive.value || createOpen.value || selectOpen.value,
+);
 </script>
 
 <template>
-	<v-notice v-if="!relationInfo" type="warning">{{ t('relationship_not_setup') }}</v-notice>
-	<v-notice v-else-if="allowedCollections.length === 0" type="warning">{{ t('no_singleton_relations') }}</v-notice>
-	<div v-else class="m2a-builder">
-		<v-notice v-if="canDrag && !allowDrag">{{ t('interfaces.list-m2a.sorting_disabled') }}</v-notice>
+	<VNotice v-if="!relationInfo" type="warning">{{ $t('relationship_not_setup') }}</VNotice>
+	<VNotice v-else-if="allowedCollections.length === 0" type="warning">{{ $t('no_singleton_relations') }}</VNotice>
+	<div v-else v-prevent-focusout="menuActive" class="m2a-builder">
+		<VNotice v-if="!disabled && canDrag && !allowDrag">{{ $t('interfaces.list-m2a.sorting_disabled') }}</VNotice>
 		<template v-if="loading">
-			<v-skeleton-loader
+			<VSkeletonLoader
 				v-for="n in clamp(totalItemCount - (page - 1) * limitWritable, 1, limitWritable)"
 				:key="n"
 				:type="totalItemCount > 4 ? 'block-list-item-dense' : 'block-list-item'"
 			/>
 		</template>
 
-		<v-list v-else>
-			<v-notice v-if="displayItems.length === 0">{{ t('no_items') }}</v-notice>
+		<template v-else>
+			<VNotice v-if="displayItems.length === 0">{{ $t('no_items') }}</VNotice>
 
-			<draggable
+			<Draggable
+				v-else
 				:model-value="displayItems"
+				tag="v-list"
 				item-key="$index"
 				:set-data="hideDragImage"
-				:disabled="!allowDrag"
+				:disabled="disabled || !allowDrag"
 				v-bind="{ 'force-fallback': true }"
+				handle=".drag-handle"
 				@update:model-value="sortItems"
 			>
 				<template #item="{ element }">
-					<v-list-item
+					<VListItem
 						v-if="hasAllowedCollection(element)"
 						block
+						:disabled="disabled && !nonEditable"
 						:dense="totalItemCount > 4"
-						:class="{ deleted: element.$type === 'deleted' }"
-						clickable
+						:class="{ deleted: element.$type === 'deleted', inactive: isInactiveItem(element) }"
+						:clickable="!isInactiveItem(element)"
 						@click="editItem(element)"
 					>
-						<v-icon v-if="allowDrag" class="drag-handle" left name="drag_handle" @click.stop />
+						<VIcon v-if="allowDrag && !nonEditable" class="drag-handle" left name="drag_handle" :disabled @click.stop />
+
 						<span class="collection">{{ getPrefix(element) }}:</span>
-						<render-template
+
+						<RenderTemplate
 							:collection="element[relationInfo.collectionField.field]"
 							:template="templates[element[relationInfo.collectionField.field]]"
 							:item="element[relationInfo.junctionField.field]"
 						/>
-						<div class="spacer" />
-						<v-icon
-							v-if="!disabled && (deleteAllowed[element[relationInfo.collectionField.field]] || isLocalItem(element))"
-							class="clear-icon"
-							:name="getDeselectIcon(element)"
-							@click.stop="deleteItem(element)"
-						/>
-					</v-list-item>
 
-					<v-list-item v-else block :class="{ deleted: element.$type === 'deleted' }">
-						<v-icon class="invalid-icon" name="warning" left />
-						<span>{{ t('invalid_item') }}</span>
 						<div class="spacer" />
-						<v-icon
-							v-if="!disabled"
-							class="clear-icon"
-							:name="getDeselectIcon(element)"
-							@click.stop="deleteItem(element)"
-						/>
-					</v-list-item>
+
+						<div v-if="!nonEditable" class="item-actions">
+							<VRemove
+								v-if="deleteAllowed[element[relationInfo.collectionField.field]] || isLocalItem(element)"
+								:disabled="disabled || isInactiveItem(element)"
+								:item-type="element.$type"
+								:item-info="relationInfo"
+								:item-is-local="isLocalItem(element)"
+								:item-edits="getItemEdits(element)"
+								@action="deleteItem(element)"
+							/>
+						</div>
+					</VListItem>
+
+					<VListItem
+						v-else
+						block
+						:disabled="disabled && !nonEditable"
+						:class="{ deleted: element.$type === 'deleted' }"
+					>
+						<VIcon class="invalid-icon" name="warning" left />
+
+						<span>{{ $t('invalid_item') }}</span>
+
+						<div class="spacer" />
+
+						<div v-if="!nonEditable" class="item-actions">
+							<VRemove
+								:disabled
+								:item-type="element.$type"
+								:item-info="relationInfo"
+								:item-is-local="isLocalItem(element)"
+								:item-edits="getItemEdits(element)"
+								@action="deleteItem(element)"
+							/>
+						</div>
+					</VListItem>
 				</template>
-			</draggable>
-		</v-list>
+			</Draggable>
+		</template>
 
-		<div class="actions">
-			<v-menu v-if="enableCreate && createCollections.length > 0" :disabled="disabled" show-arrow>
+		<div v-if="!nonEditable" class="actions">
+			<VMenu v-if="enableCreate && createCollections.length > 0" v-model="createOpen" :disabled="disabled" show-arrow>
 				<template #activator="{ toggle }">
-					<v-button :disabled="disabled" @click="toggle">
-						{{ t('create_new') }}
-						<v-icon name="arrow_drop_down" right />
-					</v-button>
+					<VButton :disabled="disabled" @click="toggle">
+						{{ $t('create_new') }}
+						<VIcon name="arrow_drop_down" right />
+					</VButton>
 				</template>
 
-				<v-list>
-					<v-list-item
+				<VList>
+					<VListItem
 						v-for="availableCollection of allowedCollections"
 						:key="availableCollection.collection"
 						clickable
+						:disabled="isCollectionInactive(availableCollection)"
 						@click="createItem(availableCollection.collection)"
 					>
-						<v-list-item-icon>
-							<v-icon :name="availableCollection.icon" />
-						</v-list-item-icon>
-						<v-text-overflow :text="availableCollection.name" />
-					</v-list-item>
-				</v-list>
-			</v-menu>
+						<VListItemIcon>
+							<VIcon :name="availableCollection.icon" />
+						</VListItemIcon>
+						<VTextOverflow :text="availableCollection.name" />
+					</VListItem>
+				</VList>
+			</VMenu>
 
-			<v-menu v-if="enableSelect && selectAllowed" :disabled="disabled" show-arrow>
+			<VMenu v-if="enableSelect && selectAllowed" v-model="selectOpen" :disabled="disabled" show-arrow>
 				<template #activator="{ toggle }">
-					<v-button :disabled="disabled" @click="toggle">
-						{{ t('add_existing') }}
-						<v-icon name="arrow_drop_down" right />
-					</v-button>
+					<VButton :disabled="disabled" @click="toggle">
+						{{ $t('add_existing') }}
+						<VIcon name="arrow_drop_down" right />
+					</VButton>
 				</template>
 
-				<v-list>
-					<v-list-item
+				<VList>
+					<VListItem
 						v-for="availableCollection of allowedCollections"
 						:key="availableCollection.collection"
 						clickable
+						:disabled="isCollectionInactive(availableCollection)"
 						@click="selectingFrom = availableCollection.collection"
 					>
-						<v-list-item-icon>
-							<v-icon :name="availableCollection.icon" />
-						</v-list-item-icon>
-						<v-text-overflow :text="availableCollection.name" />
-					</v-list-item>
-				</v-list>
-			</v-menu>
+						<VListItemIcon>
+							<VIcon :name="availableCollection.icon" />
+						</VListItemIcon>
+						<VTextOverflow :text="availableCollection.name" />
+					</VListItem>
+				</VList>
+			</VMenu>
 
 			<div v-if="pageCount > 1 || limitWritable !== limit" class="pagination">
 				<div v-if="pageSizes.length > 1" class="per-page">
-					<span>{{ t('per_page') }}</span>
-					<v-select
+					<span>{{ $t('per_page') }}</span>
+					<VSelect
 						:model-value="`${limitWritable}`"
 						:items="pageSizes"
 						inline
@@ -460,11 +505,11 @@ const allowDrag = computed(() => canDrag.value && totalItemCount.value <= limitW
 					/>
 				</div>
 
-				<v-pagination v-model="page" :length="pageCount" :total-visible="5" />
+				<VPagination v-model="page" :length="pageCount" :total-visible="2" show-first-last />
 			</div>
 		</div>
 
-		<drawer-collection
+		<DrawerCollection
 			v-if="!disabled && selectingFrom"
 			multiple
 			:active="!!selectingFrom"
@@ -474,11 +519,10 @@ const allowDrag = computed(() => canDrag.value && totalItemCount.value <= limitW
 			@update:active="selectingFrom = null"
 		/>
 
-		<drawer-item
+		<DrawerItem
 			v-model:active="editModalActive"
-			:disabled="
-				disabled || (editingCollection !== null && !updateAllowed[editingCollection] && currentlyEditing !== null)
-			"
+			:disabled="disabled"
+			:non-editable="nonEditable"
 			:collection="relationInfo.junctionCollection.collection"
 			:primary-key="currentlyEditing || '+'"
 			:related-primary-key="relatedPrimaryKey || '+'"
@@ -491,55 +535,60 @@ const allowDrag = computed(() => canDrag.value && totalItemCount.value <= limitW
 </template>
 
 <style lang="scss" scoped>
-.m2a-builder {
-	.v-notice {
-		margin-bottom: 8px;
-	}
-}
+@use '@/styles/mixins';
+
 .v-list {
-	--v-list-padding: 0 0 4px;
+	@include mixins.list-interface($deleteable: true);
+
+	.v-notice + & {
+		margin-block-start: 0.6875rem;
+	}
 }
 
 .v-list-item {
 	.collection {
-		color: var(--theme--primary);
 		white-space: nowrap;
-		margin-right: 1ch;
+		margin-inline-end: 1ch;
 	}
 
-	&.deleted {
-		--v-list-item-border-color: var(--danger-25);
-		--v-list-item-border-color-hover: var(--danger-50);
-		--v-list-item-background-color: var(--danger-10);
-		--v-list-item-background-color-hover: var(--danger-25);
+	&:not(.disabled) .collection {
+		color: var(--theme--primary);
+	}
 
-		::v-deep(.v-icon) {
-			color: var(--danger-75);
-		}
+	&.deleted:not(.disabled) .collection {
+		color: var(--theme--danger);
+	}
 
-		.collection {
-			color: var(--theme--danger);
+	&.disabled {
+		background-color: var(--theme--form--field--input--background-subdued);
+	}
+
+	/* Styled rather than disabled, so the row stays draggable */
+	&.inactive {
+		background-color: var(--theme--form--field--input--background-subdued);
+
+		.collection,
+		:deep(.render-template) {
+			color: var(--theme--foreground-subdued);
 		}
 	}
 }
 
+.item-actions {
+	@include mixins.list-interface-item-actions;
+}
+
 .actions {
-	margin-top: 8px;
-	display: flex;
-	align-items: end;
-	flex-wrap: wrap;
-	gap: 8px;
+	@include mixins.list-interface-actions($pagination: true);
+
+	.v-button {
+		--v-button-padding: 0 0.6875rem 0 1.0625rem;
+	}
 
 	.pagination {
-		margin-left: auto;
+		margin-inline-start: auto;
 		display: flex;
-		gap: 8px 16px;
-
-		.v-pagination {
-			::v-deep(.v-button) {
-				display: inline-flex;
-			}
-		}
+		gap: 0.4375rem 0.875rem;
 
 		.per-page {
 			display: flex;
@@ -548,8 +597,8 @@ const allowDrag = computed(() => canDrag.value && totalItemCount.value <= limitW
 			color: var(--theme--foreground-subdued);
 
 			span {
-				width: auto;
-				margin-right: 4px;
+				inline-size: auto;
+				margin-inline-end: 0.25rem;
 			}
 
 			.v-select {
@@ -559,28 +608,11 @@ const allowDrag = computed(() => canDrag.value && totalItemCount.value <= limitW
 	}
 }
 
-.drag-handle {
-	cursor: grab;
-}
-
 .invalid {
 	cursor: default;
 
 	.invalid-icon {
 		--v-icon-color: var(--theme--danger);
-	}
-}
-
-.clear-icon {
-	--v-icon-color: var(--theme--form--field--input--foreground-subdued);
-	--v-icon-color-hover: var(--theme--danger);
-
-	margin-right: 8px;
-	color: var(--theme--form--field--input--foreground-subdued);
-	transition: color var(--fast) var(--transition);
-
-	&:hover {
-		color: var(--theme--danger);
 	}
 }
 

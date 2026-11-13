@@ -1,38 +1,39 @@
 import { useEnv } from '@directus/env';
-import os from 'node:os';
-import { useLogger } from '../logger.js';
-import { ipInNetworks } from '../utils/ip-in-networks.js';
+import { IpBlocklist } from '@directus/utils/node';
+import { useLogger } from '../logger/index.js';
 
 export function isDeniedIp(ip: string): boolean {
-	const env = useEnv();
+	const { IMPORT_IP_DENY_LIST } = useEnv();
 	const logger = useLogger();
 
-	const ipDenyList = env['IMPORT_IP_DENY_LIST'] as string[];
+	if (IMPORT_IP_DENY_LIST.length === 0) return false;
 
-	if (ipDenyList.length === 0) return false;
+	const blockList = new IpBlocklist();
+	let blockNetworkInterfaces = false;
 
 	try {
-		const denied = ipInNetworks(ip, ipDenyList);
+		for (const blockNetworkRaw of IMPORT_IP_DENY_LIST) {
+			const blockNetwork = blockNetworkRaw.trim();
 
-		if (denied) return true;
+			if (blockNetwork === '0.0.0.0') {
+				blockNetworkInterfaces = true;
+				blockList.parseSubnet('0.0.0.0/8');
+				blockList.parseAddress('::');
+				continue;
+			}
+
+			blockList.parseNetwork(blockNetwork);
+		}
+
+		if (blockNetworkInterfaces) {
+			blockList.addLocalNetworkInterfaces();
+		}
 	} catch (error) {
+		// error adding blocked ranges to the blocklist
 		logger.warn(`Cannot verify IP address due to invalid "IMPORT_IP_DENY_LIST" config`);
 		logger.warn(error);
-
 		return true;
 	}
 
-	if (ipDenyList.includes('0.0.0.0')) {
-		const networkInterfaces = os.networkInterfaces();
-
-		for (const networkInfo of Object.values(networkInterfaces)) {
-			if (!networkInfo) continue;
-
-			for (const info of networkInfo) {
-				if (info.address === ip) return true;
-			}
-		}
-	}
-
-	return false;
+	return blockList.checkAddress(ip);
 }

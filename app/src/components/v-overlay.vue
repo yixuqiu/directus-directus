@@ -34,19 +34,20 @@ function onClick(event: MouseEvent) {
 	Available Variables:
 
 		--v-overlay-z-index  [600]
+		--v-overlay-color    [var(--overlay-color)]
 
 */
 
 .v-overlay {
 	position: fixed;
-	top: 0;
-	left: 0;
+	inset-block-start: 0;
+	inset-inline-start: 0;
 	z-index: var(--v-overlay-z-index, 600);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 100%;
-	height: 100%;
+	inline-size: 100%;
+	block-size: 100%;
 	pointer-events: none;
 
 	&.has-click {
@@ -59,11 +60,11 @@ function onClick(event: MouseEvent) {
 
 	.overlay {
 		position: absolute;
-		top: 0;
-		left: 0;
-		width: 100%;
-		height: 100%;
-		background-color: var(--overlay-color);
+		inset-block-start: 0;
+		inset-inline-start: 0;
+		inline-size: 100%;
+		block-size: 100%;
+		background-color: var(--v-overlay-color, var(--overlay-color));
 		opacity: 0;
 		transition: opacity var(--slow) var(--transition);
 	}

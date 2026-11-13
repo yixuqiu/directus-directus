@@ -1,4 +1,28 @@
 ---
+## Be aware:
+#Due to the way this is imported, JavaScript reserved words, including "delete", "private",
+#"void", etc are stripped out. See
+#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/pluginutils/src/makeLegalIdentifier.ts#L4
+#and
+#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/yaml/src/index.js#L45
+#Illegal words:
+#'break', 'case', 'class', 'catch', 'const', 'continue', 'debugger', 'default', 'delete', 'do',
+#'else', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof',
+#'let', 'new', 'return', 'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void',
+#'while', 'with', 'yield', 'enum', 'await', 'implements', 'package', 'protected', 'static',
+#'interface', 'private', 'public', 'arguments', 'Infinity', 'NaN', 'undefined', 'null', 'true',
+#'false', 'eval', 'uneval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt', 'decodeURI',
+#'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'escape', 'unescape', 'Object',
+#'Function', 'Boolean', 'Symbol', 'Error', 'EvalError', 'InternalError', 'RangeError',
+#'ReferenceError', 'SyntaxError', 'TypeError', 'URIError', 'Number', 'Math', 'Date', 'String',
+#'RegExp', 'Array', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array',
+#'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'Map', 'Set', 'WeakMap', 'WeakSet',
+#'SIMD', 'ArrayBuffer', 'DataView', 'JSON', 'Promise', 'Generator', 'GeneratorFunction', 'Reflect',
+#'Proxy', 'Intl'
+about: Info
+continue: Jätka
+first_name: Eesnimi
+last_name: Perekonnanimi
 identifier: Identifikaator
 avatar: Avatar
 application: Rakendus
@@ -7,9 +31,12 @@ method: Meetod
 published: Avaldatud
 draft: Mustand
 archived: Arhiveeritud
+marketplace: Turg
+extensions: Laiendused
 modules: Moodulid
 module_bar: Mooduliriba
 logs: Logid
+unknown: Tundmatu
 reset_width: Lähtesta Laius
 tile_size: Failisuurus
 edit_field: Muuda Välja
@@ -27,6 +54,8 @@ duplicate_field: Korduv Väli
 half_width: Pool Laiust
 full_width: Täislaius
 group: Grupp
+popular: Populaarsed
+recent: Hiljutised
 export_items: Ekspordi Kirjed
 and: Ja
 or: Või
@@ -36,8 +65,35 @@ modifier: Muutja
 extension_interface: Kasutajaliides
 extension_display: Vaade
 extension_layout: Paigutus
+extension_module: Moodul
+extension_panel: Paneel
+extension_theme: Teema
 extension_hook: Haak
+extension_endpoint: Lõpp-punkt
+extension_operation: Operaator
+extension_bundle: Pakk
+extension_interfaces: Kasutajaliidesed
+extension_layouts: Paigutused
 extension_modules: Moodulid
+extension_panels: Paneelid
+extension_themes: Teemad
+extension_hooks: Haagid
+extension_endpoints: Lõpp-punktid
+extension_operations: Operatsioonid
+extension_bundles: Pakid
+verified: Kinnitatud
+homepage: Avaleht
+repository: Hoidla
+reload_page: Laadi leht uuesti
+reload_required: Uuesti laadimine on nõutud
+report_an_issue: Teata veast
+website: Veebileht
+github: GitHub
+beta: Beeta
+n_downloads: '{n} allalaadimist'
+downloads: Allalaadimised
+enable: Lülita sisse
+disable: Lülita välja
 custom: Kohandatud
 hook: Haak
 fill_width: Täislaius
@@ -62,10 +118,10 @@ requires_value: Väärtus nõutud
 create_preset: Loo Seadistus
 create_panel: Loomise Paneel
 create_role: Loo Roll
+create_policy: Loo poliitika
 create_user: Loo Kasutaja
 message: Sõnum
 delete_panel: Kustutamise Paneel
-create_webhook: Loo Veebikonks
 create_custom_translation: Loo Uus Tõlge
 edit_custom_translation: Muuda Tõlget
 no_custom_translations: Tõlked Puuduvad
@@ -85,7 +141,10 @@ rename_folder: Nimeta Kaust Ümber
 delete_folder: Kustuta Kaust
 prefix: Eesliide
 suffix: Järelliide
-promote_version_preview: Eelvaade
+keep: Säilita
+version: Versioon
+version_key: Versiooni võti
+version_name: Versiooni nimi
 reset_bookmark: Kustuta Järjehoidja
 update_bookmark: Järjehoidja Uuendamine
 delete_bookmark: Kustuta Järjehoidja
@@ -207,7 +266,6 @@ field_in_collection: '{field} ({collection})'
 reset_page_preferences: Lähtesta Lehe Seadistused
 hidden_field: Peidetud Väli
 hidden_on_detail: Üksikasjavaates Peidetud
-disabled_editing_value: Keela välja muutmine
 key: Võti
 alias: Alias
 bigInteger: Big Integer
@@ -228,6 +286,8 @@ time: Kellaaeg
 timestamp: Timestamp
 uuid: UUID
 hash: Hash (räsi)
+theme_light: Hele režiim
+theme_dark: Tume režiim
 not_available_for_type: Pole selle tüübi korral saadaval
 create_translations: Lisa Tõlkeid
 auto_refresh: Automaatne Värskendamine
@@ -239,12 +299,16 @@ auto_generate: Automaatselt loodud
 this_will_auto_setup_fields_relations: See seadistab automaatselt kõik väljad ja seosed.
 click_here: Kliki siia
 to_manually_setup_translations: et käsitsi tõlkeid uuendada.
+manage: Halda
 click_to_manage_translated_fields: >-
   Tõlkeid ei leitud. Lisamiseks klõpsa siia. | Leiti üks tõlgitud väli. Muutmiseks klõpsa siia. | Leiti {count} tõlgitud välja. Nende muutmiseks klõpsa siia.
 fields_group: Väljade grupp
 no_collections_found: Andmedkogusid ei leitud.
 new_data_alert: 'Sinu andmemudelisse lisatakse:'
 search_collection: Otsi Andmekogu...
+search_role: Otsi rolli...
+search_policy: Otsi poliitikat...
+search_field: Otsi välja...
 new_field: 'Uus Väli'
 new_collection: 'Uus Kogumik'
 choose_a_type: Vali Tüüp...
@@ -296,6 +360,7 @@ confirm_revert_body: See taastab kirje valitud väärtuse.
 display: Vaade
 settings_update_success: Seaded on salvestatud
 title: Pealkiri
+subtitle: Alampealkiri
 revision_delta_created: Loodud
 revision_delta_created_externally: Loodud Väliselt
 revision_delta_updated: 'Uuendati 1 väli | Uuendatid {count} välja'
@@ -316,11 +381,14 @@ related_collection: Seotud kogu
 related_collections: Seotud andmekogud
 translations_collection: Tõlgete andmekogu
 languages_collection: Keelte andmekogu
+translations_preview_collections: Kogud
 import_data_input_placeholder: CSV või JSON...
 import_data_button: Alusta importi
 import_data_indeterminate: Laeb Andmeid...
 import_data_success: Andmed edukalt laetud {filename}
 label_import: Impordi
+label_export: Ekspordi
+import_export: Import / Eksport
 format: Vorming
 last_page: Viimane leht
 last_access: Viimati vaadatud
@@ -348,10 +416,12 @@ functions:
   minute: Minut
   second: Sekund
   count: Arv
+  json: JSON
 date-fns_date: PPP
 date-fns_time: 'HH:mm:ss'
 date-fns_time_no_seconds: 'HH:mm'
 date-fns_time_24hour: 'HH:mm:ss'
+date-fns_time_no_seconds_24hour: 'HH:mm'
 date-fns_date_short: 'd. MMM'
 date-fns_time_short: 'H:mm'
 date-fns_date_short_no_year: d. MMM
@@ -382,10 +452,12 @@ file_details: Faili Üksikasjad
 dimensions: Mõõtmed
 size: Suurus
 created: Loodud
+uploaded: Üleslaaditud
 modified: Muudetud
 owner: Omanik
 edited_by: Muutis
 folder: Kaust
+folders: Kaustad
 zoom: Suurenda
 download: Laadi alla
 open: Ava
@@ -399,8 +471,10 @@ import_from_url: Lae aadressilt
 replace_from_device: Asenda Fail seadmest
 replace_from_library: Asenda Fail teegist
 replace_from_url: Asenda Fail aadressilt
+no_image_selected: Ühtegi pilti pole valitud
 no_file_selected: Faili pole valitud
 download_file: Lae fail alla
+open_file_in_tab: Ava fail uuel vahekaardil
 start_export: Alusta Eksporti
 collection_key: Kogumi võti
 name: Nimi
@@ -416,6 +490,7 @@ generated_uuid: Genereeritud UUID
 manual_string: Sisesta sõne käsitsi
 save_and_create_new: Salvesta ja Lisa Uus
 save_and_stay: Salvesta ja jää
+save_and_quit: Salvesta ja lahku
 save_as_copy: Salvesta koopiana
 add_existing: Lisa olemasolev
 creating_items: Kirjete loomine
@@ -425,6 +500,8 @@ enable_select_button: Luba valimise nupp
 allow_duplicates: Luba duplikaadid
 comments: Kommentaarid
 no_comments: Kommentaarid puuduvad
+expand: Laienda
+expand_all: Laienda kõiki
 select_item: Vali kirje
 no_items: Kirjeid pole
 disabled: keelatud
@@ -442,7 +519,6 @@ file_count: 'Faile pole | Leiti 1 fail | {count} faili'
 no_files_copy: Faile pole.
 user_count: 'Kasutajaid pole | Üks kasutaja | {count} kasutajat'
 no_users_copy: Selles rollis pole ühtegi kasutajat.
-webhooks_count: 'Webhooke ei leitud | Üks webhook | {count} webhooki'
 no_notifications: Teavitusi ei ole
 no_notifications_copy: Kõik on ajakohane!
 activity_log: Tegevuste logi
@@ -453,7 +529,6 @@ no_collections: Andmekogusid pole
 create_collection: Loo kogu
 no_collections_copy_admin: Sa pole lisanud veel ühtegi andmekogu. Alustamiseks kliki nupul.
 no_collections_copy: Andmekogusid ei leitud. Palun võta ühendust süsteemi administraatoriga.
-relationship_not_setup: Seos pole korrektselt seadistatud
 display_template_not_setup: Vaadete mall on seadistamata
 collection_field_not_setup: Andmekogu väli on valesti seadistatud
 select_a_collection: Vali andmekogu
@@ -464,12 +539,12 @@ copy: Kopeeri
 copy_to: Kopeeri...
 inactive: Mitteaktiivne
 users: Kasutajad
+roles: Rollid
 activity: Tegevus
 action: Tegevus
 ip_address: IP aadress
 user_agent: Kasutaja agent
 origin: Päritolu
-webhooks: Webhooks
 decimals: Komakohad
 min_value: Min väärtus
 max_value: Maksimaalne väärtus
@@ -531,14 +606,12 @@ errors:
   USER_SUSPENDED: Kasutajakonto on suletud
   VALUE_OUT_OF_RANGE: Väärtus lubatud vahemikust väljas
 security: Turvalisus
-value_hashed: Väärtus salastati
 bookmark_name: Järjehoidja nimi...
 create_bookmark: Loo järjehoidja
 edit_bookmark: Muuda järjehoidjat
 bookmarks: Järjehoidjad
 presets: Eelseadistused
 unexpected_error: Ootamatu viga
-unexpected_error_copy: Ilmnes tõrge. Palun proovi hiljem uuesti.
 copy_details: Kopeeri detailid
 no_app_access: Rakenduse ligipääs puudub
 no_app_access_copy: Sel kasutajal pole lubatud kasutada admin rakendust.
@@ -560,10 +633,6 @@ delete_collection_success: Andmekogu kustutatud
 make_folder_visible: Tee kaust nähtavaks
 make_folder_hidden: Peida kaust
 goto_collection_content: Vaata Sisu
-start_end_of_count_items: '{start}-{end} / {count}'
-start_end_of_count_filtered_items: '{start}-{end} / {count}'
-one_item: '1 kirje'
-one_filtered_item: '1 filtreeritud kirje'
 collections_shown: Nähtavad andmekogud
 visible_collections: Nähtavad andmekogud
 hidden_collections: Peidetud andmekogud
@@ -615,6 +684,7 @@ operators:
   has: Sisaldab neid võtmeid
   intersects: Lõikub
   nintersects: Ei Lõiku
+  json: JSON
 loading: Laadimine...
 drop_to_upload: Lohista üleslaadimiseks
 item: Kirje
@@ -638,7 +708,6 @@ create_item: Loo kirje
 display_template: Vaate mall
 language_display_template: Keele templiit
 translations_display_template: Tõlgete templiit
-n_items_selected: 'Kirjeid pole valitud | Valitud 1 kirje | {n} kirjet valitud'
 per_page: Lehe kohta
 all_files: Kõik failid
 my_files: Minu failid
@@ -670,6 +739,7 @@ update: Uuenda
 delete: Kustuta
 select_fields: Vali väljad
 format_text: Vormista tekst
+operator: Operaator
 bold: Paks kiri
 toggle: Lülita
 icon_on: Ikoon sees
@@ -680,6 +750,16 @@ flow_name: Nimi
 flow_tracking_activity: Jälgi ainult aktiivsust
 flow_tracking_null: Ära jälgi midagi
 code: Kood
+deployment:
+  provider:
+    settings:
+      delete_confirm: See tegevus on lõplik ja seda ei saa tühistada. Kas oled kindel, et jätkame?
+    run:
+      cancel_confirm: See tegevus on lõplik ja seda ei saa tühistada. Kas oled kindel, et jätkame?
+  target_value:
+    preview: Eelvaade
+dashboard: Töölaud
+panel: Paneel
 details: Üksikasjad
 full_screen: Täisekraan
 image_url: Pildi URL
@@ -695,8 +775,6 @@ tooltip: Vihje
 tooltip_placeholder: Sisesta vihje...
 unlimited: Piiramatu
 open_link_in: Ava link
-new_tab: Uus vahekaart
-current_tab: Praegune vahekaart
 wysiwyg_options:
   aligncenter: Joonda Keskele
   alignjustify: Joonda kahepoolselt
@@ -716,6 +794,8 @@ wysiwyg_options:
   bullist: Punktloetelu
   numlist: Numbriline loetelu
   hr: Horisontaaljoon
+  insertdatetime_date: Kuupäev
+  insertdatetime_time: Kellaaeg
   link: Lisa/muuda linki
   unlink: Eemalda link
   media: Lisa/muuda meedia
@@ -744,6 +824,8 @@ wysiwyg_options:
   source_code: Muuda lähtekoodi
   fullscreen: Täisekraan
   directionality: Suund
+  ltr: Vasakult paremale
+  rtl: Paremalt vasakule
 dropdown: Rippmenüü
 choices: Valikud
 choices_option_configured_incorrectly: Valikud pole korrektselt seadistatud
@@ -760,7 +842,15 @@ editing_in_batch: '{count} kirje hulgi muutmine'
 no_options_available: Valikud puuduvad
 settings_data_model: Andmemudel
 settings_project: Seaded
-settings_webhooks: Webhooks
+licensing:
+  unlimited: Piiramatu
+  addon_manage: Halda
+  addon_update: Uuenda
+  resolve_continue: Jätka
+  resolve_show_n_more: 'Näita veel {count}'
+  resolve_sso_admin_password: Parool
+  entitlements:
+    collections: Kogud
 settings_presets: Järjehoidjad
 settings_translations: Tõlked
 one_or_more_options_are_missing: Üks või mitu valikut puuduvad
@@ -778,33 +868,6 @@ unsaved_changes: Salvestamata muudatused
 unsaved_changes_copy: Oled sa kindel, et soovid sellelt lehelt lahkuda?
 discard_changes: Loobu muudatustest
 keep_editing: Jätka muutmist
-page_help_collections_collection: >-
-  **Vaata kirjeid* - näitab kõiki {collection} andmekogu kirjeid, millele sul on ligipääs. Kiiremaks ligipääsuks saad seadistada vaateid, filtreid, sorteerimist ning lisada järjehoidjaid.
-page_help_collections_item: >-
-  **Kirje detailid** - Selle kirje vaatamise ja muutmise vorm. Külgribal on ühtlasi kirje muudatuste ajalugu ning lisatud kommentaarid.
-page_help_activity_collection: >-
-  **Vaata aktiivsust* - Põhjalik nimekiri kõigist toimingutest, mis süsteemis on tehtud.
-page_help_docs_global: >-
-  **Dokumentatsioon** — Selle projekti ülesehitust kirjeldav teave.
-page_help_files_collection: >-
-  **Failikogu* - Näitab kõiki faile ja pilte selles projektis. Muuta saab vaateid, filtreid jm ning lisada järjehoidjaid
-page_help_files_item: >-
-  **Faili detailid* — Vorm, milles saab muuta faili metaandmeid, ligipääse jm.
-page_help_settings_datamodel_collections: >-
-  **Andmekogud** — Näitab olemasolevaid andmekogusid. Samuti ka nähtavaid, peidetud, ja süsteemi kogusid, lisaks ka haldamata andmebaaside tabeleid, mida saab lisada.
-page_help_settings_datamodel_fields: >-
-  **Andmekogu** — Ükskiku andmekogu ja tema väljade muutmise vorm.
-page_help_settings_roles_collection: '**Vaata rolle* — Näitab adminne, avalikke jm kasutajarolle.'
-page_help_settings_roles_item: "**Rolli detailid** - Muuda rolli ligipääse ja muid seadistusti."
-page_help_settings_presets_collection: >-
-  **Näita eelseadistusi** — Näitab kõiki projekti eelseadistusi, sh kasutajad, rollid, järjehoidjad ja vaikimisi vaated.
-page_help_settings_presets_item: >-
-  **Eelseadistuse detailid" - Vorm järjehoidjate ja andmekogude eelseadistuste muutmiseks.
-page_help_settings_webhooks_collection: '**Vaata veebikonkse** - Näitab veebikonkse.'
-page_help_settings_webhooks_item: '**Veebikonksu detailid** - Vorm veebikonksude lisamiseks ja muutmiseks.'
-page_help_users_collection: '**Kasutajad** - Näitab kõiki kasutajaid.'
-page_help_users_item: >-
-  **Kasutaja detailid** - Näitab konto infot.
 activity_feed: Tegevusvoog
 add_new: Lisa uus
 create_new: Loo Uus
@@ -814,6 +877,7 @@ no_layout_collection_selected_yet: Vaadet/andmekogu pole valitud
 batch_delete_confirm: >-
   Ühtegi kirjet pole valitud | Oled sa kindel, et soovid selle kirje kustutada? Seda toimingut ei saa tagasi võtta. | Oled sa kindel, et soovid need {count} ühikut kustutada? Seda toimingut ei saa tagasi võtta.
 cancel: Loobu
+source_registry: Turg
 collection: Kogud
 collections: Kogud
 content: Sisu
@@ -836,6 +900,7 @@ fields:
     collection: Kogud
     icon: Ikoon
     note: Märkus
+    status: Staatus
     color: Värv
     display_template: Vaate mall
     hidden: Peidetud
@@ -917,17 +982,9 @@ fields:
     name: Rolli Nimi
     icon: Rolli pilt
     description: Kirjeldus
-    app_access: Rakenduse ligipääs
-    admin_access: Admini ligipääs
-    ip_access: IP ligipääs
-    enforce_tfa: 2FA on nõutav
     users: Kasutajad selles rollis
-    module_list: Moodulite näitamine
-  directus_webhooks:
-    name: Nimi
-    status: Staatus
-    value: Väärtus
-    collections: Kogud
+  directus_policies:
+    description: Kirjeldus
 field_options:
   directus_settings:
     security_divider_title: Turvalisus
@@ -954,16 +1011,10 @@ field_options:
       name_placeholder: Sisesta pealkiri...
     collections_name: Kogud
   directus_users:
+    dropdown_light: Hele režiim
+    dropdown_dark: Tume režiim
     status_dropdown_active: aktiivne
     status_dropdown_archived: Arhiveeritud
-  directus_webhooks:
-    status_options_active: aktiivne
-    status_options_inactive: Mitteaktiivne
-    actions_create: Loo
-    actions_update: Uuenda
-    actions_delete: Kustuta
-    headers:
-      value: Väärtus
 no_fields_in_collection: 'Andmekogus "{collection}" puuduvad kirjed'
 do_nothing: Ära tee midagi
 generate_and_save_uuid: Genereeri ja salvesta UUID
@@ -975,6 +1026,25 @@ inline: Tekstisisene
 comment: Kommentaar
 live_preview:
   new_window: Ava Uues Aknas
+ai:
+  input: Sisend
+  unknown: Tundmatu
+  items: kirjet
+  content: Sisu
+  settings: Seaded
+  tool_approval:
+    disabled: keelatud
+  ask_user_submit: Saada
+  ask_user_next: Järgmine
+ai_tools:
+  items: kirjet
+  files: Failid
+  folders: Kaustad
+  operations: Operatsioonid
+  schema: Skeem
+  collections: Kogud
+mcp_prompts_collection_schema:
+  messages_role_user: Kasutaja
 relational_triggers: Suhtelised lülitid
 referential_action_field_label_m2o: Andmekogu {collection} kustutamisel...
 referential_action_field_label_o2m: Andmekogu {collection} mittevalimisel...
@@ -985,7 +1055,6 @@ referential_action_set_default: Seadista {field} väljale vaikeväärtus
 choose_action: Vali tegevus
 continue_label: Jätka
 editing_role: '{role} roll'
-creating_webhook: Loo veebikonks
 delete_are_you_sure: >-
   See tegevus on lõplik ja seda ei saa tühistada. Kas oled kindel, et jätkame?
 delete_field_are_you_sure: >-
@@ -1058,10 +1127,10 @@ interfaces:
     add_filter: Lisa filter
     all: Kõik
     any: Ükskõik milline
+  group-tabs:
+    fill_width: Täislaius
   presentation-links:
-    presentation-links: Nuppude lingid
-    links: Lingid
-    description: Seadistatavad nupud dünaamiliste URLide avamiseks
+    presentation-links: Nupud
     style: Stiil
     primary: Peamine
     link: Lingid
@@ -1165,6 +1234,8 @@ interfaces:
     description: Sisesta ja vaata markdown'i
     edit: Muuda
     preview: Eelvaade
+    default_view: Vaikimisi vaade
+    default_view_preview: Eelvaade
     customSyntax: Kohandatud plokid
     customSyntax_label: Lisa kohandatud süntaksi tüüpe
     customSyntax_add: Lisa kohandatud süntaks
@@ -1198,6 +1269,7 @@ interfaces:
     sort: Sorteeri
     field_note_placeholder: Sisesta välja märkus...
     interface_group: Kasutajaliidese valikud
+    edit_mode_inline: Tekstisisene
   slider:
     slider: Liugur
     description: Vali number slaiderilt
@@ -1259,8 +1331,8 @@ interfaces:
     wysiwyg: WYSIWYG
     description: Tekstiredaktor HTML sisu loomiseks
     toolbar: Tööriistariba
+    extensions: Laiendused
     custom_formats: Kohandatud vormingud
-    options_override: Valikute ülekirjutamine
     folder_note: Üles laetud failide kaust. Ei mõjuta olemasolevaid faile.
   input-block-editor:
     tools: Tööriistariba
@@ -1279,6 +1351,8 @@ interfaces:
     rate: Hinnang
   system-token:
     system-token: Kontrollkood
+  header:
+    links: Lingid
 displays:
   translations:
     translations: Tõlked
@@ -1410,6 +1484,9 @@ both: Mõlemad
 panels:
   label:
     name: Silt
+triggers:
+  webhook:
+    method: Meetod
 operations:
   json-web-token:
     token: Kontrollkood
@@ -1424,6 +1501,7 @@ operations:
     subject: Teema
   request:
     url: URL
+    method: Meetod
 standard: Standard
 compact: Kompaktne
 style: Stiil
@@ -1433,3 +1511,4 @@ fonts:
   black: Must
   italic: Kaldkiri
   auto: Automaatne
+set_to_now: Seadista praegusele hetkele

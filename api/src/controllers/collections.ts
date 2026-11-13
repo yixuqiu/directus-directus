@@ -17,12 +17,21 @@ router.post(
 			schema: req.schema,
 		});
 
+		const attemptConcurrentIndex =
+			'concurrentIndexCreation' in req.query && req.query['concurrentIndexCreation'] !== 'false';
+
 		if (Array.isArray(req.body)) {
-			const collectionKey = await collectionsService.createMany(req.body);
+			const collectionKey = await collectionsService.createMany(req.body, {
+				attemptConcurrentIndex,
+			});
+
 			const records = await collectionsService.readMany(collectionKey);
 			res.locals['payload'] = { data: records || null };
 		} else {
-			const collectionKey = await collectionsService.createOne(req.body);
+			const collectionKey = await collectionsService.createOne(req.body, {
+				attemptConcurrentIndex,
+			});
+
 			const record = await collectionsService.readOne(collectionKey);
 			res.locals['payload'] = { data: record || null };
 		}
@@ -43,7 +52,7 @@ const readHandler = asyncHandler(async (req, res, next) => {
 		schema: req.schema,
 	});
 
-	let result: Item[] = [];
+	let result: Item[];
 
 	if (req.body.keys) {
 		result = await collectionsService.readMany(req.body.keys);

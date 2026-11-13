@@ -1,25 +1,33 @@
+import type { ReadStream, Stats } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
+import os from 'node:os';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import path from 'path';
+import { HYBRID_EXTENSION_TYPES } from '@directus/constants';
 import { useEnv } from '@directus/env';
-import type {
-	ApiExtension,
-	BundleExtension,
-	EndpointConfig,
-	Extension,
-	ExtensionSettings,
-	HookConfig,
-	HybridExtension,
-	OperationApiConfig,
-} from '@directus/extensions';
-import { APP_SHARED_DEPS, HYBRID_EXTENSION_TYPES } from '@directus/extensions';
+import { APP_SHARED_DEPS } from '@directus/extensions';
 import { generateExtensionsEntrypoint } from '@directus/extensions/node';
+import DriverLocal from '@directus/storage-driver-local';
 import type {
 	ActionHandler,
+	ApiExtension,
+	BundleConfig,
+	BundleExtension,
 	EmbedHandler,
+	EndpointConfig,
+	Extension,
+	ExtensionManagerOptions,
+	ExtensionSettings,
 	FilterHandler,
+	HookConfig,
+	HybridExtension,
 	InitHandler,
+	OperationApiConfig,
 	PromiseCallback,
 	ScheduleHandler,
 } from '@directus/types';
-import { isTypeIn, toBoolean } from '@directus/utils';
+import { isTypeIn } from '@directus/utils';
 import { pathToRelativeUrl, processId } from '@directus/utils/node';
 import aliasDefault from '@rollup/plugin-alias';
 import nodeResolveDefault from '@rollup/plugin-node-resolve';
@@ -28,23 +36,19 @@ import chokidar, { FSWatcher } from 'chokidar';
 import express, { Router } from 'express';
 import ivm from 'isolated-vm';
 import { clone, debounce, isPlainObject } from 'lodash-es';
-import { readFile, readdir } from 'node:fs/promises';
-import os from 'node:os';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import path from 'path';
+import PQueue from 'p-queue';
+import { rolldown } from 'rolldown';
 import { rollup } from 'rollup';
 import { useBus } from '../bus/index.js';
 import getDatabase from '../database/index.js';
 import emitter, { Emitter } from '../emitter.js';
 import { getFlowManager } from '../flows.js';
-import { useLogger } from '../logger.js';
+import { useLogger } from '../logger/index.js';
 import * as services from '../services/index.js';
 import { deleteFromRequireCache } from '../utils/delete-from-require-cache.js';
 import getModuleDefault from '../utils/get-module-default.js';
 import { getSchema } from '../utils/get-schema.js';
 import { importFileUrl } from '../utils/import-file-url.js';
-import { JobQueue } from '../utils/job-queue.js';
 import { scheduleSynchronizedJob, validateCron } from '../utils/schedule.js';
 import { getExtensionsPath } from './lib/get-extensions-path.js';
 import { getExtensionsSettings } from './lib/get-extensions-settings.js';
@@ -54,9 +58,8 @@ import { getInstallationManager } from './lib/installation/index.js';
 import type { InstallationManager } from './lib/installation/manager.js';
 import { generateApiExtensionsSandboxEntrypoint } from './lib/sandbox/generate-api-extensions-sandbox-entrypoint.js';
 import { instantiateSandboxSdk } from './lib/sandbox/sdk/instantiate.js';
-import { syncExtensions } from './lib/sync-extensions.js';
+import { type ExtensionSyncOptions, syncExtensions } from './lib/sync/sync.js';
 import { wrapEmbeds } from './lib/wrap-embeds.js';
-import type { BundleConfig, ExtensionManagerOptions } from './types.js';
 
 // Workaround for https://github.com/rollup/plugins/issues/1329
 const virtual = virtualDefault as unknown as typeof virtualDefault.default;
@@ -69,16 +72,16 @@ const env = useEnv();
 
 const defaultOptions: ExtensionManagerOptions = {
 	schedule: true,
-	watch: env['EXTENSIONS_AUTO_RELOAD'] as boolean,
+	watch: env.EXTENSIONS_AUTO_RELOAD,
 };
 
 export class ExtensionManager {
 	private options: ExtensionManagerOptions = defaultOptions;
 
 	/**
-	 * Whether or not the extensions have been read from disk and registered into the system
+	 * Set once the initial load completes and never reset, so a failed reload doesn't block later ones
 	 */
-	private isLoaded = false;
+	private isInitialized = false;
 
 	// folder:Extension
 	private localExtensions: Map<string, Extension> = new Map();
@@ -95,21 +98,15 @@ export class ExtensionManager {
 	private extensionsSettings: ExtensionSettings[] = [];
 
 	/**
-	 * App extensions rolled up into a single bundle. Any chunks from the bundle will be available
-	 * under appExtensionChunks
-	 */
-	private appExtensionsBundle: string | null = null;
-
-	/**
 	 * Individual filename chunks from the rollup bundle. Used to improve the performance by allowing
 	 * extensions to split up their bundle into multiple smaller chunks
 	 */
-	private appExtensionChunks: Map<string, string> = new Map();
+	private appExtensionChunks: string[] = [];
 
 	/**
 	 * Callbacks to be able to unregister extensions
 	 */
-	private unregisterFunctionMap: Map<string, PromiseCallback> = new Map();
+	private unregisterFunctionMap: Map<string, () => Promise<void>> = new Map();
 
 	/**
 	 * A local-to-extensions scoped emitter that can be used to fire and listen to custom events
@@ -138,7 +135,7 @@ export class ExtensionManager {
 	 * Used to prevent race conditions when reloading extensions. Forces each reload to happen in
 	 * sequence.
 	 */
-	private reloadQueue: JobQueue = new JobQueue();
+	private reloadQueue: PQueue = new PQueue({ concurrency: 1 });
 
 	/**
 	 * Optional file system watcher to auto-reload extensions when the local file system changes
@@ -187,6 +184,7 @@ export class ExtensionManager {
 	public async initialize(options: Partial<ExtensionManagerOptions> = {}): Promise<void> {
 		const logger = useLogger();
 
+		// Applied on every call, as the app initializes again after the CLI to enable schedules and watching
 		this.options = {
 			...defaultOptions,
 			...options,
@@ -200,59 +198,97 @@ export class ExtensionManager {
 			await this.closeWatcher();
 		}
 
-		if (!this.isLoaded) {
+		// Ensure reloads requested during the initial load wait for it, rather than being skipped
+		await this.reloadQueue.add(async () => {
+			if (this.isInitialized) return;
+
+			try {
+				await syncExtensions({ forceSync: true });
+			} catch (error) {
+				logger.error(`Failed to sync extensions`);
+				logger.error(error);
+				process.exit(1);
+			}
+
 			await this.load();
+
+			this.isInitialized = true;
 
 			if (this.extensions.length > 0) {
 				logger.info(`Loaded extensions: ${this.extensions.map((ext) => ext.name).join(', ')}`);
 			}
-		}
+
+			this.messenger
+				.subscribe(this.reloadChannel, (payload: Record<string, unknown>) => {
+					// Ignore empty messages, and requests for reloading that were published by the current process
+					if (!isPlainObject(payload) || payload['origin'] === this.processId) return;
+					// Reload extensions with event options
+					const options: ExtensionSyncOptions = {};
+					if (typeof payload['forceSync'] === 'boolean') options.forceSync = payload['forceSync'];
+					if (typeof payload['partialSync'] === 'string') options.partialSync = payload['partialSync'];
+
+					this.reload(options);
+				})
+				.catch((error) => {
+					logger.error(error, 'Failed to subscribe to extension reload messages');
+				});
+		});
 
 		if (this.options.watch && !wasWatcherInitialized) {
-			this.updateWatchedExtensions(Array.from(this.localExtensions.values()));
+			this.updateWatchedExtensions([...this.extensions]);
 		}
-
-		this.messenger.subscribe(this.reloadChannel, (payload: Record<string, unknown>) => {
-			// Ignore requests for reloading that were published by the current process
-			if (isPlainObject(payload) && 'origin' in payload && payload['origin'] === this.processId) return;
-			this.reload();
-		});
 	}
 
 	/**
 	 * Installs an external extension from registry
 	 */
 	public async install(versionId: string): Promise<void> {
+		const logger = useLogger();
+
 		await this.installationManager.install(versionId);
-		await this.reload({ forceSync: true });
-		await this.broadcastReloadNotification();
+
+		const resolvedFolder = relative(sep, resolve(sep, versionId));
+		const syncFolder = join('.registry', resolvedFolder);
+
+		await this.broadcastReloadNotification({ partialSync: syncFolder });
+		await this.reload({ skipSync: true });
+
+		emitter.emitAction('extensions.installed', {
+			extensions: this.extensions,
+			versionId,
+		});
+
+		logger.info(`Installed extension: ${versionId}`);
 	}
 
 	public async uninstall(folder: string) {
+		const logger = useLogger();
+
 		await this.installationManager.uninstall(folder);
-		await this.reload({ forceSync: true });
-		await this.broadcastReloadNotification();
+
+		const resolvedFolder = relative(sep, resolve(sep, folder));
+		const syncFolder = join('.registry', resolvedFolder);
+
+		await this.broadcastReloadNotification({ partialSync: syncFolder });
+		await this.reload({ skipSync: true });
+
+		emitter.emitAction('extensions.uninstalled', {
+			extensions: this.extensions,
+			folder,
+		});
+
+		logger.info(`Uninstalled extension: ${folder}`);
 	}
 
-	public async broadcastReloadNotification() {
-		await this.messenger.publish(this.reloadChannel, { origin: this.processId });
+	public async broadcastReloadNotification(options?: ExtensionSyncOptions) {
+		await this.messenger.publish(this.reloadChannel, { ...options, origin: this.processId });
 	}
 
 	/**
 	 * Load all extensions from disk and register them in their respective places
 	 */
-	private async load(options?: { forceSync: boolean }): Promise<void> {
+	private async load(): Promise<void> {
 		const logger = useLogger();
-
-		if (env['EXTENSIONS_LOCATION']) {
-			try {
-				await syncExtensions({ force: options?.forceSync ?? false });
-			} catch (error) {
-				logger.error(`Failed to sync extensions`);
-				logger.error(error);
-				process.exit(1);
-			}
-		}
 
 		try {
 			const { local, registry, module } = await getExtensions();
@@ -268,51 +304,59 @@ export class ExtensionManager {
 
 		await Promise.all([this.registerInternalOperations(), this.registerApiExtensions()]);
 
-		if (env['SERVE_APP']) {
-			this.appExtensionsBundle = await this.generateExtensionBundle();
+		if (env.SERVE_APP) {
+			await this.generateExtensionBundle();
 		}
 
-		this.isLoaded = true;
+		emitter.emitAction('extensions.load', {
+			extensions: this.extensions,
+		});
+
+		logger.info('Extensions loaded');
 	}
 
 	/**
 	 * Unregister all extensions from the current process
 	 */
 	private async unload(): Promise<void> {
+		emitter.emitAction('extensions.unload', {
+			extensions: this.extensions,
+		});
+
 		await this.unregisterApiExtensions();
 
 		this.localEmitter.offAll();
 
-		this.appExtensionsBundle = null;
+		const logger = useLogger();
 
-		this.isLoaded = false;
+		logger.info('Extensions unloaded');
 	}
 
 	/**
 	 * Reload all the extensions. Will unload if extensions have already been loaded
 	 */
-	public reload(options?: { forceSync: boolean }): Promise<unknown> {
+	public reload(options?: ExtensionSyncOptions): Promise<unknown> {
 		if (this.reloadQueue.size > 0) {
-			// The pending job in the queue will already handle the additional changes
-			return Promise.resolve();
+			// The pending job in the queue will already handle the additional changes, so wait for it
+			return this.reloadQueue.onIdle();
 		}
 
 		const logger = useLogger();
 
-		let resolve: (val?: unknown) => void;
-		let reject: (val?: unknown) => void;
+		return this.reloadQueue.add(async () => {
+			if (!this.isInitialized) {
+				logger.warn('Extensions have to be loaded before they can be reloaded');
+				return;
+			}
 
-		const promise = new Promise((res, rej) => {
-			resolve = res;
-			reject = rej;
-		});
+			try {
+				// Sync before unloading, so a failed sync happens before unload
+				await syncExtensions(options);
 
-		this.reloadQueue.enqueue(async () => {
-			if (this.isLoaded) {
 				const prevExtensions = clone(this.extensions);
 
 				await this.unload();
-				await this.load(options);
+				await this.load();
 
 				logger.info('Extensions reloaded');
 
@@ -329,6 +373,12 @@ export class ExtensionManager {
 				const addedExtensions = added.map((extension) => extension.name);
 				const removedExtensions = removed.map((extension) => extension.name);
 
+				emitter.emitAction('extensions.reload', {
+					extensions: this.extensions,
+					added: addedExtensions,
+					removed: removedExtensions,
+				});
+
 				if (addedExtensions.length > 0) {
 					logger.info(`Added extensions: ${addedExtensions.join(', ')}`);
 				}
@@ -336,29 +386,43 @@ export class ExtensionManager {
 				if (removedExtensions.length > 0) {
 					logger.info(`Removed extensions: ${removedExtensions.join(', ')}`);
 				}
-
-				resolve();
-			} else {
-				logger.warn('Extensions have to be loaded before they can be reloaded');
-				reject(new Error('Extensions have to be loaded before they can be reloaded'));
+			} catch (error) {
+				logger.error(
+					error,
+					'Failed to reload extensions, extensions on this instance may be outdated until the next reload',
+				);
 			}
 		});
-
-		return promise;
 	}
 
 	/**
-	 * Return the previously generated app extensions bundle
+	 * Resolves once no reload is running or waiting, to prevent reading extension data mid-reload
 	 */
-	public getAppExtensionsBundle(): string | null {
-		return this.appExtensionsBundle;
+	public isReloading(): Promise<void> {
+		return this.reloadQueue.onIdle();
 	}
 
 	/**
-	 * Return the previously generated app extension bundle chunk by name
+	 * Return the previously generated app extension bundle chunk by name.
+	 * Providing no name will return the entry bundle.
 	 */
-	public getAppExtensionChunk(name: string): string | null {
-		return this.appExtensionChunks.get(name) ?? null;
+	public async getAppExtensionChunk(name?: string): Promise<ReadStream | null> {
+		let file: string | undefined;
+
+		if (!name) {
+			file = this.appExtensionChunks[0];
+		} else if (this.appExtensionChunks.includes(name)) {
+			file = name;
+		}
+
+		if (!file) return null;
+
+		const tempDir = join(env.TEMP_PATH, 'app-extensions');
+		const tmpStorage = new DriverLocal({ root: tempDir });
+
+		if ((await tmpStorage.exists(file)) === false) return null;
+
+		return await tmpStorage.read(file);
 	}
 
 	/**
@@ -379,6 +443,33 @@ export class ExtensionManager {
 	}
 
 	/**
+	 * Check if a file path matches a watched extension's dist entrypoint
+	 * by looking up the folder name in the existing extension maps
+	 */
+	private isWatchedExtensionPath(filePath: string): boolean {
+		const extensionDir = path.resolve(getExtensionsPath());
+
+		const folderName = path.relative(extensionDir, filePath).split(path.sep).shift();
+
+		if (!folderName) return false;
+
+		const extension = this.localExtensions.get(folderName);
+
+		if (!extension) return false;
+
+		const resolvedPath = path.resolve(filePath);
+
+		if (isTypeIn(extension, HYBRID_EXTENSION_TYPES) || extension.type === 'bundle') {
+			return (
+				path.resolve(extension.path, extension.entrypoint.app) === resolvedPath ||
+				path.resolve(extension.path, extension.entrypoint.api) === resolvedPath
+			);
+		}
+
+		return path.resolve(extension.path, extension.entrypoint) === resolvedPath;
+	}
+
+	/**
 	 * Start the chokidar watcher for extensions on the local filesystem
 	 */
 	private initializeWatcher(): void {
@@ -386,18 +477,39 @@ export class ExtensionManager {
 
 		logger.info('Watching extensions for changes...');
 
-		const extensionDirUrl = pathToRelativeUrl(getExtensionsPath());
+		const extensionDirPath = pathToRelativeUrl(getExtensionsPath());
 
-		this.watcher = chokidar.watch(
-			[path.resolve('package.json'), path.posix.join(extensionDirUrl, '*', 'package.json')],
-			{
-				ignoreInitial: true,
-				// dotdirs are watched by default and frequently found in 'node_modules'
-				ignored: `${extensionDirUrl}/**/node_modules/**`,
-				// on macOS dotdirs in linked extensions are watched too
-				followSymlinks: os.platform() === 'darwin' ? false : true,
+		const resolvedExtDir = path.resolve(extensionDirPath);
+
+		this.watcher = chokidar.watch([path.resolve('package.json'), extensionDirPath], {
+			ignoreInitial: true,
+			// Only top level watch inside extensions folder is necessary, "dist" paths are added via updateWatchedExtensions
+			depth: 1,
+			ignored: (val: string, stats?: Stats) => {
+				if (val.includes('node_modules')) return true;
+
+				// allow directory traversal so chokidar can reach nested package.json files
+				if (!stats || stats.isDirectory()) return false;
+
+				// allow root package.json and package.json in direct extension dirs (extensionsDir/*/package.json)
+				if (val.endsWith('package.json')) {
+					const resolvedVal = path.resolve(val);
+
+					// root package.json
+					if (!resolvedVal.startsWith(resolvedExtDir + path.sep)) return false;
+
+					// allow if within an extension folder dir
+					return path.dirname(resolvedVal) === resolvedExtDir;
+				}
+
+				// allow "dist" entrypoints added via updateWatchedExtensions
+				if (this.isWatchedExtensionPath(val)) return false;
+
+				return true;
 			},
-		);
+			// on macOS dotdirs in linked extensions are watched too
+			followSymlinks: os.platform() === 'darwin' ? false : true,
+		});
 
 		this.watcher
 			.on(
@@ -437,16 +549,13 @@ export class ExtensionManager {
 
 		const toPackageExtensionPaths = (extensions: Extension[]) =>
 			extensions
-				.filter(
-					(extension) =>
-						extension.local && extension.path.startsWith(extensionDir) && !extension.path.startsWith(registryDir),
-				)
+				.filter((extension) => extension.local && !extension.path.startsWith(registryDir))
 				.flatMap((extension) =>
 					isTypeIn(extension, HYBRID_EXTENSION_TYPES) || extension.type === 'bundle'
 						? [
 								path.resolve(extension.path, extension.entrypoint.app),
 								path.resolve(extension.path, extension.entrypoint.api),
-						  ]
+							]
 						: path.resolve(extension.path, extension.entrypoint),
 				);
 
@@ -458,8 +567,9 @@ export class ExtensionManager {
 	 * Uses rollup to bundle the app extensions together into a single file the app can download and
 	 * run.
 	 */
-	private async generateExtensionBundle(): Promise<string | null> {
+	private async generateExtensionBundle(): Promise<void> {
 		const logger = useLogger();
+		const env = useEnv();
 
 		const sharedDepsMapping = await getSharedDepsMapping(APP_SHARED_DEPS);
 
@@ -474,37 +584,38 @@ export class ExtensionManager {
 		);
 
 		try {
-			const bundle = await rollup({
+			/** Opt In for now. Should be @deprecated later to always use rolldown! */
+			const rollDirection = env.EXTENSIONS_ROLLDOWN ? rolldown : rollup;
+
+			const bundle = await rollDirection({
 				input: 'entry',
 				external: Object.values(sharedDepsMapping),
 				makeAbsoluteExternalsRelative: false,
 				plugins: [virtual({ entry: entrypoint }), alias({ entries: internalImports }), nodeResolve({ browser: true })],
 			});
 
-			const { output } = await bundle.generate({ format: 'es', compact: true });
+			const tempDir = join(env.TEMP_PATH, 'app-extensions');
 
-			for (const out of output) {
-				if (out.type === 'chunk') {
-					this.appExtensionChunks.set(out.fileName, out.code);
-				}
-			}
+			const { output } = await bundle.write({
+				format: 'es',
+				dir: tempDir,
+			});
+
+			this.appExtensionChunks = output.reduce<string[]>((acc, chunk) => {
+				if (chunk.type === 'chunk') acc.push(chunk.fileName);
+
+				return acc;
+			}, []);
 
 			await bundle.close();
-
-			return output[0].code;
 		} catch (error) {
 			logger.warn(`Couldn't bundle App extensions`);
 			logger.warn(error);
 		}
-
-		return null;
 	}
 
 	private async registerSandboxedApiExtension(extension: ApiExtension | HybridExtension) {
 		const logger = useLogger();
-
-		const sandboxMemory = Number(env['EXTENSIONS_SANDBOX_MEMORY']);
-		const sandboxTimeout = Number(env['EXTENSIONS_SANDBOX_TIMEOUT']);
 
 		const entrypointPath = path.resolve(
 			extension.path,
@@ -514,7 +625,7 @@ export class ExtensionManager {
 		const extensionCode = await readFile(entrypointPath, 'utf-8');
 
 		const isolate = new ivm.Isolate({
-			memoryLimit: sandboxMemory,
+			memoryLimit: env.EXTENSIONS_SANDBOX_MEMORY,
 			onCatastrophicError: (error) => {
 				logger.error(`Error in API extension sandbox of ${extension.type} "${extension.name}"`);
 				logger.error(error);
@@ -524,6 +635,7 @@ export class ExtensionManager {
 		});
 
 		const context = await isolate.createContext();
+		context.global.setSync('process', { env: { NODE_ENV: process.env['NODE_ENV'] ?? 'production' } }, { copy: true });
 
 		const module = await isolate.compileModule(extensionCode, { filename: `file://${entrypointPath}` });
 
@@ -537,7 +649,7 @@ export class ExtensionManager {
 			return sdkModule;
 		});
 
-		await module.evaluate({ timeout: sandboxTimeout });
+		await module.evaluate({ timeout: env.EXTENSIONS_SANDBOX_TIMEOUT });
 
 		const cb = await module.namespace.get('default', { reference: true });
 
@@ -548,14 +660,17 @@ export class ExtensionManager {
 		);
 
 		await context.evalClosure(code, [cb, ...hostFunctions.map((fn) => new ivm.Reference(fn))], {
-			timeout: sandboxTimeout,
+			timeout: env.EXTENSIONS_SANDBOX_TIMEOUT,
 			filename: '<extensions-sandbox>',
 		});
 
 		this.unregisterFunctionMap.set(extension.name, async () => {
-			await unregisterFunction();
-
-			if (!isolate.isDisposed) isolate.dispose();
+			try {
+				await unregisterFunction();
+			} finally {
+				// Always dispose, nothing else will and its memory will otherwise leak
+				if (!isolate.isDisposed) isolate.dispose();
+			}
 		});
 	}
 
@@ -906,9 +1021,18 @@ export class ExtensionManager {
 	 * Remove the registration for all API extensions
 	 */
 	private async unregisterApiExtensions(): Promise<void> {
-		const unregisterFunctions = Array.from(this.unregisterFunctionMap.values());
+		const logger = useLogger();
 
-		await Promise.all(unregisterFunctions.map((fn) => fn()));
+		await Promise.all(
+			Array.from(this.unregisterFunctionMap.entries()).map(([name, unregister]) =>
+				unregister().catch((error) => {
+					// A unregister failure shouldn't stop the unregistration
+					logger.error(error, `Failed to unregister extension "${name}"`);
+				}),
+			),
+		);
+
+		this.unregisterFunctionMap.clear();
 	}
 
 	/**
@@ -918,7 +1042,7 @@ export class ExtensionManager {
 	private handleExtensionError({ error, reason }: { error?: unknown; reason: string }): void {
 		const logger = useLogger();
 
-		if (toBoolean(env['EXTENSIONS_MUST_LOAD'])) {
+		if (env.EXTENSIONS_MUST_LOAD) {
 			logger.error('EXTENSION_MUST_LOAD is enabled and an extension failed to load.');
 			logger.error(reason);
 			if (error) logger.error(error);

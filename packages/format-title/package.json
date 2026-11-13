@@ -1,6 +1,6 @@
 {
 	"name": "@directus/format-title",
-	"version": "10.1.2",
+	"version": "13.0.0",
 	"description": "Custom formatter that converts any string into Title Case",
 	"keywords": [
 		"title-case",
@@ -13,7 +13,7 @@
 		"conjunctions",
 		"prepositions"
 	],
-	"homepage": "https://directus.io",
+	"homepage": "https://directus.com",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/directus/directus.git",
@@ -32,17 +32,16 @@
 	],
 	"scripts": {
 		"build": "pnpm run '/^bundle|typecheck$/'",
-		"bundle": "tsup src/index.ts --format=esm --dts",
-		"test": "vitest --watch=false",
+		"bundle": "tsdown src/index.ts --dts",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
-		"@directus/tsconfig": "workspace:*",
-		"tsup": "8.0.2",
-		"typescript": "5.4.5",
-		"vitest": "1.5.3"
-	},
-	"engines": {
-		"node": ">=18"
+		"@directus/tsconfig": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }

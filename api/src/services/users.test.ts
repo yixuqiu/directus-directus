@@ -1,19 +1,16 @@
-import { ForbiddenError, InvalidPayloadError, RecordNotUniqueError } from '@directus/errors';
-import type { SchemaOverview } from '@directus/types';
-import knex, { type Knex } from 'knex';
-import { MockClient, Tracker, createTracker } from 'knex-mock-client';
-import {
-	afterEach,
-	beforeAll,
-	beforeEach,
-	describe,
-	expect,
-	it,
-	vi,
-	type MockInstance,
-	type MockedFunction,
-} from 'vitest';
-import { ItemsService, MailService, UsersService } from './index.js';
+import { ForbiddenError, InvalidInviteError, InvalidPayloadError, RecordNotUniqueError } from '@directus/errors';
+import { SchemaBuilder } from '@directus/schema-builder';
+import type { Accountability, MutationOptions } from '@directus/types';
+import { UserIntegrityCheckFlag } from '@directus/types';
+import jwt from 'jsonwebtoken';
+import knex from 'knex';
+import { createTracker, MockClient } from 'knex-mock-client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_AUTH_PROVIDER } from '../constants.js';
+import { validateRemainingAdminUsers } from '../permissions/modules/validate-remaining-admin/validate-remaining-admin-users.js';
+import { _cache } from '../utils/get-secret.js';
+import { verifyJWT } from '../utils/jwt.js';
+import { ItemsService, MailService, SettingsService, UsersService } from './index.js';
 
 vi.mock('../../src/database/index', () => ({
 	default: vi.fn(),
@@ -27,130 +24,85 @@ vi.mock('./mail', () => {
 	return { MailService };
 });
 
+vi.mock('@directus/env', async () => {
+	const { mockUseEnv } = await import('../test-utils/env.js');
+	return mockUseEnv({
+		EMAIL_VERIFICATION_TOKEN_TTL: 86_400_000,
+		REGISTER_STALL_TIME: 0,
+		USER_REGISTER_URL_ALLOW_LIST: 'https://example.com/verify',
+		USERS_ADMIN_ACCESS_LIMIT: 3,
+		USERS_APP_ACCESS_LIMIT: 3,
+		USERS_API_ACCESS_LIMIT: 3,
+	});
+});
+
+vi.mock('../permissions/modules/validate-remaining-admin/validate-remaining-admin-users.js');
+vi.mock('../permissions/modules/validate-access/validate-access.js');
+
+const { isEntitledMock } = vi.hoisted(() => ({ isEntitledMock: vi.fn() }));
+
+vi.mock('../license/index.js', () => ({
+	getEntitlementManager: () => ({
+		isEntitled: isEntitledMock,
+		clearCache: vi.fn(),
+		check: vi.fn().mockResolvedValue({ allowed: true }),
+	}),
+}));
+
+vi.mock('../utils/jwt.js', () => ({
+	verifyJWT: vi.fn(),
+}));
+
 const testRoleId = '4ccdb196-14b3-4ed1-b9da-c1978be07ca2';
 
-const testSchema = {
-	collections: {
-		directus_users: {
-			collection: 'directus_users',
-			primary: 'id',
-			singleton: false,
-			sortField: null,
-			note: null,
-			accountability: null,
-			fields: {
-				id: {
-					field: 'id',
-					defaultValue: null,
-					nullable: false,
-					generated: true,
-					type: 'integer',
-					dbType: 'integer',
-					precision: null,
-					scale: null,
-					special: [],
-					note: null,
-					validation: null,
-					alias: false,
-				},
-			},
-		},
-	},
-	relations: [],
-} as SchemaOverview;
+const schema = new SchemaBuilder()
+	.collection('directus_users', (c) => {
+		c.field('id').uuid().primary().options({
+			nullable: false,
+		});
+	})
+	.build();
 
 describe('Integration Tests', () => {
-	let db: MockedFunction<Knex>;
-	let tracker: Tracker;
-
-	beforeAll(async () => {
-		db = vi.mocked(knex.default({ client: MockClient }));
-		tracker = createTracker(db);
-	});
-
-	beforeEach(() => {
-		tracker.on.any('directus_users').response({});
-
-		// mock notifications update query in deleteOne/deleteMany/deleteByQuery methods
-		tracker.on.update('directus_notifications').response({});
-
-		// mock versions update query in deleteOne/deleteMany/deleteByQuery methods
-		tracker.on.update('directus_versions').response({});
-	});
+	const db = vi.mocked(knex.default({ client: MockClient }));
+	const tracker = createTracker(db);
 
 	afterEach(() => {
 		tracker.reset();
 	});
 
 	describe('Services / Users', () => {
-		let service: UsersService;
-		let mailService: MailService;
-		let superCreateManySpy: MockInstance;
-		let superUpdateManySpy: MockInstance;
-		let checkUniqueEmailsSpy: MockInstance;
-		let checkPasswordPolicySpy: MockInstance;
-		let checkRemainingAdminExistenceSpy: MockInstance;
-		let checkRemainingActiveAdminSpy: MockInstance;
+		const service = new UsersService({
+			knex: db,
+			schema,
+		});
+
+		const superCreateOneSpy = vi.spyOn(ItemsService.prototype, 'createOne').mockResolvedValue('user-id-1');
+		const superUpdateOneSpy = vi.spyOn(ItemsService.prototype, 'updateOne').mockResolvedValue('user-id-1');
+		const superUpdateManySpy = vi.spyOn(ItemsService.prototype, 'updateMany').mockResolvedValue(['user-id-2']);
+
+		const checkUniqueEmailsSpy = vi
+			.spyOn(UsersService.prototype as any, 'checkUniqueEmails')
+			.mockImplementation(() => vi.fn());
+
+		const checkPasswordPolicySpy = vi
+			.spyOn(UsersService.prototype as any, 'checkPasswordPolicy')
+			.mockResolvedValue(() => vi.fn());
+
+		const clearUserSessionsSpy = vi
+			.spyOn(UsersService.prototype as any, 'clearUserSessions')
+			.mockResolvedValue(() => vi.fn());
+
+		const mockGetUserByEmail = (user: unknown) => {
+			const getUserByEmailSpy = vi.spyOn(UsersService.prototype as any, 'getUserByEmail');
+
+			getUserByEmailSpy.mockReset();
+			getUserByEmailSpy.mockResolvedValueOnce(user);
+		};
 
 		beforeEach(() => {
-			service = new UsersService({
-				knex: db,
-				schema: {
-					collections: {
-						directus_users: {
-							collection: 'directus_users',
-							primary: 'id',
-							singleton: false,
-							sortField: null,
-							note: null,
-							accountability: null,
-							fields: {
-								id: {
-									field: 'id',
-									defaultValue: null,
-									nullable: false,
-									generated: true,
-									type: 'integer',
-									dbType: 'integer',
-									precision: null,
-									scale: null,
-									special: [],
-									note: null,
-									validation: null,
-									alias: false,
-								},
-							},
-						},
-					},
-					relations: [],
-				},
-			});
-
-			superCreateManySpy = vi.spyOn(ItemsService.prototype as any, 'createMany');
-			superUpdateManySpy = vi.spyOn(ItemsService.prototype as any, 'updateMany');
-
-			// "as any" are needed since these are private methods
-			checkUniqueEmailsSpy = vi
-				.spyOn(UsersService.prototype as any, 'checkUniqueEmails')
-				.mockImplementation(() => vi.fn());
-
-			checkPasswordPolicySpy = vi
-				.spyOn(UsersService.prototype as any, 'checkPasswordPolicy')
-				.mockResolvedValue(() => vi.fn());
-
-			checkRemainingAdminExistenceSpy = vi
-				.spyOn(UsersService.prototype as any, 'checkRemainingAdminExistence')
-				.mockResolvedValue(() => vi.fn());
-
-			checkRemainingActiveAdminSpy = vi
-				.spyOn(UsersService.prototype as any, 'checkRemainingActiveAdmin')
-				.mockResolvedValue(() => vi.fn());
-
-			vi.spyOn(UsersService.prototype as any, 'inviteUrl').mockImplementation(() => vi.fn());
-
-			mailService = new MailService({
-				schema: testSchema,
-			});
+			_cache.secret = null;
+			isEntitledMock.mockReturnValue(true);
 		});
 
 		afterEach(() => {
@@ -160,512 +112,391 @@ describe('Integration Tests', () => {
 		describe('createOne', () => {
 			it('should not checkUniqueEmails', async () => {
 				await service.createOne({});
+
 				expect(checkUniqueEmailsSpy).not.toBeCalled();
 			});
 
 			it('should checkUniqueEmails once', async () => {
 				await service.createOne({ email: 'test@example.com' });
+
 				expect(checkUniqueEmailsSpy).toBeCalledTimes(1);
 			});
 
 			it('should not checkPasswordPolicy', async () => {
 				await service.createOne({});
+
 				expect(checkPasswordPolicySpy).not.toBeCalled();
 			});
 
 			it('should checkPasswordPolicy once', async () => {
 				await service.createOne({ password: 'testpassword' });
+
 				expect(checkPasswordPolicySpy).toBeCalledTimes(1);
+			});
+
+			it('should request user limits checks', async () => {
+				const opts: MutationOptions = {};
+
+				await service.createOne({}, opts);
+
+				expect(opts.userIntegrityCheckFlags).toBe(UserIntegrityCheckFlag.UserLimits);
+			});
+
+			describe('SSO provider entitlement', () => {
+				it('should block a custom provider when not entitled to SSO', async () => {
+					isEntitledMock.mockReturnValue(false);
+					const opts: MutationOptions = {};
+
+					await service.createOne({ provider: 'saml' }, opts);
+
+					expect(opts.preMutationError).toStrictEqual(
+						new InvalidPayloadError({ reason: `Setting a custom "provider" isn't included in the current license` }),
+					);
+				});
+
+				it('should allow a custom provider when entitled to SSO', async () => {
+					isEntitledMock.mockReturnValue(true);
+					const opts: MutationOptions = {};
+
+					await service.createOne({ provider: 'saml' }, opts);
+
+					expect(opts.preMutationError).toBeUndefined();
+				});
+
+				it('should allow the default provider when not entitled to SSO', async () => {
+					isEntitledMock.mockReturnValue(false);
+					const opts: MutationOptions = {};
+
+					await service.createOne({ provider: DEFAULT_AUTH_PROVIDER }, opts);
+
+					expect(opts.preMutationError).toBeUndefined();
+				});
 			});
 		});
 
 		describe('createMany', () => {
+			vi.spyOn(ItemsService.prototype, 'createMany').mockResolvedValue([1]);
+
 			it('should not checkUniqueEmails', async () => {
 				await service.createMany([{}]);
+
 				expect(checkUniqueEmailsSpy).not.toBeCalled();
 			});
 
 			it('should checkUniqueEmails once', async () => {
 				await service.createMany([{ email: 'test@example.com' }]);
+
 				expect(checkUniqueEmailsSpy).toBeCalledTimes(1);
 			});
 
 			it('should not checkPasswordPolicy', async () => {
 				await service.createMany([{}]);
+
 				expect(checkPasswordPolicySpy).not.toBeCalled();
 			});
 
 			it('should checkPasswordPolicy once', async () => {
 				await service.createMany([{ password: 'testpassword' }]);
-				expect(checkPasswordPolicySpy).toBeCalledTimes(1);
-			});
-		});
 
-		describe('updateOne', () => {
-			it('should not checkRemainingAdminExistence', async () => {
-				// mock newRole query in updateMany (called by ItemsService updateOne)
-				tracker.on.select(/select "admin_access" from "directus_roles"/).response({ admin_access: true });
-
-				await service.updateOne(1, { role: testRoleId });
-				expect(checkRemainingAdminExistenceSpy).not.toBeCalled();
-			});
-
-			it('should checkRemainingAdminExistence once', async () => {
-				// mock newRole query in updateMany (called by ItemsService updateOne)
-				tracker.on.select(/select "admin_access" from "directus_roles"/).response({ admin_access: false });
-
-				await service.updateOne(1, { role: testRoleId });
-				expect(checkRemainingAdminExistenceSpy).toBeCalledTimes(1);
-			});
-
-			it('should not checkRemainingActiveAdmin', async () => {
-				await service.updateOne(1, {});
-				expect(checkRemainingActiveAdminSpy).not.toBeCalled();
-			});
-
-			it('should checkRemainingActiveAdmin once', async () => {
-				await service.updateOne(1, { status: 'inactive' });
-				expect(checkRemainingActiveAdminSpy).toBeCalledTimes(1);
-			});
-
-			it('should not checkUniqueEmails', async () => {
-				await service.updateOne(1, {});
-				expect(checkUniqueEmailsSpy).not.toBeCalled();
-			});
-
-			it('should checkUniqueEmails once', async () => {
-				await service.updateOne(1, { email: 'test@example.com' });
-				expect(checkUniqueEmailsSpy).toBeCalledTimes(1);
-			});
-
-			it('should not checkPasswordPolicy', async () => {
-				await service.updateOne(1, {});
-				expect(checkPasswordPolicySpy).not.toBeCalled();
-			});
-
-			it('should checkPasswordPolicy once', async () => {
-				await service.updateOne(1, { password: 'testpassword' });
 				expect(checkPasswordPolicySpy).toBeCalledTimes(1);
 			});
 
-			it.each(['provider', 'external_identifier'])(
-				'should throw InvalidPayloadError for non-admin users when updating "%s" field',
-				async (field) => {
-					const service = new UsersService({
-						knex: db,
-						schema: testSchema,
-						accountability: { role: 'test', admin: false },
-					});
+			it('should request user limits checks', async () => {
+				const opts: MutationOptions = {};
 
-					const promise = service.updateOne(1, { [field]: 'test' });
+				await service.createMany([{}], opts);
 
-					expect.assertions(5); // to ensure both assertions in the catch block are reached
+				expect(opts.userIntegrityCheckFlags).toBe(UserIntegrityCheckFlag.UserLimits);
+			});
 
-					try {
-						await promise;
-					} catch (err: any) {
-						expect(err.message).toBe(`You don't have permission to access this.`);
-						expect(err).toBeInstanceOf(ForbiddenError);
-					}
+			describe('SSO provider entitlement', () => {
+				it('should block a custom provider in any payload when not entitled to SSO', async () => {
+					isEntitledMock.mockReturnValue(false);
+					const opts: MutationOptions = {};
 
-					expect(superUpdateManySpy).toHaveBeenCalled();
+					await service.createMany([{ provider: DEFAULT_AUTH_PROVIDER }, { provider: 'saml' }], opts);
 
-					expect(superUpdateManySpy.mock.lastCall![2].preMutationError.message).toBe(
-						`Invalid payload. You can't change the "${field}" value manually.`,
+					expect(opts.preMutationError).toStrictEqual(
+						new InvalidPayloadError({ reason: `Setting a custom "provider" isn't included in the current license` }),
 					);
-
-					expect(superUpdateManySpy.mock.lastCall![2].preMutationError).toBeInstanceOf(InvalidPayloadError);
-				},
-			);
-
-			it.each(['provider', 'external_identifier'])('should allow admin users to update "%s" field', async (field) => {
-				const service = new UsersService({
-					knex: db,
-					schema: testSchema,
-					accountability: { role: 'admin', admin: true },
 				});
 
-				const promise = service.updateOne(1, { [field]: 'test' });
+				it('should allow a custom provider when entitled to SSO', async () => {
+					isEntitledMock.mockReturnValue(true);
+					const opts: MutationOptions = {};
 
-				await expect(promise).resolves.not.toThrow();
-				expect(superUpdateManySpy).toBeCalledWith([1], expect.objectContaining({ auth_data: null }), undefined);
+					await service.createMany([{ provider: 'saml' }], opts);
+
+					expect(opts.preMutationError).toBeUndefined();
+				});
+
+				it('should allow default providers when not entitled to SSO', async () => {
+					isEntitledMock.mockReturnValue(false);
+					const opts: MutationOptions = {};
+
+					await service.createMany([{ provider: DEFAULT_AUTH_PROVIDER }, {}], opts);
+
+					expect(opts.preMutationError).toBeUndefined();
+				});
 			});
-
-			it.each(['provider', 'external_identifier'])(
-				'should allow null accountability to update "%s" field',
-				async (field) => {
-					const service = new UsersService({
-						knex: db,
-						schema: testSchema,
-					});
-
-					const promise = service.updateOne(1, { [field]: 'test' });
-
-					await expect(promise).resolves.not.toThrow();
-					expect(superUpdateManySpy).toBeCalledWith([1], expect.objectContaining({ auth_data: null }), undefined);
-				},
-			);
 		});
 
 		describe('updateMany', () => {
-			it('should not checkRemainingAdminExistence', async () => {
-				// mock newRole query in updateMany
-				tracker.on.select(/select "admin_access" from "directus_roles"/).response({ admin_access: true });
+			it('should not request user integrity checks if no relevant fields are changed', async () => {
+				const opts: MutationOptions = {};
 
-				await service.updateMany([1], { role: testRoleId });
-				expect(checkRemainingAdminExistenceSpy).not.toBeCalled();
+				await service.updateMany(['user-id-3'], {}, opts);
+
+				expect(opts.userIntegrityCheckFlags).toBe(undefined);
+				expect(clearUserSessionsSpy).not.toBeCalled();
 			});
 
-			it('should checkRemainingAdminExistence once', async () => {
-				// mock newRole query in updateMany
-				tracker.on.select(/select "admin_access" from "directus_roles"/).response({ admin_access: false });
+			it('should request all user integrity checks if role is changed', async () => {
+				const opts: MutationOptions = {};
 
-				await service.updateMany([1], { role: testRoleId });
-				expect(checkRemainingAdminExistenceSpy).toBeCalledTimes(1);
+				await service.updateMany(['user-id-4'], { role: testRoleId }, opts);
+
+				expect(opts.userIntegrityCheckFlags).toBe(UserIntegrityCheckFlag.All);
 			});
 
-			it('should checkRemainingAdminExistence once for new non admin role', async () => {
-				await service.updateMany([1], { role: { name: 'test' } });
-				expect(checkRemainingAdminExistenceSpy).toBeCalledTimes(1);
+			it('should request all user integrity checks if status is changed to not "active"', async () => {
+				const opts: MutationOptions = {};
+
+				await service.updateMany(['user-id-5'], { status: 'inactive' }, opts);
+
+				expect(opts.userIntegrityCheckFlags).toBe(UserIntegrityCheckFlag.RemainingAdmins);
+				expect(clearUserSessionsSpy).toBeCalled();
 			});
 
-			it('should not checkRemainingAdminExistence for new admin role', async () => {
-				await service.updateMany([1], { role: { name: 'test', admin_access: true } });
-				expect(checkRemainingAdminExistenceSpy).not.toBeCalled();
+			it('should request user limit checks if status is changed to "active"', async () => {
+				const opts: MutationOptions = {};
+
+				await service.updateMany(['user-id-6'], { status: 'active' }, opts);
+
+				expect(opts.userIntegrityCheckFlags).toBe(UserIntegrityCheckFlag.UserLimits);
+				expect(clearUserSessionsSpy).not.toBeCalled();
 			});
 
-			it('should not checkRemainingActiveAdmin', async () => {
-				await service.updateMany([1], {});
-				expect(checkRemainingActiveAdminSpy).not.toBeCalled();
-			});
+			it('should clear caches if role is changed', async () => {
+				const clearCacheSpy = vi.spyOn(UsersService.prototype as any, 'clearCaches');
 
-			it('should checkRemainingActiveAdmin once', async () => {
-				await service.updateMany([1], { status: 'inactive' });
-				expect(checkRemainingActiveAdminSpy).toBeCalledTimes(1);
+				await service.updateMany(['user-id-7'], { role: testRoleId });
+
+				expect(clearCacheSpy).toHaveBeenCalled();
 			});
 
 			it('should not checkUniqueEmails', async () => {
-				await service.updateMany([1], {});
+				await service.updateMany(['user-id-8'], {});
+
 				expect(checkUniqueEmailsSpy).not.toBeCalled();
 			});
 
 			it('should checkUniqueEmails once', async () => {
-				await service.updateMany([1], { email: 'test@example.com' });
+				await service.updateMany(['user-id-9'], { email: 'test@example.com' });
+
 				expect(checkUniqueEmailsSpy).toBeCalledTimes(1);
+				expect(clearUserSessionsSpy).toBeCalled();
 			});
 
-			it('should throw RecordNotUniqueError for multiple keys with same email', async () => {
-				expect.assertions(2); // to ensure both assertions in the catch block are reached
+			it('should disallow updating multiple items to same email', async () => {
+				const opts: MutationOptions = {};
 
-				try {
-					await service.updateMany([1, 2], { email: 'test@example.com' });
-				} catch (err: any) {
-					expect(err.message).toBe(`Value for field "email" in collection "directus_users" has to be unique.`);
-					expect(err).toBeInstanceOf(RecordNotUniqueError);
-				}
+				await service.updateMany(['user-id-10', 'user-id-11'], { email: 'test@example.com' }, opts);
+
+				expect(opts.preMutationError).toStrictEqual(
+					new RecordNotUniqueError({
+						collection: 'directus_users',
+						field: 'email',
+						value: 'test@example.com',
+					}),
+				);
+
+				expect(clearUserSessionsSpy).toBeCalled();
 			});
 
 			it('should not checkPasswordPolicy', async () => {
-				await service.updateMany([1], {});
+				await service.updateMany(['user-id-12'], {});
+
 				expect(checkPasswordPolicySpy).not.toBeCalled();
+				expect(clearUserSessionsSpy).not.toBeCalled();
 			});
 
 			it('should checkPasswordPolicy once', async () => {
-				await service.updateMany([1], { password: 'testpassword' });
+				await service.updateMany(['user-id-13'], { password: 'testpassword' });
+
 				expect(checkPasswordPolicySpy).toBeCalledTimes(1);
+				expect(clearUserSessionsSpy).toBeCalled();
 			});
 
-			it.each(['provider', 'external_identifier'])(
-				'should throw InvalidPayloadError for non-admin users when updating "%s" field',
-				async (field) => {
+			describe('restricted auth fields', () => {
+				describe('should disallow updates for non-admin users', () => {
 					const service = new UsersService({
 						knex: db,
-						schema: testSchema,
-						accountability: { role: 'test', admin: false },
+						schema,
+						accountability: { role: 'test', admin: false } as Accountability,
 					});
 
-					const promise = service.updateMany([1], { [field]: 'test' });
+					it.each(['tfa_secret', 'provider', 'external_identifier'])('%s', async (field) => {
+						const opts: MutationOptions = {};
 
-					expect.assertions(5); // to ensure both assertions in the catch block are reached
+						await service.updateMany([1], { [field]: 'test' }, opts);
 
-					try {
-						await promise;
-					} catch (err: any) {
-						expect(err.message).toBe(`You don't have permission to access this.`);
-						expect(err).toBeInstanceOf(ForbiddenError);
-					}
+						expect(superUpdateManySpy).toHaveBeenCalled();
 
-					expect(superUpdateManySpy).toHaveBeenCalled();
-
-					expect(superUpdateManySpy.mock.lastCall![2].preMutationError.message).toBe(
-						`Invalid payload. You can't change the "${field}" value manually.`,
-					);
-
-					expect(superUpdateManySpy.mock.lastCall![2].preMutationError).toBeInstanceOf(InvalidPayloadError);
-				},
-			);
-
-			it.each(['provider', 'external_identifier'])('should allow admin users to update "%s" field', async (field) => {
-				const service = new UsersService({
-					knex: db,
-					schema: testSchema,
-					accountability: { role: 'admin', admin: true },
+						expect(opts.preMutationError).toStrictEqual(
+							new InvalidPayloadError({ reason: `You can't change the "${field}" value manually` }),
+						);
+					});
 				});
 
-				const promise = service.updateMany([1], { [field]: 'test' });
-
-				await expect(promise).resolves.not.toThrow();
-				expect(superUpdateManySpy).toBeCalledWith([1], expect.objectContaining({ auth_data: null }), undefined);
-			});
-
-			it.each(['provider', 'external_identifier'])(
-				'should allow null accountability to update "%s" field',
-				async (field) => {
+				describe.each([
+					['admin users', { role: 'admin', admin: true } as Accountability],
+					['null accountability', null],
+				])('should allow updates for %s', (_, accountability) => {
 					const service = new UsersService({
 						knex: db,
-						schema: testSchema,
+						schema,
+						accountability,
 					});
 
-					const promise = service.updateMany([1], { [field]: 'test' });
+					it.each(['provider', 'external_identifier'])('%s', async (field) => {
+						const promise = service.updateMany(['user-id-14'], { [field]: 'test' });
 
-					await expect(promise).resolves.not.toThrow();
-					expect(superUpdateManySpy).toBeCalledWith([1], expect.objectContaining({ auth_data: null }), undefined);
-				},
-			);
+						await expect(promise).resolves.not.toThrow();
+
+						expect(superUpdateManySpy.mock.lastCall![1]).toEqual(
+							expect.objectContaining({ [field]: 'test', auth_data: null }),
+						);
+					});
+				});
+			});
 		});
 
-		describe('updateByQuery', () => {
-			it('should not checkRemainingAdminExistence', async () => {
-				// mock newRole query in updateMany (called by ItemsService updateByQuery)
-				tracker.on.select(/select "admin_access" from "directus_roles"/).response({ admin_access: true });
-
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
-
-				await service.updateByQuery({}, { role: testRoleId });
-				expect(checkRemainingAdminExistenceSpy).not.toBeCalled();
+		describe('updateMany SSO provider entitlement', () => {
+			const service = new UsersService({
+				knex: db,
+				schema,
+				accountability: null,
 			});
 
-			it('should checkRemainingAdminExistence once', async () => {
-				// mock newRole query in updateMany (called by ItemsService updateByQuery)
-				tracker.on.select(/select "admin_access" from "directus_roles"/).response({ admin_access: false });
+			it('should block setting a custom provider when not entitled to SSO', async () => {
+				isEntitledMock.mockReturnValue(false);
+				const opts: MutationOptions = {};
 
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
+				await service.updateMany(['user-id-14'], { provider: 'saml' }, opts);
 
-				await service.updateByQuery({}, { role: testRoleId });
-				expect(checkRemainingAdminExistenceSpy).toBeCalledTimes(1);
+				expect(opts.preMutationError).toStrictEqual(
+					new InvalidPayloadError({ reason: `Setting a custom "provider" isn't included in the current license` }),
+				);
 			});
 
-			it('should not checkRemainingActiveAdmin', async () => {
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
+			it('should allow setting the default provider when not entitled to SSO', async () => {
+				isEntitledMock.mockReturnValue(false);
+				const opts: MutationOptions = {};
 
-				await service.updateByQuery({}, {});
-				expect(checkRemainingActiveAdminSpy).not.toBeCalled();
-			});
+				await service.updateMany(['user-id-14'], { provider: DEFAULT_AUTH_PROVIDER }, opts);
 
-			it('should checkRemainingActiveAdmin once', async () => {
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
-
-				await service.updateByQuery({}, { status: 'inactive' });
-				expect(checkRemainingActiveAdminSpy).toBeCalledTimes(1);
-			});
-
-			it('should not checkUniqueEmails', async () => {
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
-
-				await service.updateByQuery({}, {});
-				expect(checkUniqueEmailsSpy).not.toBeCalled();
-			});
-
-			it('should checkUniqueEmails once', async () => {
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
-
-				await service.updateByQuery({}, { email: 'test@example.com' });
-				expect(checkUniqueEmailsSpy).toBeCalledTimes(1);
-			});
-
-			it('should throw RecordNotUniqueError for multiple keys with same email', async () => {
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1, 2]);
-
-				expect.assertions(2); // to ensure both assertions in the catch block are reached
-
-				try {
-					await service.updateByQuery({}, { email: 'test@example.com' });
-				} catch (err: any) {
-					expect(err.message).toBe(`Value for field "email" in collection "directus_users" has to be unique.`);
-					expect(err).toBeInstanceOf(RecordNotUniqueError);
-				}
-			});
-
-			it('should not checkPasswordPolicy', async () => {
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
-
-				await service.updateByQuery({}, {});
-				expect(checkPasswordPolicySpy).not.toBeCalled();
-			});
-
-			it('should checkPasswordPolicy once', async () => {
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
-
-				await service.updateByQuery({}, { password: 'testpassword' });
-				expect(checkPasswordPolicySpy).toBeCalledTimes(1);
-			});
-
-			it.each(['provider', 'external_identifier'])(
-				'should throw InvalidPayloadError for non-admin users when updating "%s" field',
-				async (field) => {
-					const service = new UsersService({
-						knex: db,
-						schema: testSchema,
-						accountability: { role: 'test', admin: false },
-					});
-
-					vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
-
-					const promise = service.updateByQuery({}, { [field]: 'test' });
-
-					expect.assertions(5); // to ensure both assertions in the catch block are reached
-
-					try {
-						await promise;
-					} catch (err: any) {
-						expect(err.message).toBe(`You don't have permission to access this.`);
-						expect(err).toBeInstanceOf(ForbiddenError);
-					}
-
-					expect(superUpdateManySpy).toHaveBeenCalled();
-
-					expect(superUpdateManySpy.mock.lastCall![2].preMutationError.message).toBe(
-						`Invalid payload. You can't change the "${field}" value manually.`,
-					);
-
-					expect(superUpdateManySpy.mock.lastCall![2].preMutationError).toBeInstanceOf(InvalidPayloadError);
-				},
-			);
-
-			it.each(['provider', 'external_identifier'])('should allow admin users to update "%s" field', async (field) => {
-				const service = new UsersService({
-					knex: db,
-					schema: testSchema,
-					accountability: { role: 'admin', admin: true },
-				});
-
-				vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
-
-				const promise = service.updateByQuery({}, { [field]: 'test' });
-
-				await expect(promise).resolves.not.toThrow();
-				expect(superUpdateManySpy).toBeCalledWith([1], expect.objectContaining({ auth_data: null }), undefined);
-			});
-
-			it.each(['provider', 'external_identifier'])(
-				'should allow null accountability to update "%s" field',
-				async (field) => {
-					const service = new UsersService({
-						knex: db,
-						schema: testSchema,
-					});
-
-					vi.spyOn(ItemsService.prototype, 'getKeysByQuery').mockResolvedValue([1]);
-
-					const promise = service.updateByQuery({}, { [field]: 'test' });
-
-					await expect(promise).resolves.not.toThrow();
-					expect(superUpdateManySpy).toBeCalledWith([1], expect.objectContaining({ auth_data: null }), undefined);
-				},
-			);
-		});
-
-		describe('deleteOne', () => {
-			it('should checkRemainingAdminExistence once', async () => {
-				const service = new UsersService({
-					knex: db,
-					schema: testSchema,
-					accountability: { role: 'test', admin: false },
-				});
-
-				const promise = service.deleteOne(1);
-
-				expect.assertions(3); // to ensure both assertions in the catch block are reached
-
-				try {
-					await promise;
-				} catch (err: any) {
-					expect(err.message).toBe(`You don't have permission to access this.`);
-					expect(err).toBeInstanceOf(ForbiddenError);
-				}
-
-				expect(checkRemainingAdminExistenceSpy).toBeCalledTimes(1);
+				expect(opts.preMutationError).toBeUndefined();
 			});
 		});
 
 		describe('deleteMany', () => {
-			it('should checkRemainingAdminExistence once', async () => {
+			vi.spyOn(ItemsService.prototype, 'deleteMany').mockResolvedValue(['user-id-15']);
+
+			it('should validate remaining admin users', async () => {
+				// mock notifications update query in deleteOne/deleteMany/deleteByQuery methods
+				tracker.on.update('directus_notifications').response({});
+				// mock versions update query in deleteOne/deleteMany/deleteByQuery methods
+				tracker.on.update('directus_versions').response({});
+				// mock comments update query in deleteOne/deleteMany/deleteByQuery methods
+				tracker.on.update('directus_comments').response({});
+
 				const service = new UsersService({
 					knex: db,
-					schema: testSchema,
-					accountability: { role: 'test', admin: false },
+					schema,
+					accountability: { role: 'test', admin: false } as Accountability,
 				});
 
-				const promise = service.deleteMany([1]);
+				await service.deleteMany(['user-id-16']);
 
-				expect.assertions(3); // to ensure both assertions in the catch block are reached
-
-				try {
-					await promise;
-				} catch (err: any) {
-					expect(err.message).toBe(`You don't have permission to access this.`);
-					expect(err).toBeInstanceOf(ForbiddenError);
-				}
-
-				expect(checkRemainingAdminExistenceSpy).toBeCalledTimes(1);
+				expect(validateRemainingAdminUsers).toHaveBeenCalled();
+				expect(clearUserSessionsSpy).toBeCalled();
 			});
 		});
 
-		describe('deleteByQuery', () => {
-			it('should checkRemainingAdminExistence once', async () => {
-				const service = new UsersService({
-					knex: db,
-					schema: testSchema,
-					accountability: { role: 'test', admin: false },
+		describe('requestPasswordReset', () => {
+			it('should throw ForbiddenError for external provider users', async () => {
+				tracker.on.select('directus_users').response({
+					id: 'user-id-ext',
+					role: 'role-id',
+					status: 'active',
+					password: 'hashed',
+					email: 'ext@example.com',
+					provider: 'google',
 				});
 
-				// mock return value for the following empty query
-				vi.spyOn(ItemsService.prototype, 'readByQuery').mockResolvedValueOnce([{ id: 1 }]);
+				const mailService = new MailService({ schema });
 
-				const promise = service.deleteByQuery({ filter: { id: { _eq: 1 } } });
+				const service = new UsersService({
+					knex: db,
+					schema,
+				});
 
-				expect.assertions(3); // to ensure both assertions in the catch block are reached
+				await expect(service.requestPasswordReset('ext@example.com', null)).rejects.toThrow(ForbiddenError);
 
-				try {
-					await promise;
-				} catch (err: any) {
-					expect(err.message).toBe(`You don't have permission to access this.`);
-					expect(err).toBeInstanceOf(ForbiddenError);
-				}
+				expect(mailService.send).not.toHaveBeenCalled();
+			});
 
-				expect(checkRemainingAdminExistenceSpy).toBeCalledTimes(1);
+			it('should send reset email for default provider users', async () => {
+				tracker.on.select('directus_users').response({
+					id: 'user-id-def',
+					role: 'role-id',
+					status: 'active',
+					password: 'hashed',
+					email: 'def@example.com',
+					provider: 'default',
+				});
+
+				const mailService = new MailService({ schema });
+
+				const service = new UsersService({
+					knex: db,
+					schema,
+				});
+
+				await service.requestPasswordReset('def@example.com', null);
+
+				expect(mailService.send).toHaveBeenCalledTimes(1);
 			});
 		});
 
 		describe('invite', () => {
+			const mailService = new MailService({
+				schema,
+			});
+
+			vi.spyOn(UsersService.prototype as any, 'inviteUrl').mockImplementation(() => vi.fn());
+
 			it('should invite new users', async () => {
+				mockGetUserByEmail(undefined);
+
 				const service = new UsersService({
 					knex: db,
-					schema: testSchema,
-					accountability: { role: 'test', admin: true },
+					schema,
+					accountability: { role: 'test', admin: true } as Accountability,
 				});
 
 				const promise = service.inviteUser('user@example.com', 'invite-role', null);
 
 				await expect(promise).resolves.not.toThrow();
 
-				expect(superCreateManySpy.mock.lastCall![0]).toEqual([
+				expect(superCreateOneSpy.mock.lastCall![0]).toEqual(
 					expect.objectContaining({
 						email: 'user@example.com',
 						status: 'invited',
 						role: 'invite-role',
 					}),
-				]);
+				);
 
 				expect(mailService.send).toBeCalledTimes(1);
 			});
@@ -673,12 +504,12 @@ describe('Integration Tests', () => {
 			it('should re-send invites for invited users', async () => {
 				const service = new UsersService({
 					knex: db,
-					schema: testSchema,
-					accountability: { role: 'test', admin: true },
+					schema,
+					accountability: { role: 'test', admin: true } as Accountability,
 				});
 
 				// mock an invited user
-				vi.spyOn(UsersService.prototype as any, 'getUserByEmail').mockResolvedValueOnce({
+				mockGetUserByEmail({
 					status: 'invited',
 					role: 'invite-role',
 				});
@@ -686,19 +517,19 @@ describe('Integration Tests', () => {
 				const promise = service.inviteUser('user@example.com', 'invite-role', null);
 				await expect(promise).resolves.not.toThrow();
 
-				expect(superCreateManySpy).not.toBeCalled();
+				expect(superCreateOneSpy).not.toBeCalled();
 				expect(mailService.send).toBeCalledTimes(1);
 			});
 
 			it('should not re-send invites for users in state other than invited', async () => {
 				const service = new UsersService({
 					knex: db,
-					schema: testSchema,
-					accountability: { role: 'test', admin: true },
+					schema,
+					accountability: { role: 'test', admin: true } as Accountability,
 				});
 
 				// mock an active user
-				vi.spyOn(UsersService.prototype as any, 'getUserByEmail').mockResolvedValueOnce({
+				mockGetUserByEmail({
 					status: 'active',
 					role: 'invite-role',
 				});
@@ -706,31 +537,160 @@ describe('Integration Tests', () => {
 				const promise = service.inviteUser('user@example.com', 'invite-role', null);
 				await expect(promise).resolves.not.toThrow();
 
-				expect(superCreateManySpy).not.toBeCalled();
+				expect(superCreateOneSpy).not.toBeCalled();
 				expect(mailService.send).not.toBeCalled();
 			});
 
 			it('should update role when re-sent invite contains different role than user has', async () => {
 				const service = new UsersService({
 					knex: db,
-					schema: testSchema,
-					accountability: { role: 'test', admin: true },
+					schema,
+					accountability: { role: 'test', admin: true } as Accountability,
 				});
 
-				tracker.on.select(/select "admin_access" from "directus_roles"/).response({ admin_access: true });
-
-				// mock an invited user with different role
-				vi.spyOn(UsersService.prototype as any, 'getUserByEmail').mockResolvedValueOnce({
-					id: 1,
+				const mockUser = {
+					id: 'user-id-17',
 					status: 'invited',
 					role: 'existing-role',
-				});
+				};
+
+				// mock an invited user with different role
+				mockGetUserByEmail(mockUser);
 
 				const promise = service.inviteUser('user@example.com', 'invite-role', null);
 				await expect(promise).resolves.not.toThrow();
 
-				expect(superUpdateManySpy.mock.lastCall![0]).toEqual([1]);
-				expect(superUpdateManySpy.mock.lastCall![1]).toEqual({ role: 'invite-role' });
+				expect(superUpdateOneSpy).toHaveBeenCalledWith(mockUser.id, { role: 'invite-role' }, {});
+			});
+		});
+
+		describe('acceptInvite', () => {
+			it('should throw InvalidInviteError when user is not in invited status', async () => {
+				vi.mocked(verifyJWT).mockReturnValueOnce({ email: 'test@example.com', scope: 'invite' });
+
+				mockGetUserByEmail({
+					id: 'user-id',
+					status: 'active',
+					email: 'test@example.com',
+				});
+
+				const service = new UsersService({
+					knex: db,
+					schema,
+				});
+
+				const err = await service.acceptInvite('fake-token', 'Password123!').catch((e) => e);
+
+				expect(err).toBeInstanceOf(InvalidInviteError);
+				expect(err.message).not.toContain('test@example.com');
+			});
+
+			it('should throw ForbiddenError for non-invite scope tokens', async () => {
+				vi.mocked(verifyJWT).mockReturnValueOnce({ email: 'test@example.com', scope: 'password-reset' });
+
+				const service = new UsersService({
+					knex: db,
+					schema,
+				});
+
+				await expect(service.acceptInvite('fake-token', 'Password123!')).rejects.toThrow(ForbiddenError);
+			});
+		});
+
+		describe('registerUser', () => {
+			it('should sign email verification tokens with a secret when SECRET is not configured', async () => {
+				vi.spyOn(SettingsService.prototype, 'readSingleton').mockResolvedValueOnce({
+					public_registration: true,
+					public_registration_verify_email: true,
+					public_registration_role: 'role-id',
+				});
+
+				const signSpy = vi.spyOn(jwt, 'sign');
+
+				mockGetUserByEmail(undefined);
+
+				const mailService = new MailService({ schema });
+
+				const service = new UsersService({
+					knex: db,
+					schema,
+				});
+
+				await service.registerUser({
+					email: 'test@example.com',
+					password: 'Password123!',
+					verification_url: 'https://example.com/verify',
+				});
+
+				expect(signSpy).toHaveBeenCalledWith(
+					{ email: 'test@example.com', scope: 'pending-registration' },
+					expect.any(String),
+					{
+						expiresIn: 86_400,
+						issuer: 'directus',
+					},
+				);
+
+				expect(signSpy.mock.calls[0]![1]).not.toBe('');
+				expect(mailService.send).toHaveBeenCalledTimes(1);
+				expect(mailService.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'test@example.com' }));
+			});
+
+			it('should verify the email address stored on the matched user, not the one provided', async () => {
+				vi.spyOn(SettingsService.prototype, 'readSingleton').mockResolvedValueOnce({
+					public_registration: true,
+					public_registration_verify_email: true,
+					public_registration_role: 'role-id',
+				});
+
+				// An accent variation of the stored email, which the lookup can match on MySQL/MariaDB
+				mockGetUserByEmail({
+					id: 'user-id-19',
+					status: 'unverified',
+					email: 'test@example.com',
+				});
+
+				const mailService = new MailService({ schema });
+
+				const service = new UsersService({
+					knex: db,
+					schema,
+				});
+
+				await service.registerUser({
+					email: 'tëst@example.com',
+					password: 'Password123!',
+					verification_url: 'https://example.com/verify',
+				});
+
+				const mail = vi.mocked(mailService.send).mock.lastCall![0];
+				const token = new URL(mail.template!.data['url']).searchParams.get('token');
+
+				expect(mail.to).toBe('test@example.com');
+				expect(jwt.decode(token!)).toEqual(expect.objectContaining({ email: 'test@example.com' }));
+			});
+		});
+
+		describe('verifyRegistration', () => {
+			it('should verify registration tokens with a secret when SECRET is not configured', async () => {
+				vi.mocked(verifyJWT).mockReturnValueOnce({ email: 'test@example.com', scope: 'pending-registration' });
+
+				mockGetUserByEmail({
+					id: 'user-id-18',
+					status: 'unverified',
+					email: 'test@example.com',
+				});
+
+				const service = new UsersService({
+					knex: db,
+					schema,
+				});
+
+				await service.verifyRegistration('fake-token');
+
+				expect(verifyJWT).toHaveBeenCalledWith('fake-token', expect.any(String));
+				expect(vi.mocked(verifyJWT).mock.calls[0]![1]).not.toBe('');
+				expect(superUpdateOneSpy).toHaveBeenCalledWith('user-id-18', { status: 'active' });
 			});
 		});
 	});

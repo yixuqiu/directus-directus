@@ -1,4 +1,28 @@
 ---
+## Be aware:
+#Due to the way this is imported, JavaScript reserved words, including "delete", "private",
+#"void", etc are stripped out. See
+#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/pluginutils/src/makeLegalIdentifier.ts#L4
+#and
+#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/yaml/src/index.js#L45
+#Illegal words:
+#'break', 'case', 'class', 'catch', 'const', 'continue', 'debugger', 'default', 'delete', 'do',
+#'else', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof',
+#'let', 'new', 'return', 'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void',
+#'while', 'with', 'yield', 'enum', 'await', 'implements', 'package', 'protected', 'static',
+#'interface', 'private', 'public', 'arguments', 'Infinity', 'NaN', 'undefined', 'null', 'true',
+#'false', 'eval', 'uneval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt', 'decodeURI',
+#'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'escape', 'unescape', 'Object',
+#'Function', 'Boolean', 'Symbol', 'Error', 'EvalError', 'InternalError', 'RangeError',
+#'ReferenceError', 'SyntaxError', 'TypeError', 'URIError', 'Number', 'Math', 'Date', 'String',
+#'RegExp', 'Array', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array',
+#'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'Map', 'Set', 'WeakMap', 'WeakSet',
+#'SIMD', 'ArrayBuffer', 'DataView', 'JSON', 'Promise', 'Generator', 'GeneratorFunction', 'Reflect',
+#'Proxy', 'Intl'
+about: Despre
+continue: Continuă
+first_name: Prenume
+last_name: Nume
 identifier: Identificator
 avatar: Avatar
 application: Aplicație
@@ -7,10 +31,12 @@ method: Metodă
 published: Publicat
 draft: Ciornă
 archived: Arhivat
+marketplace: Marketplace
 extensions: Extensii
 modules: Module
 module_bar: Bară module
 logs: Log-uri
+unknown: Necunoscut
 reset_width: Resetează lățimea
 tile_size: Dimensiune titlu
 edit_field: Editează câmp
@@ -28,6 +54,8 @@ duplicate_field: Duplică câmp
 half_width: Lățime înjumătățită
 full_width: Lățime completă
 group: Grup
+popular: Popular
+recent: Recent
 export_items: Exportă elemente
 and: Și
 or: Sau
@@ -39,6 +67,7 @@ extension_display: Afişare
 extension_layout: Aspect
 extension_module: Compartiment
 extension_panel: Panou
+extension_theme: Temă
 extension_hook: Cârlig
 extension_endpoint: Punct final
 extension_operation: Operațiune
@@ -48,12 +77,23 @@ extension_displays: Afișaje
 extension_layouts: Aranjamente
 extension_modules: Module
 extension_panels: Panouri
+extension_themes: Teme
 extension_hooks: Cârlige
 extension_endpoints: Puncte finale
 extension_operations: Operațiuni
 extension_bundles: Pachete
+extension_missing: Lipsă
 extension_reload_required_copy: Este necesară o reîncărcare a paginii pentru a vedea modificările după activarea sau dezactivarea extensiilor aplicației.
 extension_reload_now: Reîncarcă acum
+published_relative: Publicat {relativeTime}
+compatible_with_your_project: Compatibil cu proiectul tău
+report_an_issue: Raportează o problemă
+website: Website
+github: GitHub
+beta: Beta
+n_downloads: '{n} Descărcări'
+downloads: Descărcări
+compatibility_not_guaranteed: Compatibilitatea nu este garantată
 enable: Activare
 disable: Dezactivează
 custom: Personalizat
@@ -83,7 +123,6 @@ create_role: Creează rol
 create_user: Creează utilizator
 message: Mesaj
 delete_panel: Șterge panou
-create_webhook: Creează Webhook
 create_custom_translation: Creați traducere personalizată
 edit_custom_translation: Editați traducerea personalizată
 no_custom_translations: Fără Traduceri Personalizate
@@ -107,27 +146,15 @@ keep: Păstrează
 version: Versiune
 version_key: Cheie de versiune
 version_name: Nume Versiune
-main_version: Principal
 switch_version: Schimbă versiunea
 switch_version_copy: Ești sigur că vrei să treci la versiunea “{version}”? Modificările nesalvate vor fi pierdute.
 create_version: Creați versiune
 rename_version: Redenumiți versiunea
 compare_version: Comparați versiunile
 save_version: Salvează versiunea
-promote_version: Promovați versiunea
-promote_version_disabled: Fără modificări
-promote_version_drawer_title: Promovează {version} ca versiunea principală
-promote_version_changes: Modificări
-promote_version_preview: Previzualizare
-outdated_notice: >-
-  Elementul principal a fost actualizat de când a fost creată această versiune. Vă rugăm să revizuiți toate valorile câmpurilor de mai jos și să confirmați care versiune ar trebui utilizată atunci când promovați această versiune în elementul principal.
-promote_notice: >-
-  Vă rugăm să revizuiți toate valorile câmpurilor de mai jos și să confirmați care versiune ar trebui utilizată atunci când promovați această versiune în elementul principal.
 delete_version: Ștergeți versiunea
 delete_version_copy: >-
   Ești sigur că vrei să ștergi versiunea "{version}"? Această acțiune nu poate fi anulată.
-delete_on_promote_copy: >-
-  Vrei să ștergi sau să păstrezi versiunea "{version}" după promovare?
 reset_bookmark: Resetează semnul de carte
 update_bookmark: Actualizează semnul de carte
 delete_bookmark: Șterge semnul de carte
@@ -253,7 +280,6 @@ field_in_collection: '{field} ({collection})'
 reset_page_preferences: Resetează preferințele paginii
 hidden_field: Câmp ascuns
 hidden_on_detail: Ascuns în detalii
-disabled_editing_value: Dezactivează valoarea de editare
 key: Cheie
 alias: Alias
 bigInteger: Întreg mare
@@ -274,6 +300,8 @@ time: Timp
 timestamp: Marcă temporală
 uuid: UUID
 hash: Hash
+geometry:
+  MultiLineString: Șir multiplu de linii (MultiLineString)
 not_available_for_type: Indisponibil pentru acest tip
 create_translations: Creare traduceri
 auto_refresh: Actualizare automată
@@ -348,6 +376,7 @@ clear_changes: Șterge schimbările
 reset_to_default: Resetare la valorile implicite
 undo_changes: Anulează modificările
 notifications: Notificări
+archive_all: Arhivează tot
 show_all_activity: Afișează toată activitatea
 page_not_found: Pagina nu a fost găsită
 page_not_found_body: Pagina pe care o cauţi nu pare să existe.
@@ -356,6 +385,7 @@ confirm_revert_body: Această acțiune va reseta elementul la starea selectată.
 display: Afişare
 settings_update_success: Setări actualizate
 title: Titlu
+subtitle: Subtitlu
 revision_delta_created: Creat
 revision_delta_created_externally: Creat extern
 revision_delta_updated: '1 câmp actualizat | {count} câmpuri actualizate'
@@ -378,6 +408,8 @@ related_collection: Colecție conexă
 related_collections: Colecții conexe
 translations_collection: Colecție de traduceri
 languages_collection: Colecție de limbi
+translations_preview_collections: Colecții
+translations_preview_fields: Câmpuri
 import_data_input_placeholder: CSV sau JSON...
 import_data_button: Începe importul
 import_data_indeterminate: Se importă datele...
@@ -414,6 +446,7 @@ functions:
   minute: Minut
   second: Secundă
   count: Numărătoare
+  json: JSON
 date-fns_date: PPP
 date-fns_time: 'h:mm:ss a'
 date-fns_time_no_seconds: 'h:mm a'
@@ -441,6 +474,8 @@ months:
   november: Noiembrie
   december: Decembrie
 drag_mode: Mod tragere
+move_tool: Mută unealta
+crop_tool: Unealtă de decupare
 cancel_crop: Anulează decuparea
 original: Original
 url: URL
@@ -508,8 +543,6 @@ file_count: 'Nu există fișiere | Un fișiere | {count} fișiere'
 no_files_copy: Nu există fişiere aici.
 user_count: 'Niciun utilizator | Un Utilizator | {count} utilizatori'
 no_users_copy: Nu sunt utilizatori în acest rol.
-webhooks_count: 'Niciun Webhook | Un Webhook | {count} Webhook-uri'
-no_webhooks_copy: Nici un webhook nu a fost configurat încă. Începeți prin a crea unul de mai jos.
 no_notifications: Nicio notificare
 no_notifications_copy: Ești cu toate la zi!
 activity_log: Jurnal de activitate
@@ -520,7 +553,6 @@ no_collections: Nicio colecție
 create_collection: Creează Colecție
 no_collections_copy_admin: Încă nu aveți nicio colecție. Click pe butonul de mai jos pentru a începe.
 no_collections_copy: Încă nu aveți nicio colecție. Vă rugăm să contactați administratorul de sistem.
-relationship_not_setup: Relația nu a fost configurată corect
 display_template_not_setup: Opțiunea de afișare a șablonului este configurată greșit
 collection_field_not_setup: Opțiunea câmpului de colecții este configurată greșit
 select_a_collection: Selectează o colecție
@@ -537,7 +569,7 @@ activity_item: Element de activitate
 action: Acţiune
 ip_address: Adresă IP
 user_agent: User Agent
-webhooks: Webhook-uri
+origin: Origine
 decimals: Zecimale
 value_decimals: Valoare zecimale
 min_value: Valoare minimă
@@ -568,7 +600,10 @@ bookmark_doesnt_exist_copy: Semnul de carte pe care încerci să îl deschizi nu
 bookmark_doesnt_exist_cta: Revenire la colecție
 select_an_item: Selectați un element...
 edit: Editare
+edit_item: Editare element
 enabled: Activat
+enable_all: Activeaza tot
+disable_all: Dezactivează tot
 disable_tfa: Dezactivează 2FA
 tfa_scan_code: Scanează codul din aplicația de autentificare pentru a finaliza configurarea 2FA
 enter_otp_to_disable_tfa: Introduceți OTP pentru a dezactiva 2FA
@@ -598,14 +633,12 @@ errors:
   VALUE_OUT_OF_RANGE: Valoarea este în afara intervalului
   VALUE_TOO_LONG: Valoarea este prea lungă
 security: Securitate
-value_hashed: Valoare criptată în mod securizat
 bookmark_name: Denumirea semnului de carte...
 create_bookmark: Creează semn de carte
 edit_bookmark: Editează semn de carte
 bookmarks: Semne de carte
 presets: Presetări
 unexpected_error: Eroare neașteptată
-unexpected_error_copy: A apărut o eroare neașteptată. Te rugăm să încerci din nou mai târziu.
 copy_details: Copiază detaliile
 no_app_access: Fără acces la aplicație
 no_app_access_copy: Acest utilizator nu are permisiunea de a utiliza aplicația de administrare.
@@ -627,10 +660,6 @@ make_collection_visible: Faceți colecția vizibilă
 make_collection_hidden: Ascundeți colecția
 make_folder_visible: Fă vizibil dosarul
 make_folder_hidden: Ascunde dosarul
-start_end_of_count_items: '{start}-{end} din {count} elemente'
-start_end_of_count_filtered_items: '{start}-{end} din {count} elemente filtrate'
-one_item: '1 element'
-one_filtered_item: '1 element filtrat'
 collections_shown: Colecții afișate
 visible_collections: Colecții vizibile
 hidden_collections: Colecții ascunse
@@ -684,6 +713,7 @@ operators:
   nintersects: Nu intersectează
   intersects_bbox: Intersectează caseta de încadrare
   nintersects_bbox: Nu intersectează caseta de încadrare
+  json: JSON
 loading: Se încarcă...
 drop_to_upload: Plasează pentru a încărca
 item: Element
@@ -707,7 +737,6 @@ create_item: Creează element
 display_template: Afişare şablon
 language_display_template: Șablon de afişare a limbii
 translations_display_template: Șablon de afișare a traducerilor
-n_items_selected: 'Niciun element selectat | Un element selectat | {n} elemente selectate'
 per_page: Elemente per pagină
 all_files: Toate fişierele
 my_files: Fișierele mele
@@ -751,6 +780,14 @@ flow_tracking_activity: Urmărește doar activitatea
 flow_tracking_null: Nu urmări nimic
 code: Cod
 insights: Analize
+deployment:
+  provider:
+    settings:
+      delete_confirm: Această acţiune este permanentă şi nu poate fi anulată. Sunteţi sigur că doriţi să continuaţi?
+    run:
+      cancel_confirm: Această acţiune este permanentă şi nu poate fi anulată. Sunteţi sigur că doriţi să continuaţi?
+  target_value:
+    preview: Previzualizare
 dashboard: Panou
 panel: Panou
 panel_options: Opțiuni panou
@@ -794,8 +831,6 @@ tooltip: Sugestii
 tooltip_placeholder: Introduceți o sugestie...
 unlimited: Nelimitat
 open_link_in: Deschide link-ul în
-new_tab: Tab Nou
-current_tab: Tab curent
 save_image: Salvează imaginea
 save_media: Salvează media
 wysiwyg_options:
@@ -817,12 +852,15 @@ wysiwyg_options:
   bullist: Listă punctată
   numlist: Listă numerotată
   hr: Linie orizontală
+  insertdatetime_date: Data
+  insertdatetime_time: Timp
   link: Adaugă/editează link
   unlink: Șterge link
   media: Adaugă/editează media
   image: Adaugă/editează imagine
   copy: Copiază
   cut: Taie
+  default: Implicit
   paste: Lipește
   heading: Titlu
   h1: Titlu 1
@@ -845,6 +883,8 @@ wysiwyg_options:
   source_code: Editează codul sursă
   fullscreen: Pe tot ecranul
   directionality: Direcționalitate
+  ltr: Stânga-dreapta
+  rtl: Dreapta-Stânga
 dropdown: Listă verticală
 choices: Opțiuni
 choices_option_configured_incorrectly: Opțiuni configurate incorect
@@ -862,7 +902,14 @@ editing_in_batch: 'Editare lot de {count} elemente'
 no_options_available: Nicio opțiune disponibilă
 settings_data_model: Model de date
 settings_project: Setări
-settings_webhooks: Webhook-uri
+licensing:
+  unlimited: Nelimitat
+  addon_update: Actualizare
+  resolve_continue: Continuă
+  resolve_show_n_more: 'Arată încă {count}'
+  resolve_sso_admin_password: Parolă
+  entitlements:
+    collections: Colecții
 settings_presets: Semne de carte
 settings_translations: Traduceri
 one_or_more_options_are_missing: Una sau mai multe opțiuni lipsesc
@@ -886,36 +933,6 @@ discard_changes_copy: Ești sigur că vrei să renunți la toate modificările f
 show_x_axis: Arată axa X
 show_y_axis: Arată axa Y
 keep_editing: Continuă editarea
-page_help_collections_overview: '**Prezentare generală colecție** - Lista tuturor colecțiilor la care aveți acces.'
-page_help_collections_collection: >-
-  **Răsfoiește elementele** — Listează toate elementele {collection} la care ai acces. Personalizați aspectul, filtrele și sortarea pentru a vă adapta afișarea, și chiar salvați semnele de carte ale acestor configurații diferite pentru acces rapid.
-page_help_collections_item: >-
-  **Detaliile elementului** - Un formular pentru vizualizarea și gestionarea acestui element. Această bară conține de asemenea o istorie completă a revizuirilor și a comentariilor încorporate.
-page_help_activity_collection: >-
-  **Răsfoiește activitatea** — O listare cuprinzătoare a întregii activității în sistem și conținut a utilizatorilor tăi.
-page_help_docs_global: >-
-  **Prezentare generală a documentației** - Documente special adaptate versiunii și schemei acestui proiect.
-page_help_files_collection: >-
-  **Bibliotecă de fișiere** - Listează toate activele fișierelor încărcate în acest proiect. Personalizați aspectul, filtrele și sortarea pentru a vă adapta afișarea, și chiar salvați semnele de carte ale acestor configurații diferite pentru acces rapid.
-page_help_files_item: >-
-  **Detaliile fișierului** - Un formular pentru gestionarea metadatelor fișierelor, editarea activului original și actualizarea setărilor de acces.
-page_help_settings_datamodel_collections: >-
-  **Modelul de date: Colecții** — Listează toate colecțiile disponibile. Aceasta include colecții vizibile, ascunse și de sistem, precum și tabele de baze de date negestionate care pot fi adăugate.
-page_help_settings_datamodel_fields: >-
-  **Modelul de date: Colecție** — Un formular pentru gestionarea acestei colecții și a câmpurilor sale.
-page_help_settings_roles_collection: '**Răsfoiește roluri** — Listează rolurile de utilizator Admin, Public și personalizat.'
-page_help_settings_roles_item: "**Detaliile rolurilor** - Gestionează permisiunile unui rol și alte setări."
-page_help_settings_presets_collection: >-
-  **Răsfoiește presetările** — Listează toate presetările din proiect, inclusiv: utilizatorul, rolul și semnele de carte globale, precum și vizualizările implicite.
-page_help_settings_presets_item: >-
-  **Detalii presetare** — Un formular pentru gestionarea marcajelor și presetărilor implicite de colectare.
-page_help_settings_webhooks_collection: '**Răsfoiește Webhooks** — Listează toate webhook-urile din cadrul proiectului.'
-page_help_settings_webhooks_item: '**Webhook Detail** - Un formular pentru crearea și gestionarea webhook-urilor proiectului.'
-page_help_users_collection: '**Listă utilizatori** — Listează toți utilizatorii de sistem din cadrul acestui proiect.'
-page_help_users_item: >-
-  **Detaliile utilizatorului** - Gestionați informațiile despre cont sau vizualizați detaliile altor utilizatori.
-page_help_insights_overview: '**Analize** - Lista tablourilor de bord la care ai acces.'
-page_help_insights_dashboard: '**Tablou de bord** - Spațiu de lucru pentru administrarea unuia sau mai multor panouri'
 activity_feed: Flux activitate
 add_new: Adaugare intrare nouă
 create_new: Adaugă
@@ -926,6 +943,7 @@ batch_delete_confirm: >-
   Nu au fost selectate articole | Sigur doriți să ștergeți acest articol? Această acțiune nu poate fi anulată. | Sigur doriți să ștergeți aceste {count} elemente? Această acțiune nu poate fi anulată.
 cancel: Anulează
 no_upscale: Nu suprascala imaginile
+source_registry: Marketplace
 collection: Colecție
 collections: Colecții
 content: Conținut
@@ -942,7 +960,6 @@ directus_collection:
   directus_migrations: Ce versiune a bazei de date utilizaţi
   directus_notifications: Notificări trimise utilizatorilor
   directus_panels: Panouri individuale din tablourile de bord pentru analize
-  directus_permissions: Accesați permisiunile pentru fiecare rol
   directus_presets: Presetări pentru valorile implicite ale colecțiilor și semne de carte
   directus_relations: Configurarea relației și metadate
   directus_revisions: Instantanee cu date pentru toată activitatea
@@ -951,7 +968,6 @@ directus_collection:
   directus_settings: Opțiuni de configurare proiect
   directus_shares: Contorizează elementele partajate extern
   directus_users: Utilizatorii de sistem pentru platformă
-  directus_webhooks: Configurare pentru cereri HTTP bazate pe evenimente
 fields:
   directus_activity:
     item: Cheia primară a elementului
@@ -961,12 +977,14 @@ fields:
     user: Acțiune de
     comment: Comentariu
     user_agent: User Agent
+    origin: Origine
     ip: Adresă IP
     revisions: Revizii
   directus_collections:
     collection: Colecție
     icon: Pictogramă
     note: Notă
+    status: Stare
     color: Culoare
     display_template: Afişare şablon
     hidden: Ascuns
@@ -1067,6 +1085,7 @@ fields:
     transformations_all: Permite toate transformările
     transformations_none: Dezactivează transformările
     transformations_presets: Limitează transformările la presetările de mai jos
+    ai_header_name: Antet
   directus_shares:
     name: Nume
     role: Rol
@@ -1087,24 +1106,9 @@ fields:
     name: Nume rol
     icon: Pictogramă rol
     description: Descriere
-    app_access: Acces aplicație
-    admin_access: Acces administrator
-    ip_access: Acces IP
-    enforce_tfa: Necesită 2FA
     users: Utilizatori în rol
-    module_list: Navigare în module
-  directus_webhooks:
-    name: Nume
-    method: Metodă
-    status: Stare
-    data: Date
-    header: Antet
-    value: Valoare
-    headers: Antetele cererii (request headers)
-    data_label: Trimite date eveniment
-    triggers: Declanșatori
-    actions: Acțiuni
-    collections: Colecții
+  directus_policies:
+    description: Descriere
 field_options:
   directus_settings:
     project_name_placeholder: Proiectul meu...
@@ -1193,19 +1197,6 @@ field_options:
     status_dropdown_suspended: Suspendat
     status_dropdown_archived: Arhivat
     token: Introduceți un token de acces securizat...
-  directus_webhooks:
-    status_options_active: Activ
-    status_options_inactive: Inactiv
-    data_label: Trimite date eveniment
-    triggers_divider: Declanșatori
-    actions_create: Creează
-    actions_update: Actualizare
-    actions_delete: Ștergere
-    actions_login: Autentificare
-    headers:
-      header: Antet
-      value: Valoare
-      add: Adaugă antet
 no_fields_in_collection: 'Încă nu există câmpuri în "{collection}"'
 no_value: Nicio valoare
 do_nothing: Nu face nimic
@@ -1223,9 +1214,28 @@ live_preview:
   new_window: Deschide în fereastră nouă
 shares: Distribuiri
 unlimited_usage: Utilizare nelimitată
-uses_left: Nu a mai rămas nicio utilizare | O utilizare rămasă | {n} utilizări rămase
 no_shares: Nici o distribuire de afișat
 new_share: Distribuire nouă
+ai:
+  input: Input
+  unknown: Necunoscut
+  items: Elemente
+  content: Conținut
+  settings: Setări
+  tool_approval:
+    disabled: Dezactivat
+  ask_user_submit: Trimite
+  ask_user_next: Urmatorul
+ai_tools:
+  items: Elemente
+  files: Fişiere
+  trigger-flow: Declanșare flux
+  operations: Operațiuni
+  schema: Schema
+  collections: Colecții
+  fields: Câmpuri
+mcp_prompts_collection_schema:
+  messages_role_user: Utilizator
 expired: Expirat
 upcoming: Urmează
 share: Distribuie
@@ -1256,7 +1266,6 @@ continue_label: Continuă
 continue_as: >-
   {name} este în prezent autentificat. Dacă recunoașteți acest cont, apăsați continuă.
 editing_role: 'Rolul {role}'
-creating_webhook: Se creează webhook-ul
 default_label: Implicit
 delete_label: Ștergere
 delete_are_you_sure: >-
@@ -1325,7 +1334,6 @@ translation_placeholder: Introduceți o traducere...
 value: Valoare
 view_project: Vezi proiect
 report_error: Raportare eroare
-start: Pornire
 table: Tabel
 list: Listă
 interfaces:
@@ -1355,10 +1363,10 @@ interfaces:
     all_opened: Toate deschise
     accordion_mode: Mod acordeon
     max_one_section_open: Cel mult o secțiune deschisă
+  group-tabs:
+    fill_width: Umple lățimea
   presentation-links:
-    presentation-links: Link-uri buton
-    links: Link-uri
-    description: Link-uri buton configurabile pentru lansarea de url-uri dinamice
+    presentation-links: Butoane
     style: Stil
     primary: Principal
     link: Link-uri
@@ -1478,6 +1486,8 @@ interfaces:
     preview: Previzualizare
     editorFont: Font pentru editor
     previewFont: Font pentru previzualizare
+    default_view: Vizualizare implicită
+    default_view_preview: Previzualizare
     customSyntax: Blocuri personalizate
     customSyntax_label: Adăugați tipuri de sintaxă personalizate
     customSyntax_add: Adaugă sintaxă personalizată
@@ -1525,6 +1535,7 @@ interfaces:
     field_note_placeholder: Introduceți nota câmpului...
     incompatible_data: Datele curente nu sunt compatibile cu interfața de repetare și vor fi suprascrise atunci când se adaugă elemente la repetator
     interface_group: Opțiuni interfață
+    edit_mode_inline: Pe aceeași linie
   slider:
     slider: Glisor
     description: Selectați un număr folosind un glisor
@@ -1594,8 +1605,8 @@ interfaces:
     wysiwyg: WYSIWYG
     description: Un editor de text formatat care scrie conţinut HTML
     toolbar: Bară de instrumente
+    extensions: Extensii
     custom_formats: Formate personalizate
-    options_override: Suprascriere opțiuni
     folder_note: Dosar pentru fișierele încărcate. Nu afectează fișierele existente.
     imageToken: Token acces static
     imageToken_label: Token-ul de acces static este adăugat la URL-ul obiectelor
@@ -1630,6 +1641,9 @@ interfaces:
     start_closed: Începe închis
   system-token:
     system-token: Token
+  header:
+    header: Antet
+    links: Link-uri
 displays:
   translations:
     translations: Traduceri
@@ -1785,6 +1799,7 @@ layouts:
   kanban:
     crop: Decupare
 both: Ambele
+start: Pornire
 panels:
   metric:
     name: Metric
@@ -1828,7 +1843,6 @@ operations:
     header: Antet
   trigger:
     name: Declanșare flux
-    description: Transmite aceste date la un alt flux
     flows: Fluxuri
     flow: Flux
     data: Date
@@ -1841,3 +1855,6 @@ fonts:
   black: Negru
   italic: Cursiv
   auto: Automat
+license_grace_key_modal:
+  optional: Opţional
+set_to_now: Setează acum

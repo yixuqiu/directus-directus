@@ -1,12 +1,12 @@
+import { EXTENSION_TYPES } from '@directus/constants';
 import { useEnv } from '@directus/env';
 import { ErrorCode, ForbiddenError, isDirectusError, RouteNotFoundError } from '@directus/errors';
-import { EXTENSION_TYPES } from '@directus/extensions';
 import {
 	account,
-	describe,
-	list,
 	type AccountOptions,
+	describe,
 	type DescribeOptions,
+	list,
 	type ListOptions,
 	type ListQuery,
 } from '@directus/extensions-registry';
@@ -20,8 +20,9 @@ import { respond } from '../middleware/respond.js';
 import useCollection from '../middleware/use-collection.js';
 import { ExtensionReadError, ExtensionsService } from '../services/extensions.js';
 import asyncHandler from '../utils/async-handler.js';
+import { destroyOnDisconnect } from '../utils/destroy-on-disconnect.js';
 import { getCacheControlHeader } from '../utils/get-cache-headers.js';
-import { getMilliseconds } from '../utils/get-milliseconds.js';
+import { handleRegistryError } from './utils/handle-registry-error.js';
 
 const router = express.Router();
 const env = useEnv();
@@ -93,17 +94,23 @@ router.get(
 			query.sort = sort[0];
 		}
 
-		if (env['MARKETPLACE_TRUST'] === 'sandbox') {
+		if (env.MARKETPLACE_TRUST === 'sandbox') {
 			query.sandbox = true;
 		}
 
 		const options: ListOptions = {};
 
-		if (env['MARKETPLACE_REGISTRY'] && typeof env['MARKETPLACE_REGISTRY'] === 'string') {
-			options.registry = env['MARKETPLACE_REGISTRY'];
+		if (env.MARKETPLACE_REGISTRY) {
+			options.registry = env.MARKETPLACE_REGISTRY;
 		}
 
-		const payload = await list(query, options);
+		let payload;
+
+		try {
+			payload = await list(query, options);
+		} catch (error) {
+			handleRegistryError(error);
+		}
 
 		res.locals['payload'] = payload;
 		return next();
@@ -114,17 +121,27 @@ router.get(
 router.get(
 	`/registry/account/:pk(${UUID_REGEX})`,
 	asyncHandler(async (req, res, next) => {
+		if (req.accountability && req.accountability.admin !== true) {
+			throw new ForbiddenError();
+		}
+
 		if (typeof req.params['pk'] !== 'string') {
 			throw new ForbiddenError();
 		}
 
 		const options: AccountOptions = {};
 
-		if (env['MARKETPLACE_REGISTRY'] && typeof env['MARKETPLACE_REGISTRY'] === 'string') {
-			options.registry = env['MARKETPLACE_REGISTRY'];
+		if (env.MARKETPLACE_REGISTRY) {
+			options.registry = env.MARKETPLACE_REGISTRY;
 		}
 
-		const payload = await account(req.params['pk'], options);
+		let payload;
+
+		try {
+			payload = await account(req.params['pk'], options);
+		} catch (error) {
+			handleRegistryError(error);
+		}
 
 		res.locals['payload'] = payload;
 		return next();
@@ -135,17 +152,27 @@ router.get(
 router.get(
 	`/registry/extension/:pk(${UUID_REGEX})`,
 	asyncHandler(async (req, res, next) => {
+		if (req.accountability && req.accountability.admin !== true) {
+			throw new ForbiddenError();
+		}
+
 		if (typeof req.params['pk'] !== 'string') {
 			throw new ForbiddenError();
 		}
 
 		const options: DescribeOptions = {};
 
-		if (env['MARKETPLACE_REGISTRY'] && typeof env['MARKETPLACE_REGISTRY'] === 'string') {
-			options.registry = env['MARKETPLACE_REGISTRY'];
+		if (env.MARKETPLACE_REGISTRY) {
+			options.registry = env.MARKETPLACE_REGISTRY;
 		}
 
-		const payload = await describe(req.params['pk'], options);
+		let payload;
+
+		try {
+			payload = await describe(req.params['pk'], options);
+		} catch (error) {
+			handleRegistryError(error);
+		}
 
 		res.locals['payload'] = payload;
 		return next();
@@ -294,13 +321,8 @@ router.get(
 		const chunk = req.params['chunk'] as string;
 		const extensionManager = getExtensionManager();
 
-		let source: string | null;
-
-		if (chunk === 'index.js') {
-			source = extensionManager.getAppExtensionsBundle();
-		} else {
-			source = extensionManager.getAppExtensionChunk(chunk);
-		}
+		const chunkName = chunk === 'index.js' ? undefined : chunk;
+		const source = await extensionManager.getAppExtensionChunk(chunkName);
 
 		if (source === null) {
 			throw new RouteNotFoundError({ path: req.path });
@@ -308,13 +330,16 @@ router.get(
 
 		res.setHeader('Content-Type', 'application/javascript; charset=UTF-8');
 
-		res.setHeader(
-			'Cache-Control',
-			getCacheControlHeader(req, getMilliseconds(env['EXTENSIONS_CACHE_TTL']), false, false),
-		);
+		res.setHeader('Cache-Control', getCacheControlHeader(req, env.EXTENSIONS_CACHE_TTL, false, false));
 
 		res.setHeader('Vary', 'Origin, Cache-Control');
-		res.end(source);
+
+		// Clean up the source stream if the client disconnects, or is already gone
+		if (destroyOnDisconnect(res, () => source.destroy())) {
+			return;
+		}
+
+		source.pipe(res);
 	}),
 );
 

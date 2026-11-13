@@ -1,6 +1,6 @@
 import { useEnv } from '@directus/env';
-import type { SchemaOverview } from '@directus/types';
 import type { Knex } from 'knex';
+import { email } from 'zod';
 import getDatabase, {
 	hasDatabaseConnection,
 	isInstalled,
@@ -8,12 +8,11 @@ import getDatabase, {
 } from '../../../database/index.js';
 import runMigrations from '../../../database/migrations/run.js';
 import installDatabase from '../../../database/seeds/run.js';
-import { useLogger } from '../../../logger.js';
-import { RolesService } from '../../../services/roles.js';
+import { getEntitlementManager } from '../../../license/index.js';
+import { useLogger } from '../../../logger/index.js';
 import { SettingsService } from '../../../services/settings.js';
-import { UsersService } from '../../../services/users.js';
+import { createAdmin } from '../../../utils/create-admin.js';
 import { getSchema } from '../../../utils/get-schema.js';
-import { defaultAdminRole, defaultAdminUser } from '../../utils/defaults.js';
 
 export default async function bootstrap({ skipAdminInit }: { skipAdminInit?: boolean }): Promise<void> {
 	const logger = useLogger();
@@ -36,15 +35,35 @@ export default async function bootstrap({ skipAdminInit }: { skipAdminInit?: boo
 
 		const schema = await getSchema();
 
+		/*
+		 * Initialize only the entitlement manager, not the full license
+		 * manager: a single admin fits within core license limits, and
+		 * staying at this layer keeps tests simple.
+		 *
+		 * Required regardless — createAdmin below triggers the seat
+		 * counter, which errors if entitlements aren't registered.
+		 */
+		getEntitlementManager();
+
 		if (skipAdminInit == null) {
-			await createDefaultAdmin(schema);
+			await createAdmin(schema);
 		} else {
 			logger.info('Skipping creation of default Admin user and role...');
 		}
 
-		if (env['PROJECT_NAME'] && typeof env['PROJECT_NAME'] === 'string' && env['PROJECT_NAME'].length > 0) {
-			const settingsService = new SettingsService({ schema });
-			await settingsService.upsertSingleton({ project_name: env['PROJECT_NAME'] });
+		const settingsService = new SettingsService({ schema });
+
+		if (env.PROJECT_NAME) {
+			await settingsService.upsertSingleton({ project_name: env.PROJECT_NAME });
+		}
+
+		if (email().safeParse(env.PROJECT_OWNER).success) {
+			await settingsService.setOwner({
+				project_owner: env.PROJECT_OWNER!,
+				org_name: null,
+				project_usage: null,
+				product_updates: false,
+			});
 		}
 	} else {
 		logger.info('Database already initialized, skipping install');
@@ -73,34 +92,4 @@ async function waitForDatabase(database: Knex) {
 	await validateDatabaseConnection(database);
 
 	return database;
-}
-
-async function createDefaultAdmin(schema: SchemaOverview) {
-	const logger = useLogger();
-	const env = useEnv();
-
-	const { nanoid } = await import('nanoid');
-
-	logger.info('Setting up first admin role...');
-	const rolesService = new RolesService({ schema });
-	const role = await rolesService.createOne(defaultAdminRole);
-
-	logger.info('Adding first admin user...');
-	const usersService = new UsersService({ schema });
-
-	let adminEmail = env['ADMIN_EMAIL'];
-
-	if (!adminEmail) {
-		logger.info('No admin email provided. Defaulting to "admin@example.com"');
-		adminEmail = 'admin@example.com';
-	}
-
-	let adminPassword = env['ADMIN_PASSWORD'];
-
-	if (!adminPassword) {
-		adminPassword = nanoid(12);
-		logger.info(`No admin password provided. Defaulting to "${adminPassword}"`);
-	}
-
-	await usersService.createOne({ email: adminEmail, password: adminPassword, role, ...defaultAdminUser });
 }

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { getConfigPath } from '../utils/get-config-path.js';
-import { getTypeFromMap } from '../utils/get-type-from-map.js';
+import { getDefaultType, getTypeMapEntry } from '../utils/get-type-map-entry.js';
 import { isDirectusVariable } from '../utils/is-directus-variable.js';
 import { isFileKey } from '../utils/is-file-key.js';
 import { readConfigurationFromProcess } from '../utils/read-configuration-from-process.js';
@@ -17,7 +17,7 @@ vi.mock('../utils/read-configuration-from-process.js');
 vi.mock('../utils/remove-file-suffix.js');
 vi.mock('./cast.js');
 vi.mock('./read-configuration-from-file.js');
-vi.mock('../utils/get-type-from-map.js');
+vi.mock('../utils/get-type-map-entry.js');
 vi.mock('node:fs');
 
 vi.mock('../constants/defaults.js', () => ({
@@ -44,28 +44,46 @@ afterEach(() => {
 	vi.resetAllMocks();
 });
 
-test('Defaults that have a type set is casted', () => {
-	vi.mocked(getTypeFromMap).mockImplementation((key) => {
-		if (key === 'DEFAULT_ARRAY') return 'array';
-		return null;
+describe('Casting of default configuration', () => {
+	test('Default config with default type gets casted', () => {
+		vi.mocked(getDefaultType).mockImplementation((key) => {
+			if (key === 'DEFAULT_ARRAY') return 'array';
+			return null;
+		});
+
+		vi.mocked(cast).mockImplementation((value, key) => {
+			if (key === 'DEFAULT_ARRAY') return String(value).split(',');
+			return value;
+		});
+
+		const env = createEnv();
+
+		expect(env).toEqual({
+			PROCESS: 'test-process',
+			FILE: 'test-file',
+			DEFAULT: 'test-default',
+			DEFAULT_ARRAY: ['one', 'two', 'three'],
+		});
+
+		expect(getDefaultType).toHaveBeenCalledTimes(2);
+		expect(cast).toHaveBeenCalledTimes(3);
 	});
 
-	vi.mocked(cast).mockImplementation((value, key) => {
-		if (key === 'DEFAULT_ARRAY') return String(value).split(',');
-		return value;
+	test('Default config without default type gets not casted', () => {
+		vi.mocked(getDefaultType).mockReturnValue(null);
+
+		const env = createEnv();
+
+		expect(env).toEqual({
+			PROCESS: 'test-process',
+			FILE: 'test-file',
+			DEFAULT: 'test-default',
+			DEFAULT_ARRAY: 'one,two,three',
+		});
+
+		expect(getDefaultType).toHaveBeenCalledTimes(2);
+		expect(cast).toHaveBeenCalledTimes(2);
 	});
-
-	const env = createEnv();
-
-	expect(env).toEqual({
-		PROCESS: 'test-process',
-		FILE: 'test-file',
-		DEFAULT: 'test-default',
-		DEFAULT_ARRAY: ['one', 'two', 'three'],
-	});
-
-	expect(getTypeFromMap).toHaveBeenCalledTimes(2);
-	expect(cast).toHaveBeenCalledTimes(3);
 });
 
 test('Combines process/file based config with defaults', () => {
@@ -87,32 +105,51 @@ test('Reads file configuration from config path', () => {
 	expect(readConfigurationFromFile).toHaveBeenCalledWith('./test/config/path');
 });
 
-test('Reads value from file if key is a file key', () => {
-	vi.mocked(readConfigurationFromFile).mockReturnValue({
-		TEST_FILE: './test/path',
+describe('File based configuration', () => {
+	beforeEach(() => {
+		vi.mocked(isFileKey).mockImplementation((key) => {
+			return key === 'PROCESS_FILE';
+		});
+
+		vi.mocked(isDirectusVariable).mockImplementation((key) => {
+			return key === 'PROCESS_FILE';
+		});
+
+		vi.mocked(removeFileSuffix).mockReturnValue('PROCESS');
+		vi.mocked(readFileSync).mockReturnValue('file-content');
 	});
 
-	vi.mocked(isFileKey).mockImplementation((key) => {
-		return key === 'TEST_FILE';
+	test('Reads values from file via process value', () => {
+		vi.mocked(readConfigurationFromFile).mockReturnValue({});
+
+		vi.mocked(readConfigurationFromProcess).mockReturnValue({
+			PROCESS_FILE: './test/path',
+		});
+
+		const env = createEnv();
+
+		expect(removeFileSuffix).toHaveBeenCalledWith('PROCESS_FILE');
+		expect(readFileSync).toHaveBeenCalledWith('./test/path', { encoding: 'utf8' });
+
+		expect(env).toEqual({
+			PROCESS: 'file-content',
+			DEFAULT: 'test-default',
+			DEFAULT_ARRAY: 'one,two,three',
+		});
 	});
 
-	vi.mocked(isDirectusVariable).mockImplementation((key) => {
-		return key === 'TEST_FILE';
-	});
+	test('Reads values from file via process value with casting', () => {
+		vi.mocked(readConfigurationFromFile).mockReturnValue({});
 
-	vi.mocked(removeFileSuffix).mockReturnValue('TEST');
-	vi.mocked(readFileSync).mockReturnValue('file-contents');
+		vi.mocked(readConfigurationFromProcess).mockReturnValue({
+			PROCESS_FILE: 'array:./test/path',
+		});
 
-	const env = createEnv();
+		createEnv();
 
-	expect(removeFileSuffix).toHaveBeenCalledWith('TEST_FILE');
-	expect(readFileSync).toHaveBeenCalledWith('./test/path', { encoding: 'utf8' });
-
-	expect(env).toEqual({
-		PROCESS: 'test-process',
-		TEST: 'file-contents',
-		DEFAULT: 'test-default',
-		DEFAULT_ARRAY: 'one,two,three',
+		expect(removeFileSuffix).toHaveBeenCalledWith('PROCESS_FILE');
+		expect(readFileSync).toHaveBeenCalledWith('./test/path', { encoding: 'utf8' });
+		expect(cast).toHaveBeenCalledWith('array:file-content', 'PROCESS');
 	});
 });
 
@@ -171,5 +208,130 @@ test('Casts regular values', () => {
 		FILE: 'cast-test-file',
 		DEFAULT: 'test-default',
 		DEFAULT_ARRAY: 'one,two,three',
+	});
+});
+
+describe('Empty values', () => {
+	test.each(['number', 'boolean', 'milliseconds', 'bytes', 'json', null] as const)(
+		'Uses the default for empty values of %s variables with a default',
+		(type) => {
+			vi.mocked(getDefaultType).mockReturnValue(type);
+			processConfig['DEFAULT'] = '';
+
+			const env = createEnv();
+
+			expect(env['DEFAULT']).toBe('test-default');
+		},
+	);
+
+	test.each(['number', 'boolean', 'milliseconds', 'bytes', 'json'] as const)(
+		'Leaves out empty values of %s variables without a default',
+		(type) => {
+			vi.mocked(getDefaultType).mockImplementation((key) => (key === 'PROCESS' ? type : null));
+			processConfig['PROCESS'] = '';
+
+			const env = createEnv();
+
+			expect(env).not.toHaveProperty('PROCESS');
+		},
+	);
+
+	test.each(['array', 'string-array'] as const)('Keeps empty values of %s variables with a default', (type) => {
+		vi.mocked(getDefaultType).mockReturnValue(type);
+		vi.mocked(cast).mockImplementation((value, key) => (key === 'DEFAULT' ? [] : value));
+		processConfig['DEFAULT'] = '';
+
+		const env = createEnv();
+
+		expect(env['DEFAULT']).toEqual([]);
+	});
+
+	test('Keeps empty values of string variables with a default', () => {
+		vi.mocked(getDefaultType).mockReturnValue('string');
+		vi.mocked(cast).mockImplementation((value) => value);
+		processConfig['DEFAULT'] = '';
+
+		const env = createEnv();
+
+		expect(env['DEFAULT']).toBe('');
+	});
+
+	test('Keeps empty values of unknown variables without a default', () => {
+		vi.mocked(getDefaultType).mockReturnValue(null);
+		processConfig['PROCESS'] = '';
+
+		const env = createEnv();
+
+		expect(env['PROCESS']).toBe('');
+	});
+});
+
+describe('Disableable variables', () => {
+	test.each([false, 'false', ''])('Keeps %j as false without casting', (value) => {
+		vi.mocked(getTypeMapEntry).mockImplementation((key) =>
+			key === 'ACTIVITY_RETENTION' ? ['milliseconds', 'false'] : null,
+		);
+
+		fileConfig['ACTIVITY_RETENTION'] = value;
+
+		const env = createEnv();
+
+		expect(env['ACTIVITY_RETENTION']).toBe(false);
+		expect(cast).not.toHaveBeenCalledWith(value, 'ACTIVITY_RETENTION');
+	});
+});
+
+describe('Invalid values', () => {
+	test.each([undefined, NaN])('Ignores values that are cast to %s and warns', (castValue) => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		processConfig['DEFAULT'] = 'invalid';
+
+		vi.mocked(cast).mockImplementation((value, key) => (key === 'DEFAULT' && value === 'invalid' ? castValue : value));
+
+		const env = createEnv();
+
+		expect(env['DEFAULT']).toBe('test-default');
+
+		expect(warn).toHaveBeenCalledWith('Environment variable "DEFAULT" has an invalid value "invalid" and is ignored.');
+	});
+
+	test('Uses the default for invalid boolean values with a default', () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		vi.mocked(getDefaultType).mockReturnValue('boolean');
+
+		processConfig['DEFAULT'] = 'HELLO';
+
+		vi.mocked(cast).mockImplementation((value) => (value === 'HELLO' ? undefined : value));
+
+		const env = createEnv();
+
+		expect(env['DEFAULT']).toBe('test-default');
+	});
+
+	test('Sets invalid boolean values without a default to false', () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		vi.mocked(getDefaultType).mockImplementation((key) => (key === 'PROCESS' ? 'boolean' : null));
+
+		processConfig['PROCESS'] = 'HELLO';
+
+		vi.mocked(cast).mockImplementation((value) => (value === 'HELLO' ? undefined : value));
+
+		const env = createEnv();
+
+		expect(env['PROCESS']).toBe(false);
+	});
+
+	test('Does not warn about empty values that are cast to undefined', () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		processConfig['PROCESS'] = '';
+
+		vi.mocked(cast).mockImplementation((value) => (value === '' ? undefined : value));
+
+		const env = createEnv();
+
+		expect(env['PROCESS']).toBeUndefined();
+		expect(warn).not.toHaveBeenCalled();
 	});
 });

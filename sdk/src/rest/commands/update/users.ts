@@ -1,7 +1,7 @@
-import type { ApplyQueryFields, Query } from '../../../types/index.js';
+import type { DirectusUser } from '../../../schema/user.js';
+import type { ApplyQueryFields, NestedPartial, Query } from '../../../types/index.js';
 import type { RestCommand } from '../../types.js';
 import { throwIfEmpty } from '../../utils/index.js';
-import type { DirectusUser } from '../../../schema/user.js';
 
 export type UpdateUserOutput<
 	Schema,
@@ -22,7 +22,7 @@ export type UpdateUserOutput<
 export const updateUsers =
 	<Schema, const TQuery extends Query<Schema, DirectusUser<Schema>>>(
 		keys: DirectusUser<Schema>['id'][],
-		item: Partial<DirectusUser<Schema>>,
+		item: NestedPartial<DirectusUser<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateUserOutput<Schema, TQuery>[], Schema> =>
 	() => {
@@ -37,6 +37,26 @@ export const updateUsers =
 	};
 
 /**
+ * Update multiple users as batch.
+ *
+ * @param items The user data to update
+ * @param query Optional return data query
+ *
+ * @returns Returns the user objects for the updated users.
+ */
+export const updateUsersBatch =
+	<Schema, const TQuery extends Query<Schema, DirectusUser<Schema>>>(
+		items: NestedPartial<DirectusUser<Schema>>[],
+		query?: TQuery,
+	): RestCommand<UpdateUserOutput<Schema, TQuery>[], Schema> =>
+	() => ({
+		path: `/users`,
+		params: query ?? {},
+		body: JSON.stringify(items),
+		method: 'PATCH',
+	});
+
+/**
  * Update an existing user.
  *
  * @param key The primary key of the user
@@ -49,7 +69,7 @@ export const updateUsers =
 export const updateUser =
 	<Schema, const TQuery extends Query<Schema, DirectusUser<Schema>>>(
 		key: DirectusUser<Schema>['id'],
-		item: Partial<DirectusUser<Schema>>,
+		item: NestedPartial<DirectusUser<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateUserOutput<Schema, TQuery>, Schema> =>
 	() => {
@@ -73,7 +93,7 @@ export const updateUser =
  */
 export const updateMe =
 	<Schema, const TQuery extends Query<Schema, DirectusUser<Schema>>>(
-		item: Partial<DirectusUser<Schema>>,
+		item: NestedPartial<DirectusUser<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateUserOutput<Schema, TQuery>, Schema> =>
 	() => ({

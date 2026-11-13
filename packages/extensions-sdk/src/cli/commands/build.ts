@@ -1,19 +1,15 @@
-import type {
-	ApiExtensionType,
-	AppExtensionType,
-	ExtensionOptionsBundleEntry,
-	ExtensionManifest as TExtensionManifest,
-} from '@directus/extensions';
+import path from 'path';
+import { APP_EXTENSION_TYPES, EXTENSION_TYPES, HYBRID_EXTENSION_TYPES } from '@directus/constants';
+import type { ExtensionOptionsBundleEntry, ExtensionManifest as TExtensionManifest } from '@directus/extensions';
 import {
 	API_SHARED_DEPS,
-	APP_EXTENSION_TYPES,
+	APP_SHARED_DEP_ALIASES,
 	APP_SHARED_DEPS,
 	EXTENSION_PKG_KEY,
-	EXTENSION_TYPES,
 	ExtensionManifest,
 	ExtensionOptionsBundleEntries,
-	HYBRID_EXTENSION_TYPES,
 } from '@directus/extensions';
+import type { ApiExtensionType, AppExtensionType } from '@directus/types';
 import { isIn, isTypeIn } from '@directus/utils';
 import commonjsDefault from '@rollup/plugin-commonjs';
 import jsonDefault from '@rollup/plugin-json';
@@ -25,12 +21,11 @@ import vue from '@vitejs/plugin-vue';
 import chalk from 'chalk';
 import fse from 'fs-extra';
 import ora from 'ora';
-import path from 'path';
 import type { Plugin, RollupError, RollupOptions, OutputOptions as RollupOutputOptions } from 'rollup';
 import { rollup, watch as rollupWatch } from 'rollup';
-import esbuildDefault from 'rollup-plugin-esbuild';
-import stylesDefault from 'rollup-plugin-styles';
-import type { Format, RollupConfig, RollupMode } from '../types.js';
+import esbuild from 'rollup-plugin-esbuild';
+import styles from 'rollup-plugin-styler';
+import type { Config, Format, RollupConfig, RollupMode } from '../types.js';
 import { getFileExt } from '../utils/file.js';
 import { clear, log } from '../utils/logger.js';
 import tryParseJson from '../utils/try-parse-json.js';
@@ -40,8 +35,6 @@ import { validateSplitEntrypointOption } from './helpers/validate-cli-options.js
 
 // Workaround for https://github.com/rollup/plugins/issues/1329
 const virtual = virtualDefault as unknown as typeof virtualDefault.default;
-const esbuild = esbuildDefault as unknown as typeof esbuildDefault.default;
-const styles = stylesDefault as unknown as typeof stylesDefault.default;
 const commonjs = commonjsDefault as unknown as typeof commonjsDefault.default;
 const json = jsonDefault as unknown as typeof jsonDefault.default;
 const replace = replaceDefault as unknown as typeof replaceDefault.default;
@@ -73,7 +66,7 @@ export default async function build(options: BuildOptions): Promise<void> {
 		let extensionManifestFile: string;
 
 		try {
-			extensionManifestFile = await fse.readFile(packagePath, 'utf8');
+			extensionManifestFile = (await fse.readFile(packagePath, 'utf8')) as string;
 		} catch {
 			log(`Failed to read "package.json" file from current directory.`, 'error');
 			process.exit(1);
@@ -275,11 +268,10 @@ async function buildAppOrApiExtension({
 	}
 
 	const config = await loadConfig();
-	const plugins = config.plugins ?? [];
 
 	const mode = isIn(type, APP_EXTENSION_TYPES) ? 'browser' : 'node';
 
-	const rollupOptions = getRollupOptions({ mode, input, sourcemap, minify, plugins });
+	const rollupOptions = getRollupOptions({ mode, input, sourcemap, minify, config });
 	const rollupOutputOptions = getRollupOutputOptions({ mode, output, format, sourcemap });
 
 	if (watch) {
@@ -329,14 +321,13 @@ async function buildHybridExtension({
 	}
 
 	const config = await loadConfig();
-	const plugins = config.plugins ?? [];
 
 	const rollupOptionsApp = getRollupOptions({
 		mode: 'browser',
 		input: inputApp,
 		sourcemap,
 		minify,
-		plugins,
+		config,
 	});
 
 	const rollupOptionsApi = getRollupOptions({
@@ -344,7 +335,7 @@ async function buildHybridExtension({
 		input: inputApi,
 		sourcemap,
 		minify,
-		plugins,
+		config,
 	});
 
 	const rollupOutputOptionsApp = getRollupOutputOptions({ mode: 'browser', output: outputApp, format, sourcemap });
@@ -401,7 +392,6 @@ async function buildBundleExtension({
 	}
 
 	const config = await loadConfig();
-	const plugins = config.plugins ?? [];
 
 	const entrypointApp = generateBundleEntrypoint('app', entries);
 	const entrypointApi = generateBundleEntrypoint('api', entries);
@@ -411,7 +401,7 @@ async function buildBundleExtension({
 		input: { entry: entrypointApp },
 		sourcemap,
 		minify,
-		plugins,
+		config,
 	});
 
 	const rollupOptionsApi = getRollupOptions({
@@ -419,7 +409,7 @@ async function buildBundleExtension({
 		input: { entry: entrypointApi },
 		sourcemap,
 		minify,
-		plugins,
+		config,
 	});
 
 	const rollupOutputOptionsApp = getRollupOutputOptions({ mode: 'browser', output: outputApp, format, sourcemap });
@@ -472,6 +462,7 @@ async function buildExtension(config: RollupConfig | RollupConfig[]) {
 
 async function watchExtension(config: RollupConfig | RollupConfig[]) {
 	const configs = Array.isArray(config) ? config : [config];
+	const userConfig = await loadConfig();
 
 	const spinner = ora(chalk.bold('Building Directus extension...'));
 
@@ -487,7 +478,10 @@ async function watchExtension(config: RollupConfig | RollupConfig[]) {
 			switch (event.code) {
 				case 'BUNDLE_START':
 					if (buildCount === 0) {
-						clear();
+						if (userConfig?.watch?.clearScreen !== false) {
+							clear();
+						}
+
 						spinner.start();
 					}
 
@@ -527,38 +521,60 @@ function getRollupOptions({
 	input,
 	sourcemap,
 	minify,
-	plugins,
+	config,
 }: {
 	mode: RollupMode;
 	input: string | Record<string, string>;
 	sourcemap: boolean;
 	minify: boolean;
-	plugins: Plugin[];
+	config: Config;
 }): RollupOptions {
+	const plugins = config.plugins ?? [];
+
 	return {
 		input: typeof input !== 'string' ? 'entry' : input,
-		external: mode === 'browser' ? APP_SHARED_DEPS : API_SHARED_DEPS,
+		external: [...(mode === 'browser' ? APP_SHARED_DEPS : API_SHARED_DEPS)],
 		plugins: [
 			typeof input !== 'string' ? virtual(input) : null,
+			// @ts-ignore Libraries should be compatible, just the type is colliding.
 			mode === 'browser' ? vue({ isProduction: true }) : null,
 			esbuild({ include: /\.tsx?$/, sourceMap: sourcemap }),
 			mode === 'browser' ? styles() : null,
 			...plugins,
-			nodeResolve({ browser: mode === 'browser', preferBuiltins: mode === 'node' }),
+			mode === 'browser' ? appSharedDepAliasPlugin() : null,
+			nodeResolve({
+				browser: mode === 'browser',
+				exportConditions: mode === 'node' ? ['node'] : [],
+				preferBuiltins: mode === 'node',
+			}),
 			commonjs({ esmExternals: mode === 'browser', sourceMap: sourcemap }),
 			json(),
-			replace({
-				values: {
-					'process.env.NODE_ENV': JSON.stringify('production'),
-				},
-				preventAssignment: true,
-			}),
+			mode === 'browser'
+				? replace({
+						values: {
+							'process.env.NODE_ENV': JSON.stringify('production'),
+						},
+						preventAssignment: true,
+					})
+				: null,
 			minify ? terser() : null,
 		],
 		onwarn(warning, warn) {
 			if (warning.code === 'CIRCULAR_DEPENDENCY' && warning.ids?.every((id) => /\bnode_modules\b/.test(id))) return;
 
 			warn(warning);
+		},
+	};
+}
+
+// `external` matches exact names only, so bare `prosemirror-*` imports would be bundled
+function appSharedDepAliasPlugin(): Plugin {
+	return {
+		name: 'directus-app-shared-dep-aliases',
+		resolveId(source) {
+			const target = APP_SHARED_DEP_ALIASES[source];
+
+			return target ? { id: target, external: true } : null;
 		},
 	};
 }

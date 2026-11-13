@@ -1,4 +1,7 @@
 ---
+continue: जारी राख्नुहोस्
+first_name: नाम
+last_name: थर
 identifier: पहिचान
 avatar: अवतार
 application: अनुप्रयोग
@@ -66,7 +69,6 @@ create_role: भूमिका सिर्जना
 create_user: प्रयोगकर्ता सिर्जना
 message: सन्देश
 delete_panel: प्यानल मेटाउनुहोस्
-create_webhook: वेबहुक सिर्जना
 invite_users: प्रयोगकर्ताहरूलाई आमन्त्रित गर्नुहोस्
 invite: निमन्त्रणा दिनुहोस्
 email_already_invited: इमेल "{email}" लाई पहिले नै आमन्त्रित गरिएको छ
@@ -82,7 +84,6 @@ rename_folder: फोल्डरको नाम बदल्नुहोस्
 delete_folder: फोल्डर मेटाउनुहोस्
 prefix: उपसर्ग
 suffix: प्रत्यय
-promote_version_preview: पूर्वावलोकन
 reset_bookmark: बुकमार्क रिसेट गर्नुहोस्
 update_bookmark: बुकमार्क अपडेट गर्नुहोस्
 delete_bookmark: बुकमार्क मेट्नुहोस्
@@ -197,7 +198,6 @@ field_in_collection: '{field} ({collection})'
 reset_page_preferences: पृष्ठ प्राथमिकताहरू रिसेट गर्नुहोस्
 hidden_field: लुकेको फिल्ड
 hidden_on_detail: विवरणमा लुकेको छ
-disabled_editing_value: मान सम्पादन असक्षम गर्नुहोस्
 key: कुञ्जी
 alias: उपनाम
 bigInteger: ठूलो पूर्ण संख्या
@@ -295,6 +295,7 @@ confirm_revert_body: यसले वस्तुलाई चयन गरि�
 display: डिस्प्ले
 settings_update_success: सेटिङहरू अद्यावधिक गरियो
 title: सेटिङहरू अद्यावधिक गरियो
+subtitle: उपशीर्षक
 revision_delta_created: सिर्जना गरियो
 revision_delta_created_externally: बाहिरी बाट सिर्जना गरिएको
 revision_delta_updated: '१ फिल्ड अपडेट गरिएको  | {count} फिल्डहरू अपडेट गरिएको '
@@ -320,6 +321,7 @@ related_collection: सम्बन्धित संग्रह
 related_collections: सम्बन्धित संग्रहहरू
 translations_collection: अनुवाद संग्रह
 languages_collection: भाषा संग्रह
+translations_preview_collections: सङ्ग्रहहरू
 import_data_input_placeholder: CSV वा JSON...
 import_data_button: आयात सुरु गर्नुहोस्
 import_data_indeterminate: डाटा आयात गर्दै...
@@ -356,6 +358,7 @@ functions:
   minute: मिनेट
   second: सेकेण्ड
   count: गणना
+  json: JSON
 date-fns_date: PPP
 date-fns_time: 'h:mm:ss a'
 date-fns_time_no_seconds: 'h:mm a'
@@ -456,8 +459,6 @@ file_count: 'कुनै फाइल छैन | एउटा फाइल | {
 no_files_copy: यहाँ कुनै फाइलहरू छैनन्।
 user_count: 'कुनै प्रयोगकर्ता छैन | एक प्रयोगकर्ता | {count} प्रयोगकर्ताहरू'
 no_users_copy: यस भूमिकामा अझै कुनै प्रयोगकर्ताहरू छैनन्।
-webhooks_count: 'कुनै वेबहुक छैन | एउटा वेबहुक | {count} वेबहुकहरू'
-no_webhooks_copy: कुनै पनि वेबहुकहरू अझै कन्फिगर गरिएको छैन। तल एउटा सिर्जना गरेर सुरु गर्नुहोस्।
 no_notifications: कुनै सूचनाहरू छैनन्
 no_notifications_copy: तपाईंले सबै जाँच गर्नुभयो
 activity_log: गतिविधि लग
@@ -468,7 +469,6 @@ no_collections: कुनै सङ्ग्रहहरू छैनन्
 create_collection: ' सङ्ग्रह बनाउनुहोस्'
 no_collections_copy_admin: तपाईंसँग अहिलेसम्म कुनै पनि सङ्ग्रहहरू छैनन्। सुरु गर्न तलको बटन क्लिक गर्नुहोस्।
 no_collections_copy: तपाईंसँग अहिलेसम्म कुनै पनि सङ्ग्रहहरू छैनन्। कृपया आफ्नो प्रणाली प्रशासकलाई सम्पर्क गर्नुहोस्।
-relationship_not_setup: सम्बन्ध सही तरिकाले कन्फिगर गरिएको छैन
 display_template_not_setup: डिस्प्ले टेम्प्लेट विकल्प गलत कन्फिगर गरिएको छ
 collection_field_not_setup: संग्रह फिल्ड विकल्प गलत कन्फिगर गरिएको छ
 select_a_collection: एउटा सङ्ग्रह चयन गर्नुहोस्
@@ -486,7 +486,6 @@ action: कार्य
 ip_address: आईपी ठेगाना
 user_agent: प्रयोगकर्ता एजेन्ट
 origin: उत्पत्ति
-webhooks: वेबहुकहरू
 decimals: दशमलव अंक
 min_value: न्यूनतम मान
 max_value: अधिकतम मान
@@ -559,7 +558,6 @@ errors:
   VALUE_OUT_OF_RANGE: मान दायरा भन्दा बाहिर छ
   VALUE_TOO_LONG: मान धेरै लामो छ
 security: सुरक्षा
-value_hashed: मान सुरक्षित रूपमा ह्यास गरिएको
 bookmark_name: बुकमार्कको नाम...
 create_bookmark: बुकमार्क सिर्जना गर्नुहोस्
 edit_bookmark: बुकमार्क सम्पादन गर्नुहोस्
@@ -571,11 +569,9 @@ cannot_edit_global_bookmarks: ग्लोबल बुकमार्कहर�
 bookmarks: बुकमार्कहरू
 presets: प्रिसेटहरू
 unexpected_error: नसाेचेकाे समस्या
-unexpected_error_copy: एउटा अनापेक्षित त्रुटि भएको छ, कृपया केही समय पछि फेरि प्रयास गर्नुहोस्।
 copy_details: विवरणहरू प्रतिलिपि गर्नुहोस्
 no_app_access: कुनै एप पहुँच छैन
 no_app_access_copy: यो प्रयोगकर्तालाई प्रशासक एप प्रयोग गर्न अनुमति छैन।
-password_reset_sent: यदि तपाइँसँग खाता छ भने, हामीले तपाइँलाई तपाइँको पासवर्ड रिसेट गर्न सुरक्षित लिङ्क पठाएका छौं
 password_reset_successful: पासवर्ड सफलतापूर्वक रिसेट गरियो
 back: पछाडि
 filter: फिल्‍टर
@@ -596,10 +592,6 @@ make_collection_hidden: संग्रह लुकाउनुहोस्
 make_folder_visible: फोल्डर देखिने बनाउनुहोस्
 make_folder_hidden: फोल्डर लुकाउनुहोस्
 goto_collection_content: सामग्री हेर्नुहोस्
-start_end_of_count_items: '{start}-{end} को {count} वस्तुहरू'
-start_end_of_count_filtered_items: '{start}-{end} को {count} फिल्टर गरिएका वस्तुहरू'
-one_item: '१ वस्तु'
-one_filtered_item: '१ फिल्टर गरिएको वस्तु'
 delete_collection_are_you_sure: >-
   के तपाइँ "{collection}" सङ्ग्रह मेटाउन निश्चित हुनुहुन्छ? यसले संग्रह र यसमा भएका सबै वस्तुहरू मेटाउनेछ। यो कार्य स्थायी छ।
 delete_folder_are_you_sure: के तपाइँ "{folder}" फोल्डर मेटाउन निश्चित हुनुहुन्छ? नेस्ट गरिएका फोल्डरहरू र सङ्ग्रहहरूलाई सबैभन्दा माथिल्लो तहमा सारिनेछ।
@@ -658,6 +650,7 @@ operators:
   nintersects: मिल्दैन
   intersects_bbox: बाउन्डिङ बाकसलाई काट्छ
   nintersects_bbox: बाउन्डिङ बक्स काट्दैन
+  json: JSON
   regex: RegExp सँग मेल खान्छ
 custom_validation_message: कस्टम प्रमाणीकरण सन्देश
 loading: लोड हुँदैछ ...
@@ -683,7 +676,6 @@ create_item: वस्तु सिर्जना गर्नुहोस्
 display_template: टेम्प्लेट प्रदर्शन गर्नुहोस्
 language_display_template: भाषा प्रदर्शन टेम्प्लेट
 translations_display_template: अनुवाद प्रदर्शन टेम्प्लेट
-n_items_selected: 'कुनै वस्तु चयन गरिएको छैन | १ वस्तु चयन गरियो | {n} वस्तुहरू चयन गरियो'
 per_page: प्रति पृष्ठ
 all_files: सबै फाइलहरू
 my_files: मेरो फाइलहरू
@@ -727,8 +719,6 @@ label: लेबल
 flows: फ्लोहरु
 flow: फ्लो
 select_a_flow: फ्लो चयन गर्नुहोस्
-run_flow_on_current_edited_confirm: यो वस्तु यस फ्लो द्वारा अद्यावधिक हुन सक्छ, के तपाइँ यसलाई कार्यान्वयन गर्न निश्चित हुनुहुन्छ?
-run_flow_success: फ्लो "{flow}" सफलतापूर्वक दौडियो
 field_name_placeholder: फिल्डको नाम प्रविष्ट गर्नुहोस्...
 trigger: ट्रिगर
 trigger_options: ट्रिगर विकल्पहरू
@@ -765,6 +755,14 @@ operation_key_unique_error: अपरेशन कुञ्जीहरू फ�
 operation_handle_resolve: 'समाधान गर्नुहोस्: थप्न क्लिक गर्नुहोस् वा पुन: मार्गमा तान्नुहोस्'
 operation_handle_reject: 'अस्वीकार गर्नुहोस्: थप्न क्लिक गर्नुहोस् वा रिरूटमा तान्नुहोस्'
 insights: अन्तर्दृष्टि
+deployment:
+  provider:
+    settings:
+      delete_confirm: यो कार्य स्थायी छ र पूर्ववत गर्न सकिँदैन। के तपाइँ निश्चित रूपमा अगाडि बढ्न चाहनुहुन्छ?
+    run:
+      cancel_confirm: यो कार्य स्थायी छ र पूर्ववत गर्न सकिँदैन। के तपाइँ निश्चित रूपमा अगाडि बढ्न चाहनुहुन्छ?
+  target_value:
+    preview: पूर्वावलोकन
 dashboard: ड्यासबोर्ड
 panel: प्‍यानल
 panel_options: प्यानल विकल्पहरू
@@ -817,8 +815,6 @@ tooltip: टूलटिप
 tooltip_placeholder: एउटा टूलटिप प्रविष्ट गर्नुहोस्...
 unlimited: असीमित
 open_link_in: मा लिङ्क खोल्नुहोस्
-new_tab: नयाँ ट्याब
-current_tab: हालको ट्याब
 save_image: तस्वीर बचत गर्नुहोस्
 save_media: मिडिया बचत गर्नुहोस्
 wysiwyg_options:
@@ -838,12 +834,15 @@ wysiwyg_options:
   blockquote: ब्लककोट
   bullist: बुलेट सूची
   numlist: संख्यात्मक सूची
+  insertdatetime_date: मिति
+  insertdatetime_time: समय
   link: लिङ्क थप्नुहोस्/सम्पादन गर्नुहोस्
   unlink: लिङ्क हटाउनुहोस्
   media: मिडिया थप्नुहोस्/सम्पादन गर्नुहोस्
   image: तस्वीर थप्नुहोस्/सम्पादन गर्नुहोस्
   copy: प्रतिलिपि
   cut: कट गर्नुहोस्
+  default: पूर्वनिर्धारित
   paste: टाँस्नुहोस्
   heading: शीर्षक
   h1: शीर्षक १
@@ -866,6 +865,8 @@ wysiwyg_options:
   source_code: स्रोत कोड सम्पादन गर्नुहोस्
   fullscreen: पूर्ण स्क्रिन
   directionality: दिशात्मकता
+  ltr: बायाँ देखि दायाँ
+  rtl: दायाँ देखि बायाँ
 dropdown: ड्रपडाउन
 choices: विकल्पहरू
 choices_option_configured_incorrectly: विकल्पहरू गलत रूपमा कन्फिगर गरिएको छ
@@ -883,8 +884,16 @@ editing_in_batch: '{count} वस्तुहरू ब्याच सम्प
 no_options_available: कुनै विकल्प उपलब्ध छैन
 settings_data_model: डाटा मोडेल
 settings_project: सेटिंग्सहरु
-settings_webhooks: वेबहुकहरू
-settings_flows: फ्लोहरु
+licensing:
+  unlimited: असीमित
+  addon_update: अद्यावधिक
+  resolve_continue: जारी राख्नुहोस्
+  resolve_show_n_more: 'थप {count} देखाउनुहोस्'
+  resolve_section_flows: फ्लोहरु
+  resolve_sso_admin_password: पासवर्ड
+  entitlements:
+    collections: सङ्ग्रहहरू
+    flows: फ्लोहरु
 settings_presets: बुकमार्कहरू
 settings_translations: अनुवादहरू
 one_or_more_options_are_missing: एक वा बढी विकल्पहरू छुटेका छन्
@@ -908,28 +917,6 @@ discard_changes_copy: के तपाई साँच्चिकै सबै 
 show_x_axis: X अक्ष देखाउनुहोस्
 show_y_axis: Y अक्ष देखाउनुहोस्
 keep_editing: सम्पादन गरिरहनुहोस्
-page_help_collections_overview: '**सङ्ग्रहको अवलोकन** — तपाइँसँग पहुँच भएका सबै सङ्ग्रहहरूको सूची।'
-page_help_collections_collection: >-
-  **आइटमहरू ब्राउज गर्नुहोस्** — तपाईंसँग पहुँच भएका सबै {collection} वस्तुहरू सूचीबद्ध गर्नुहोस्। लेआउट, फिल्टरहरू, र क्रमबद्ध तपाईंको दृश्यलाई अनुकूलित गर्नुहोस्, र द्रुत पहुँचको लागि यी फरक कन्फिगरेसनहरूको बुकमार्कहरू बचत गर्नुहोस्।
-page_help_collections_item: >-
-  **वस्तुको विवरण** — यो वस्तु हेर्न र व्यवस्थापन गर्नको लागि एउटा फारम। यो साइडबारले संशोधन, र इम्बेडेड टिप्पणीहरूको पूर्ण इतिहास पनि समावेश गर्दछ।
-page_help_activity_collection: >-
-  ** ब्राउज गतिविधि** — तपाइँको सबै प्रयोगकर्ताको प्रणाली र सामग्री गतिविधि को एक व्यापक सूची।
-page_help_docs_global: >-
-  **कागजातीकरण अवलोकन** — कागजातहरू विशेष रूपमा यस परियोजनाको संस्करण र स्किमा अनुरूप।
-page_help_files_collection: >-
-  **फाइल लाइब्रेरी** — यस परियोजनामा अपलोड गरिएका सबै फाइल सम्पत्तिहरू सूचीबद्ध गर्दछ। लेआउट, फिल्टरहरू, र क्रमबद्ध तपाईंको दृश्यलाई अनुकूलित गर्नुहोस्, र द्रुत पहुँचको लागि यी फरक कन्फिगरेसनहरूको बुकमार्कहरू बचत गर्नुहोस्।
-page_help_files_item: >-
-  **फाइल विवरण** — फाइल मेटाडेटा व्यवस्थापन गर्न, मूल सम्पत्ति सम्पादन गर्न र पहुँच सेटिङहरू अद्यावधिक गर्ने फारम।
-page_help_settings_datamodel_collections: >-
-  **डेटा मोडेल: सङ्कलन** — उपलब्ध सबै सङ्कलनहरूको सूची बनाउँछ। यसमा दृश्यात्मक, लुकेका, र प्रणाली सङ्कलनहरू, साथै अव्यवस्थित डाटाबेस तालिकाहरू थप्न सकिन्छ।
-page_help_settings_roles_collection: '**भूमिकाहरू ब्राउज गर्नुहोस्** — प्रशासक, सार्वजनिक र अनुकूलन प्रयोगकर्ता भूमिकाहरू सूचीबद्ध गर्दछ।'
-page_help_settings_roles_item: "**भूमिका विवरण** — भूमिकाको अनुमति र अन्य सेटिङहरू प्रबन्ध गर्नुहोस्।"
-page_help_users_collection: '**प्रयोगकर्ता निर्देशिका** — यो परियोजना भित्रका सबै प्रणाली प्रयोगकर्ताहरूलाई सूचीबद्ध गर्दछ।'
-page_help_users_item: >-
-  **प्रयोगकर्ता विवरण** — आफ्नो खाता जानकारी प्रबन्ध गर्नुहोस्, वा अन्य प्रयोगकर्ताहरूको विवरण हेर्नुहोस्।
-page_help_insights_overview: '**अन्तरदृष्टि** — तपाईंसँग पहुँच भएका ड्यासबोर्डहरूको सूची।'
-page_help_insights_dashboard: '**ड्यासबोर्ड** — एक वा बढी प्यानलहरू प्रबन्ध गर्न कार्यस्थान'
 activity_feed: गतिविधि फिड
 add_new: नयाँ थप्नुहोस्
 create_new: नयाँ सिर्जना गर्नुहोस्
@@ -951,13 +938,11 @@ directus_collection:
   directus_dashboards: इनसाइट्स मोड्युल भित्र ड्यासबोर्डहरू
   directus_fields: अतिरिक्त फिल्ड कन्फिगरेसन र मेटाडाटा
   directus_files: सबै व्यवस्थित फाइल सम्पत्तिहरूको लागि मेटाडेटा
-  directus_flows: स्वचालन फ्लो
   directus_folders: फाइलहरूको लागि भर्चुअल डाइरेक्टरीहरू प्रदान गर्दछ
   directus_migrations: तपाईले प्रयोग गरिरहनु भएको डेटाबेसको कुन संस्करण
   directus_notifications: प्रयोगकर्ताहरूलाई सूचनाहरू पठाइयो
   directus_operations: फ्लोमा चल्ने अपरेशनहरू
   directus_panels: अन्तर्दृष्टि ड्यासबोर्डहरू भित्र व्यक्तिगत प्यानलहरू
-  directus_permissions: प्रत्येक भूमिकाको लागि पहुँच अनुमतिहरू
   directus_presets: पूर्वनिर्धारित संग्रह र बुकमार्कहरूको लागि प्रिसेटहरू
   directus_relations: सम्बन्ध कन्फिगरेसन र मेटाडेटा
   directus_revisions: सबै गतिविधिका लागि डाटा स्न्यापसटहरू
@@ -966,7 +951,6 @@ directus_collection:
   directus_settings: प्रोजेक्ट कन्फिगरेसन विकल्पहरू
   directus_shares: बाह्य रूपमा साझा वस्तुहरू ट्र्याक गर्दछ
   directus_users: प्लेटफर्मको लागि सिस्टम प्रयोगकर्ताहरू
-  directus_webhooks: एभेन्ट-आधारित HTTP अनुरोधहरूको लागि कन्फिगरेसन
   directus_translations: कस्टम अनुवादहरु
 fields:
   directus_activity:
@@ -982,6 +966,7 @@ fields:
     collection: संग्रह
     icon: आइकन
     note: नोट
+    status: स्थिति
     color: रंग
     display_template: टेम्प्लेट प्रदर्शन गर्नुहोस्
     hidden: लुकेको
@@ -1075,6 +1060,7 @@ fields:
     transformations_none: रूपान्तरण असक्षम गर्नुहोस्
     transformations_presets: तलका प्रिसेटहरूमा रूपान्तरणहरू सीमित गर्नुहोस्
     image_editor: तस्वीर सम्पादक
+    ai_header_name: हेडर
   directus_shares:
     name: नाम
     role: भूमिका
@@ -1094,24 +1080,9 @@ fields:
     name: भूमिकाको नाम
     icon: भूमिका आइकन
     description: विवरणः
-    app_access: एप पहुँच
-    admin_access: प्रशासक पहुँच
-    ip_access: आईपी पहुँच
-    enforce_tfa: 2FA आवश्यक छ
     users: भूमिकामा प्रयोगकर्ताहरू
-    module_list: मोड्युल नेभिगेसन
-  directus_webhooks:
-    name: नाम
-    method: विधि
-    status: स्थिति
-    data: डाटा
-    header: हेडर
-    value: मान
-    headers: हेडर अनुरोध गर्नुहोस्
-    data_label: घटना डेटा पठाउनुहोस्
-    triggers: ट्रिगरहरू
-    actions: कार्यहरू
-    collections: सङ्ग्रहहरू
+  directus_policies:
+    description: विवरणः
 field_options:
   directus_settings:
     project_name_placeholder: मेरो परियोजना...
@@ -1189,19 +1160,6 @@ field_options:
     status_dropdown_active: सक्रिय
     status_dropdown_suspended: निलम्बित
     status_dropdown_archived: अभिलेख राखिएको
-  directus_webhooks:
-    status_options_active: सक्रिय
-    status_options_inactive: निष्क्रिय
-    data_label: घटना डेटा पठाउनुहोस्
-    triggers_divider: ट्रिगरहरू
-    actions_create: सिर्जना गर्नुहोस्
-    actions_update: अद्यावधिक
-    actions_delete: मेट्नुहोस्
-    actions_login: लग - इन
-    headers:
-      header: हेडर
-      value: मान
-      add: हेडर थप्नुहोस्
 do_nothing: केहि नगर
 generate_and_save_uuid: UUID उत्पन्न र बचत गर्नुहोस्
 save_current_user_id: हालको प्रयोगकर्ता आईडी बचत गर्नुहोस्
@@ -1214,6 +1172,24 @@ live_preview:
 shares: शेयरहरू
 no_shares: "देखाउनको लागि कुनै साझेदारी छैन\n"
 new_share: नयाँ साझेदारी
+ai:
+  input: इनपुट
+  items: बस्तुहरु
+  content: सामग्री
+  settings: सेटिंग्सहरु
+  tool_approval:
+    disabled: सक्षम गरिएको छैन
+  ask_user_submit: पेश गर्नुहोस्
+  ask_user_next: अर्को
+ai_tools:
+  items: बस्तुहरु
+  files: फाइलहरू
+  flows: फ्लोहरु
+  trigger-flow: ट्रिगर फ्लो
+  schema: स्‍कीमा
+  collections: सङ्ग्रहहरू
+mcp_prompts_collection_schema:
+  messages_role_user: प्रयोगकर्ता
 expired: म्याद सकिएको
 upcoming: आगामी
 share: "शेयर गर्नु\nअरुलाई पठाउनु"
@@ -1234,7 +1210,6 @@ continue_label: जारी राख्नुहोस्
 continue_as: >-
   {name} हाल प्रमाणिकरण गरिएको छ। यदि तपाइँ यो खाता चिन्नुहुन्छ भने, जारी राख्नुहोस् थिच्नुहोस्।
 editing_role: '{role} भूमिका'
-creating_webhook: वेबहुक सिर्जना गर्दै
 default_label: पूर्वनिर्धारित
 delete_label: मेट्नुहोस्
 delete_are_you_sure: >-
@@ -1310,7 +1285,6 @@ translation_placeholder: अनुवाद प्रविष्ट गर्�
 value: मान
 view_project: परियोजना हेर्नुहोस्
 report_error: रिपोर्ट त्रुटि
-start: सुरु
 table: टेबल
 list: सूची
 search_filter: खोज र फिल्टर
@@ -1341,8 +1315,10 @@ interfaces:
     start: सुरु
     all_closed: "सबै बन्द छ\n"
     all_opened: सबै खुल्यो
+  group-tabs:
+    fill_width: पूर्ण चौडाइ
   presentation-links:
-    links: लिङ्कहरू
+    presentation-links: बटनहरू
     style: शैली
     primary: प्राथमिक
     link: लिङ्कहरू
@@ -1433,6 +1409,8 @@ interfaces:
     preview: पूर्वावलोकन
     editorFont: सम्पादक फन्ट
     previewFont: फन्ट पूर्वावलोकन
+    default_view: पूर्वनिर्धारित दृश्य
+    default_view_preview: पूर्वावलोकन
     customSyntax: अनुकूलित ब्लकहरू
     customSyntax_label: अनुकूलन सिन्ट्याक्स प्रकारहरू थप्नुहोस्
   map:
@@ -1510,7 +1488,6 @@ interfaces:
   input-rich-text-html:
     wysiwyg: WYSIWYG
     custom_formats: कस्टम फर्मेटिंग
-    options_override: विकल्प ओभरराइड
     folder_note: "अपलोड गरिएका फाइलहरूको लागि फोल्डर। अवस्थित फाइलहरूलाई असर गर्दैन।\n"
   input-block-editor:
     tools_options:
@@ -1540,10 +1517,14 @@ interfaces:
     value_securely_saved: मान सुरक्षित रूपमा बचत गरियो
     generate: टोकन उत्पन्न गर्नुहोस्
     regenerate: 'टोकन पुन: उत्पन्न गर्नुहोस्'
-    generate_success_copy: माथिको टोकन ब्याकअप र प्रतिलिपि गर्नुहोस्। सुरक्षा कारणहरूका लागि, तपाईंले यो पृष्ठ बचत गरियो र हेरिसकेपछि फेरि टोकन हेर्न सक्षम हुनुहुने छैन।
+    regenerate_confirm_title: 'टोकन पुन: उत्पन्न गर्नुहोस्'
     remove_token: टोकन हटाउनुहोस्
+    remove_confirm_title: टोकन हटाउनुहोस्
   system-raw-editor:
     description: "raw वा mustache टेम्प्लेटिंग मानहरू प्रविष्ट गर्न अनुमति दिनुहोस्\n"
+  header:
+    header: हेडर
+    links: लिङ्कहरू
 displays:
   translations:
     translations: अनुवादहरू
@@ -1682,7 +1663,6 @@ layouts:
     delete_group: समूह मेटाउनुहोस्
     add_group: समूह थप्नुहोस्
     show: देखाउने
-    not_all_loaded: "तपाईंले पहिलो 1000 वस्तुहरू मात्र लोड गर्न सक्नुहुन्छ।\n"
 horizontal: तेर्सो
 x_axis: "x-अक्ष\n"
 y_axis: y-अक्ष
@@ -1701,6 +1681,7 @@ show_labels: लेबलहरू देखाउनुहोस्
 show_legend: लेजेन्ड देखाउनुहोस्
 right: दायाँ
 left: बायाँ
+start: सुरु
 donut: डोनट
 panels:
   metric:
@@ -1765,7 +1746,6 @@ item_payload_placeholder: "यो JSON वस्तुको फिल्ड म
 operations:
   condition:
     name: र्शत
-    description: If/Else तर्कमा आधारित प्रवाहलाई रुट गर्नुहोस्
   exec:
     name: स्क्रिप्ट चलाउनुहोस्
     description: पेलोड परिमार्जन गर्न मनमानी कोड कार्यान्वयन गर्नुहोस्
@@ -1807,7 +1787,6 @@ operations:
     name: ई-मेल पठाउनुहोस्
     description: एक वा धेरै व्यक्तिहरूलाई इमेल पठाउनुहोस्
     to: सम्म
-    to_placeholder: इ-मेल ठेगानाहरू थप्नुहोस् र इन्टर थिच्नुहोस्...
     body: शरीर
     template: टेम्प्लेट
     data: डाटा
@@ -1838,7 +1817,6 @@ operations:
     description: फ्लोको JSON पेलोड परिवर्तन गर्नुहोस्
   trigger:
     name: ट्रिगर फ्लो
-    description: यो डाटालाई अर्को फ्लोमा पठाउनुहोस्
     flows: फ्लोहरु
     flow: फ्लो
     data: डाटा
@@ -1858,3 +1836,5 @@ fonts:
   black: कालो
   italic: इटालिक
   auto: स्वतः
+license_grace_key_modal:
+  optional: ऐच्छिक

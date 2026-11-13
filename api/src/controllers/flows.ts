@@ -3,6 +3,7 @@ import type { PrimaryKey } from '@directus/types';
 import express from 'express';
 import { UUID_REGEX } from '../constants.js';
 import { getFlowManager } from '../flows.js';
+import checkIsLocked from '../middleware/is-locked.js';
 import { respond } from '../middleware/respond.js';
 import useCollection from '../middleware/use-collection.js';
 import { validateBatch } from '../middleware/validate-batch.js';
@@ -41,8 +42,8 @@ const webhookFlowHandler = asyncHandler(async (req, res, next) => {
 	return next();
 });
 
-router.get(`/trigger/:pk(${UUID_REGEX})`, webhookFlowHandler, respond);
-router.post(`/trigger/:pk(${UUID_REGEX})`, webhookFlowHandler, respond);
+router.get(`/trigger/:pk(${UUID_REGEX})`, checkIsLocked('flows'), webhookFlowHandler, respond);
+router.post(`/trigger/:pk(${UUID_REGEX})`, checkIsLocked('flows'), webhookFlowHandler, respond);
 
 router.post(
 	'/',
@@ -129,14 +130,14 @@ router.patch(
 			schema: req.schema,
 		});
 
-		let keys: PrimaryKey[] = [];
+		let keys: PrimaryKey[];
 
 		if (Array.isArray(req.body)) {
 			keys = await service.updateBatch(req.body);
 		} else if (req.body.keys) {
 			keys = await service.updateMany(req.body.keys, req.body.data);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			keys = await service.updateByQuery(sanitizedQuery, req.body.data);
 		}
 
@@ -195,7 +196,7 @@ router.delete(
 		} else if (req.body.keys) {
 			await service.deleteMany(req.body.keys);
 		} else {
-			const sanitizedQuery = sanitizeQuery(req.body.query, req.accountability);
+			const sanitizedQuery = await sanitizeQuery(req.body.query, req.schema, req.accountability);
 			await service.deleteByQuery(sanitizedQuery);
 		}
 

@@ -1,8 +1,8 @@
 import { type AllCollections } from '../../../index.js';
-import { throwIfEmpty } from '../../utils/index.js';
 import type { AggregationOptions, AggregationOutput } from '../../../types/aggregate.js';
 import type { RestCommand } from '../../types.js';
-import { isSystemCollection } from '@directus/system-data';
+import { throwIfEmpty } from '../../utils/index.js';
+import { isSystemCollection } from '../../utils/is-system-collection.js';
 
 /**
  * Aggregate allow you to perform calculations on a set of values, returning a single result.

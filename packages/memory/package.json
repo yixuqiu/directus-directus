@@ -1,8 +1,8 @@
 {
 	"name": "@directus/memory",
-	"version": "1.0.7",
+	"version": "4.1.2",
 	"description": "Memory / Redis abstraction for Directus",
-	"homepage": "https://directus.io",
+	"homepage": "https://directus.com",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/directus/directus.git",
@@ -21,23 +21,26 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "tsup src/index.ts --format=esm --dts",
-		"dev": "tsup src/index.ts --format=esm --dts --watch",
-		"test": "vitest --watch=false"
+		"build": "tsdown src/index.ts --dts",
+		"dev": "tsdown src/index.ts --dts --watch",
+		"test": "vitest run --project unit",
+		"test:coverage": "vitest run --coverage --project unit",
+		"test:integration": "vitest run --project integration"
 	},
 	"dependencies": {
 		"@directus/errors": "workspace:*",
 		"@directus/utils": "workspace:*",
-		"ioredis": "5.4.1",
-		"lru-cache": "10.2.2",
-		"rate-limiter-flexible": "5.0.3"
+		"@sesamecare-oss/redlock": "catalog:",
+		"ioredis": "catalog:",
+		"lru-cache": "catalog:",
+		"rate-limiter-flexible": "catalog:"
 	},
 	"devDependencies": {
-		"@directus/tsconfig": "workspace:*",
-		"@types/node": "18.19.31",
-		"@vitest/coverage-v8": "1.5.3",
-		"tsup": "8.0.2",
-		"typescript": "5.4.5",
-		"vitest": "1.5.3"
+		"@directus/tsconfig": "catalog:",
+		"@types/node": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"tsdown": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
 	}
 }

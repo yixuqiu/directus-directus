@@ -1,18 +1,21 @@
+@use 'mixins';
+@use '../colors';
+@use 'sass:map';
+
 // Dark Mode
 @mixin dark {
-	$purple: #8866ff;
-	$color-mapping: map-merge(
-		$color-mapping,
+	$purple: #86f;
+	$color-mapping: map.merge(
+		colors.$color-mapping,
 		(
 			'primary': $purple,
-			'secondary': $pink,
+			'secondary': colors.$pink,
 		)
 	);
 
 	color-scheme: dark;
 
 	--foreground-inverted: #0d1117;
-
 	--background-normal-alt: #30363d;
 	--background-subdued: #161b22;
 	--background-highlight: #1d1d21;
@@ -20,14 +23,11 @@
 	--background-page-rgb: 13, 17, 23;
 	--background-inverted: #fff;
 	--background-mark: var(--theme--primary-subdued);
-
-	--overlay-color: rgba(0, 0, 0, 0.9);
-
-	--navigation-shadow: 0px 0px 12px var(--black);
-	--sidebar-shadow: var(--navigation-shadow);
+	--overlay-color: rgb(0 0 0 / 0.9);
+	--shadow-color: var(--black);
 
 	// Generate color variations
-	@include generate-colors($color-mapping, $dark-theme-shade, $dark-theme-tint);
+	@include mixins.generate-colors($color-mapping, colors.$dark-theme-shade, colors.$dark-theme-tint);
 
 	--purple-alt: var(--purple-10);
 	--blue-alt: var(--blue-10);
@@ -44,4 +44,22 @@
 	.alt-colors {
 		--background-subdued: var(--theme--background);
 	}
+
+	// Dimmed variants
+	--primary-dimmed: #3a3566;
+	--secondary-dimmed: #5f3554;
+	--neutral-dimmed: var(--theme--background-accent);
+	--success-dimmed: #1c433d;
+	--warning-dimmed: #4d3a25;
+	--danger-dimmed: #44262e;
+	--info-dimmed: #1d3653;
+
+	// On dimmed variants
+	--primary-ondimmed: var(--primary-150);
+	--secondary-ondimmed: #f191cf;
+	--neutral-ondimmed: var(--theme--foreground);
+	--success-ondimmed: #5ed1b5;
+	--warning-ondimmed: #ffc27a;
+	--danger-ondimmed: #ff8a9a;
+	--info-ondimmed: #6cb6ff;
 }

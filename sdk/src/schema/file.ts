@@ -3,7 +3,7 @@ import type { DirectusFolder } from './folder.js';
 import type { DirectusUser } from './user.js';
 
 // Base type for directus_files
-export type DirectusFile<Schema> = MergeCoreCollection<
+export type DirectusFile<Schema = any> = MergeCoreCollection<
 	Schema,
 	'directus_files',
 	{
@@ -14,8 +14,9 @@ export type DirectusFile<Schema> = MergeCoreCollection<
 		title: string | null;
 		type: string | null;
 		folder: DirectusFolder<Schema> | string | null;
+		created_on: 'datetime';
 		uploaded_by: DirectusUser<Schema> | string | null;
-		uploaded_on: 'datetime';
+		uploaded_on: 'datetime' | null;
 		modified_by: DirectusUser<Schema> | string | null;
 		modified_on: 'datetime';
 		charset: string | null;
@@ -30,5 +31,7 @@ export type DirectusFile<Schema> = MergeCoreCollection<
 		metadata: Record<string, any> | null;
 		focal_point_x: number | null;
 		focal_point_y: number | null;
+		tus_id: string | null;
+		tus_data: Record<string, any> | null;
 	}
 >;

@@ -3,9 +3,11 @@ import type { FailedValidationErrorExtensions } from '../errors/failed-validatio
 
 export const joiValidationErrorItemToErrorExtensions = (
 	validationErrorItem: ValidationErrorItem,
+	path?: string[],
 ): FailedValidationErrorExtensions => {
 	const extensions: Partial<FailedValidationErrorExtensions> = {
 		field: validationErrorItem.path[0] as string,
+		path: [...(path ?? []), ...validationErrorItem.path.slice(1)],
 	};
 
 	const joiType = validationErrorItem.type;
@@ -92,6 +94,11 @@ export const joiValidationErrorItemToErrorExtensions = (
 	if (joiType.endsWith('.pattern.base')) {
 		extensions.type = 'regex';
 		extensions.invalid = validationErrorItem.context?.value;
+	}
+
+	// unsafe number (outside safe number range)
+	if (joiType === 'number.unsafe') {
+		extensions.type = 'unsafe';
 	}
 
 	// TODO Find a better way of passing the expected value down to the client

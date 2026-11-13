@@ -1,11 +1,12 @@
-import type { AuthenticationClient, DirectusClient, RestClient } from '@directus/sdk';
-import { createDirectus, rest, authentication } from '@directus/sdk';
-import { getPublicURL } from '@/utils/get-root-path';
-import { ofetch, type FetchContext } from 'ofetch';
-import { useRequestsStore } from './stores/requests';
+import type { AuthenticationClient, DirectusClient, RequestOptions, RestClient, RestCommand } from '@directus/sdk';
+import { authentication, createDirectus, rest } from '@directus/sdk';
+import { type FetchContext, ofetch } from 'ofetch';
 import { requestQueue } from './api';
+import { SDK_AUTH_REFRESH_BEFORE_EXPIRES } from './constants';
+import { useRequestsStore } from './stores/requests';
+import { getPublicURL } from '@/utils/get-root-path';
 
-export type SdkClient = DirectusClient<any> & AuthenticationClient<any> & RestClient<any>;
+export type SdkClient = DirectusClient<unknown> & AuthenticationClient<unknown> & RestClient<unknown>;
 
 type OptionsWithId = FetchContext['options'] & { id: string };
 
@@ -49,7 +50,7 @@ const baseClient = ofetch.create({
 });
 
 export const sdk: SdkClient = createDirectus(getPublicURL(), { globals: { fetch: baseClient.native } })
-	.with(authentication('session', { credentials: 'include', msRefreshBeforeExpires: 10_000 }))
+	.with(authentication('session', { credentials: 'include', msRefreshBeforeExpires: SDK_AUTH_REFRESH_BEFORE_EXPIRES }))
 	.with(rest({ credentials: 'include' }));
 
 export default sdk;
@@ -62,4 +63,40 @@ function getUrlPath(request: FetchContext['request']): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Creates a RestCommand for the SDK
+ *
+ * This helper function allows sending a RestCommand when the endpoint path is dynamic
+ *
+ * @example
+ * Basic usage with sdk.request
+ * ```typescript
+ * import sdk, { requestEndpoint } from '@/sdk';
+ * import { Item } from '@directus/types';
+ * import { getEndpoint } from '@directus/utils';
+ *
+ * const posts = await sdk.request(
+ * requestEndpoint(getEndpoint(collection), {
+ * method: 'GET',
+ * params: { fields: ['id', 'title', 'content'] },
+ * });
+ * ```
+ */
+export function requestEndpoint<Output = unknown>(
+	path: string,
+	options: Omit<RequestOptions, 'body' | 'path'> & { body?: Record<string, unknown> },
+): RestCommand<Output, never> {
+	let body: undefined | string;
+
+	if (options.body) {
+		body = JSON.stringify(options.body);
+	}
+
+	return () => ({
+		...options,
+		path,
+		body,
+	});
 }

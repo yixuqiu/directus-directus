@@ -1,10 +1,11 @@
-/* eslint-disable no-console */
+/* eslint-disable no-console  */
 
 // Note: the import order is important. Vue has to come first. (Unhead will break if that's first)
+// eslint-disable-next-line import/order
 import { createApp } from 'vue';
 
-import { getVueComponentName } from '@/utils/get-vue-component-name';
-import { createHead } from '@unhead/vue';
+import { createHead } from '@unhead/vue/client';
+import { TemplateParamsPlugin } from '@unhead/vue/plugins';
 import { createPinia } from 'pinia';
 import App from './app.vue';
 import { registerComponents } from './components/register';
@@ -14,7 +15,10 @@ import { loadExtensions, registerExtensions } from './extensions';
 import { i18n } from './lang/';
 import { router } from './router';
 import './styles/main.scss';
+import '@directus/vue-split-panel/index.css';
 import { registerViews } from './views/register';
+import { useSystem } from '@/composables/use-system';
+import { getVueComponentName } from '@/utils/get-vue-component-name';
 
 init();
 
@@ -33,7 +37,7 @@ async function init() {
 
 	app.use(i18n);
 	app.use(createPinia());
-	app.use(createHead());
+	app.use(createHead({ plugins: [TemplateParamsPlugin] }));
 
 	app.config.errorHandler = (err, vm, info) => {
 		const source = getVueComponentName(vm);
@@ -46,12 +50,15 @@ async function init() {
 	registerComponents(app);
 	registerViews(app);
 
+	// must finish before mount: a Tiptap schema is frozen at new Editor(), so a late richtext extension is ignored
 	await loadExtensions();
 	registerExtensions(app);
 
 	// Add router after loading of extensions to ensure all routes are registered
 	app.use(router);
 
+	// #26411 'inject' occurred in pinia store should need vue instance level 'provide'
+	useSystem(app);
 	app.mount('#app');
 
 	console.timeEnd('🕓 Application Loaded');

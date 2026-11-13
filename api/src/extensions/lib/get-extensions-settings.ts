@@ -1,5 +1,7 @@
-import type { BundleExtension, Extension, ExtensionSettings } from '@directus/extensions';
 import { randomUUID } from 'node:crypto';
+import { useEnv } from '@directus/env';
+import { list, type ListOptions } from '@directus/extensions-registry';
+import type { BundleExtension, Extension, ExtensionSettings } from '@directus/types';
 import getDatabase from '../../database/index.js';
 import { ExtensionsService } from '../../services/extensions.js';
 import { getSchema } from '../../utils/get-schema.js';
@@ -66,12 +68,30 @@ export const getExtensionsSettings = async ({
 		}
 	};
 
-	const generateSettingsEntry = (folder: string, extension: Extension, source: 'local' | 'registry' | 'module') => {
-		if (extension.type === 'bundle') {
-			const bundleId = randomUUID();
+	const generateSettingsEntry = async (
+		folder: string,
+		extension: Extension,
+		source: 'local' | 'registry' | 'module',
+	) => {
+		let marketplaceId;
 
+		if (source === 'registry') {
+			const { MARKETPLACE_REGISTRY } = useEnv();
+			const listOptions: ListOptions = {};
+
+			if (MARKETPLACE_REGISTRY) {
+				listOptions.registry = MARKETPLACE_REGISTRY;
+			}
+
+			const marketplace = await list({ search: extension.name }, listOptions);
+			marketplaceId = marketplace.data.find((ext) => ext.name === extension.name)?.id;
+		}
+
+		const id = marketplaceId ?? randomUUID();
+
+		if (extension.type === 'bundle') {
 			newSettings.push({
-				id: bundleId,
+				id,
 				enabled: true,
 				source: source,
 				bundle: null,
@@ -83,13 +103,13 @@ export const getExtensionsSettings = async ({
 					id: randomUUID(),
 					enabled: true,
 					source: source,
-					bundle: bundleId,
+					bundle: id,
 					folder: entry.name,
 				});
 			}
 		} else {
 			newSettings.push({
-				id: randomUUID(),
+				id,
 				enabled: true,
 				source: source,
 				bundle: null,
@@ -125,14 +145,14 @@ export const getExtensionsSettings = async ({
 			continue;
 		}
 
-		generateSettingsEntry(folder, extension, 'local');
+		await generateSettingsEntry(folder, extension, 'local');
 	}
 
 	for (const [folder, extension] of module.entries()) {
 		const existingSettings = moduleSettings.find((settings) => settings.folder === folder);
 
 		if (!existingSettings) {
-			generateSettingsEntry(folder, extension, 'module');
+			await generateSettingsEntry(folder, extension, 'module');
 		} else if (extension.type === 'bundle') {
 			updateBundleEntriesSettings(extension, existingSettings, moduleSettings);
 		}
@@ -142,7 +162,7 @@ export const getExtensionsSettings = async ({
 		const existingSettings = registrySettings.find((settings) => settings.folder === folder);
 
 		if (!existingSettings) {
-			generateSettingsEntry(folder, extension, 'registry');
+			await generateSettingsEntry(folder, extension, 'registry');
 		} else if (extension.type === 'bundle') {
 			updateBundleEntriesSettings(extension, existingSettings, registrySettings);
 		}

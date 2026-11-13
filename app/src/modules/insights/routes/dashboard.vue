@@ -1,21 +1,35 @@
 <script setup lang="ts">
+import { useShortcut } from '@directus/composables';
+import { applyOptionsData } from '@directus/utils';
+import { assign, isEmpty } from 'lodash-es';
+import { computed, ref, toRefs, unref, watch } from 'vue';
+import { RouterView } from 'vue-router';
+import InsightsNavigation from '../components/navigation.vue';
+import InsightsNotFound from './not-found.vue';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VErrorBoundary from '@/components/v-error-boundary.vue';
+import VError from '@/components/v-error.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VNotice from '@/components/v-notice.vue';
+import VProgressCircular from '@/components/v-progress-circular.vue';
+import VSelect from '@/components/v-select/v-select.vue';
 import { AppTile } from '@/components/v-workspace-tile.vue';
+import VWorkspace from '@/components/v-workspace.vue';
 import { useEditsGuard } from '@/composables/use-edits-guard';
 import { useItemPermissions } from '@/composables/use-permissions';
-import { useShortcut } from '@/composables/use-shortcut';
 import { useExtensions } from '@/extensions';
 import { router } from '@/router';
 import { useInsightsStore } from '@/stores/insights';
 import { pointOnLine } from '@/utils/point-on-line';
+import { PrivateViewHeaderBarActionButton } from '@/views/private';
+import { PrivateView } from '@/views/private';
 import CommentsSidebarDetail from '@/views/private/components/comments-sidebar-detail.vue';
 import RefreshSidebarDetail from '@/views/private/components/refresh-sidebar-detail.vue';
-import { useAppStore } from '@directus/stores';
-import { applyOptionsData } from '@directus/utils';
-import { assign, isEmpty } from 'lodash';
-import { computed, ref, toRefs, unref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
-import InsightsNavigation from '../components/navigation.vue';
-import InsightsNotFound from './not-found.vue';
 
 const props = withDefaults(
 	defineProps<{
@@ -25,14 +39,10 @@ const props = withDefaults(
 	{ panelKey: null },
 );
 
-const { t } = useI18n();
-
 const { panels: panelsInfo } = useExtensions();
 
 const insightsStore = useInsightsStore();
-const appStore = useAppStore();
 
-const { fullScreen } = toRefs(appStore);
 const { loading, errors, data, saving, hasEdits, refreshIntervals, variables } = toRefs(insightsStore);
 
 const zoomToFit = ref(false);
@@ -42,6 +52,16 @@ const { updateAllowed } = useItemPermissions('directus_panels', props.primaryKey
 const now = new Date();
 
 const editMode = ref(false);
+
+const inactivePanelIds = computed(
+	() =>
+		new Set(
+			insightsStore
+				.getPanelsForDashboard(props.primaryKey)
+				.filter((panel) => insightsStore.isPanelInactive(panel))
+				.map(({ id }) => id),
+		),
+);
 
 const tiles = computed<AppTile[]>(() => {
 	const panels = insightsStore.getPanelsForDashboard(props.primaryKey);
@@ -144,6 +164,8 @@ const copyPanelTo = ref(insightsStore.dashboards.find((dashboard) => dashboard.i
 const copyPanelID = ref<string | null>();
 
 const copyPanel = () => {
+	if (!copyPanelChoices.value.length) return;
+
 	insightsStore.stagePanelDuplicate(unref(copyPanelID)!, { dashboard: unref(copyPanelTo) });
 	copyPanelID.value = null;
 };
@@ -180,7 +202,6 @@ const discardAndLeave = () => {
 	router.push(unref(leaveTo)!);
 };
 
-const toggleFullScreen = () => (fullScreen.value = !fullScreen.value);
 const toggleZoomToFit = () => (zoomToFit.value = !zoomToFit.value);
 
 const refreshInterval = computed({
@@ -194,131 +215,107 @@ const refreshInterval = computed({
 </script>
 
 <template>
-	<insights-not-found v-if="!currentDashboard" />
-	<private-view v-else :title="currentDashboard.name">
-		<template #title-outer:prepend>
-			<v-button class="header-icon" rounded disabled icon secondary>
-				<v-icon :name="currentDashboard.icon" />
-			</v-button>
-		</template>
-
-		<template #headline>
-			<v-breadcrumb :items="[{ name: t('insights'), to: '/insights' }]" />
-		</template>
-
+	<InsightsNotFound v-if="!currentDashboard" />
+	<PrivateView v-else :title="currentDashboard.name" :icon="currentDashboard.icon">
 		<template #actions>
 			<template v-if="editMode">
-				<v-button
-					v-tooltip.bottom="t('clear_changes')"
-					class="clear-changes"
-					rounded
-					icon
-					outlined
+				<PrivateViewHeaderBarActionButton
+					v-tooltip.bottom="$t('clear_changes')"
+					kind="danger"
+					variant="ghost"
+					icon="undo"
 					@click="cancelChanges"
-				>
-					<v-icon name="clear" />
-				</v-button>
-
-				<v-button v-tooltip.bottom="t('create_panel')" rounded icon outlined :to="`/insights/${currentDashboard.id}/+`">
-					<v-icon name="add" />
-				</v-button>
-
-				<v-button
-					v-tooltip.bottom="t('save')"
-					:disabled="!hasEdits"
-					rounded
-					icon
-					:loading="saving"
-					@click="saveChanges"
-				>
-					<v-icon name="check" />
-				</v-button>
+				/>
 			</template>
 
 			<template v-else>
-				<v-button
-					v-tooltip.bottom="t('fit_to_screen')"
+				<PrivateViewHeaderBarActionButton
+					v-tooltip.bottom="$t('fit_to_screen')"
 					:active="zoomToFit"
 					class="zoom-to-fit"
-					rounded
-					icon
-					outlined
+					variant="ghost"
+					icon="aspect_ratio"
 					@click="toggleZoomToFit"
-				>
-					<v-icon name="aspect_ratio" />
-				</v-button>
-
-				<v-button
-					v-tooltip.bottom="t('full_screen')"
-					:active="fullScreen"
-					class="fullscreen"
-					rounded
-					icon
-					outlined
-					@click="toggleFullScreen"
-				>
-					<v-icon name="fullscreen" />
-				</v-button>
-
-				<v-button
-					v-tooltip.bottom="t('edit_panels')"
-					class="edit"
-					rounded
-					icon
-					outlined
-					:disabled="!updateAllowed"
-					@click="editMode = !editMode"
-				>
-					<v-icon name="edit" />
-				</v-button>
+				/>
 			</template>
 		</template>
 
+		<template #actions:primary>
+			<template v-if="editMode">
+				<PrivateViewHeaderBarActionButton
+					:label="$t('create_panel')"
+					secondary
+					:to="{ name: 'panel-detail', params: { primaryKey: currentDashboard.id, panelKey: '+' } }"
+					icon="add"
+				/>
+
+				<PrivateViewHeaderBarActionButton
+					:label="$t('save')"
+					:disabled="!hasEdits"
+					:loading="saving"
+					icon="check"
+					@click="saveChanges"
+				/>
+			</template>
+
+			<PrivateViewHeaderBarActionButton
+				v-else
+				:label="$t('edit_panels')"
+				class="edit"
+				:disabled="!updateAllowed"
+				icon="edit"
+				@click="editMode = !editMode"
+			/>
+		</template>
+
 		<template #sidebar>
-			<sidebar-detail icon="info" :title="t('information')" close>
-				<div v-md="t('page_help_insights_dashboard')" class="page-description" />
-			</sidebar-detail>
+			<CommentsSidebarDetail :key="primaryKey" collection="directus_dashboards" :primary-key="primaryKey" />
 
-			<comments-sidebar-detail :key="primaryKey" collection="directus_dashboards" :primary-key="primaryKey" />
-
-			<refresh-sidebar-detail v-model="refreshInterval" @refresh="insightsStore.refresh(primaryKey)" />
+			<RefreshSidebarDetail v-model="refreshInterval" @refresh="insightsStore.refresh(primaryKey)" />
 		</template>
 
 		<template #navigation>
-			<insights-navigation />
+			<InsightsNavigation />
 		</template>
 
-		<v-workspace
+		<VWorkspace
 			:edit-mode="editMode"
 			:tiles="tiles"
 			:zoom-to-fit="zoomToFit"
 			@duplicate="(tile) => insightsStore.stagePanelDuplicate(tile.id)"
-			@edit="(tile) => router.push(`/insights/${primaryKey}/${tile.id}`)"
+			@edit="(tile) => router.push({ name: 'panel-detail', params: { primaryKey, panelKey: tile.id } })"
 			@update="insightsStore.stagePanelUpdate"
 			@delete="insightsStore.stagePanelDelete"
 			@move="copyPanelID = $event"
 		>
-			<template #default="{ tile }">
-				<v-progress-circular
+			<template #default="{ tile, gridSize }">
+				<VProgressCircular
 					v-if="loading.includes(tile.id) && !data[tile.id]"
 					:class="{ 'header-offset': tile.showHeader }"
 					class="panel-loading"
 					indeterminate
 				/>
 				<div v-else class="panel-container" :class="{ loading: loading.includes(tile.id) }">
-					<div v-if="errors[tile.id]" class="panel-error">
-						<v-icon name="warning" />
-						{{ t('unexpected_error') }}
-						<v-error :error="errors[tile.id]" />
+					<div
+						v-if="inactivePanelIds.has(tile.id)"
+						class="panel-no-data type-note"
+						:class="{ 'header-offset': tile.showHeader }"
+					>
+						{{ $t('collection_inactive') }}
+					</div>
+					<div v-else-if="errors[tile.id]" class="panel-error">
+						<VIcon name="warning" />
+						{{ $t('unexpected_error') }}
+						<VError :error="errors[tile.id]" />
 					</div>
 					<div
 						v-else-if="tile.id in data && isEmpty(data[tile.id])"
 						class="panel-no-data type-note"
 						:class="{ 'header-offset': tile.showHeader }"
 					>
-						{{ t('no_data') }}
+						{{ $t('no_data') }}
 					</div>
-					<v-error-boundary v-else :name="`panel-${tile.data.type}`">
+					<VErrorBoundary v-else :name="`panel-${tile.data.type}`">
 						<component
 							:is="`panel-${tile.data.type}`"
 							v-bind="tile.data.options"
@@ -329,77 +326,81 @@ const refreshInterval = computed({
 							:width="tile.width"
 							:now="now"
 							:data="data[tile.id]"
+							:grid-size="gridSize"
 						/>
 
 						<template #fallback="{ error }">
 							<div class="panel-error">
-								<v-icon name="warning" />
-								{{ t('unexpected_error') }}
-								<v-error :error="error" />
+								<VIcon name="warning" />
+								{{ $t('unexpected_error') }}
+								<VError :error="error" />
 							</div>
 						</template>
-					</v-error-boundary>
+					</VErrorBoundary>
 				</div>
 			</template>
-		</v-workspace>
+		</VWorkspace>
 
-		<router-view name="detail" :dashboard-key="primaryKey" :panel-key="panelKey" />
+		<RouterView name="detail" :dashboard-key="primaryKey" :panel-key="panelKey" />
 
-		<v-dialog :model-value="!!copyPanelID" @update:model-value="copyPanelID = null" @esc="copyPanelID = null">
-			<v-card>
-				<v-card-title>{{ t('copy_to') }}</v-card-title>
+		<VDialog
+			:model-value="!!copyPanelID"
+			@update:model-value="copyPanelID = null"
+			@esc="copyPanelID = null"
+			@apply="copyPanel"
+		>
+			<VCard>
+				<VCardTitle>{{ $t('copy_to') }}</VCardTitle>
 
-				<v-card-text>
-					<v-notice v-if="copyPanelChoices.length === 0">
-						{{ t('no_other_dashboards_copy') }}
-					</v-notice>
-					<v-select v-else v-model="copyPanelTo" :items="copyPanelChoices" item-text="name" item-value="id" />
-				</v-card-text>
+				<VCardText>
+					<VNotice v-if="!copyPanelChoices.length">
+						{{ $t('no_other_dashboards_copy') }}
+					</VNotice>
+					<VSelect v-else v-model="copyPanelTo" :items="copyPanelChoices" item-text="name" item-value="id" />
+				</VCardText>
 
-				<v-card-actions>
-					<v-button secondary @click="copyPanelID = null">
-						{{ t('cancel') }}
-					</v-button>
-					<v-button @click="copyPanel">
-						{{ t('copy') }}
-					</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+				<VCardActions>
+					<VButton secondary @click="copyPanelID = null">
+						{{ $t('cancel') }}
+					</VButton>
+					<VButton :disabled="!copyPanelChoices.length" @click="copyPanel">
+						{{ $t('copy') }}
+					</VButton>
+				</VCardActions>
+			</VCard>
+		</VDialog>
 
-		<v-dialog v-model="confirmCancel" @esc="confirmCancel = false">
-			<v-card>
-				<v-card-title>{{ t('unsaved_changes') }}</v-card-title>
-				<v-card-text>{{ t('discard_changes_copy') }}</v-card-text>
-				<v-card-actions>
-					<v-button secondary @click="cancelChanges(true)">
-						{{ t('discard_changes') }}
-					</v-button>
-					<v-button @click="confirmCancel = false">{{ t('keep_editing') }}</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+		<VDialog v-model="confirmCancel" @esc="confirmCancel = false" @apply="cancelChanges(true)">
+			<VCard>
+				<VCardTitle>{{ $t('unsaved_changes') }}</VCardTitle>
+				<VCardText>{{ $t('discard_changes_copy') }}</VCardText>
+				<VCardActions>
+					<VButton secondary @click="cancelChanges(true)">
+						{{ $t('discard_changes') }}
+					</VButton>
+					<VButton @click="confirmCancel = false">{{ $t('keep_editing') }}</VButton>
+				</VCardActions>
+			</VCard>
+		</VDialog>
 
-		<v-dialog v-model="confirmLeave" @esc="confirmLeave = false">
-			<v-card>
-				<v-card-title>{{ t('unsaved_changes') }}</v-card-title>
-				<v-card-text>{{ t('unsaved_changes_copy') }}</v-card-text>
-				<v-card-actions>
-					<v-button secondary @click="discardAndLeave">
-						{{ t('discard_changes') }}
-					</v-button>
+		<VDialog v-model="confirmLeave" @esc="confirmLeave = false" @apply="discardAndLeave">
+			<VCard>
+				<VCardTitle>{{ $t('unsaved_changes') }}</VCardTitle>
+				<VCardText>{{ $t('unsaved_changes_copy') }}</VCardText>
+				<VCardActions>
+					<VButton secondary @click="discardAndLeave">
+						{{ $t('discard_changes') }}
+					</VButton>
 
-					<v-button @click="confirmLeave = false">{{ t('keep_editing') }}</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
-	</private-view>
+					<VButton @click="confirmLeave = false">{{ $t('keep_editing') }}</VButton>
+				</VCardActions>
+			</VCard>
+		</VDialog>
+	</PrivateView>
 </template>
 
 <style scoped lang="scss">
-.fullscreen,
-.zoom-to-fit,
-.clear-changes {
+.zoom-to-fit {
 	--v-button-color: var(--theme--foreground);
 	--v-button-color-hover: var(--theme--foreground);
 	--v-button-background-color: var(--theme--foreground-subdued);
@@ -413,8 +414,8 @@ const refreshInterval = computed({
 }
 
 .panel-container {
-	width: 100%;
-	height: 100%;
+	inline-size: 100%;
+	block-size: 100%;
 	opacity: 1;
 	transition: opacity var(--fast) var(--transition);
 
@@ -425,29 +426,33 @@ const refreshInterval = computed({
 
 .panel-loading {
 	position: absolute;
-	left: 50%;
-	top: 50%;
+	inset-inline-start: 50%;
+	inset-block-start: 50%;
 	transform: translate(-50%, -50%);
 
+	html[dir='rtl'] & {
+		transform: translate(50%, -50%);
+	}
+
 	&.header-offset {
-		top: calc(50% - 12px);
+		inset-block-start: calc(50% - 0.6875rem);
 	}
 }
 
 .panel-error {
-	padding: 20px;
+	padding: 1.125rem;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	flex-direction: column;
-	width: 100%;
-	height: 100%;
+	inline-size: 100%;
+	block-size: 100%;
 
 	--v-icon-color: var(--theme--danger);
 
 	.v-error {
-		margin-top: 8px;
-		max-width: 100%;
+		margin-block-start: 0.4375rem;
+		max-inline-size: 100%;
 	}
 }
 
@@ -455,11 +460,11 @@ const refreshInterval = computed({
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 100%;
-	height: 100%;
+	inline-size: 100%;
+	block-size: 100%;
 
 	&.header-offset {
-		height: calc(100% - 24px);
+		block-size: calc(100% - 1.375rem);
 	}
 }
 </style>

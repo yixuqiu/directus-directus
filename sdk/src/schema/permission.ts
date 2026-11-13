@@ -1,17 +1,18 @@
-import type { MergeCoreCollection } from '../index.js';
-import type { DirectusRole } from './role.js';
+import type { CollectionName, MergeCoreCollection, StringLiteralUnion } from '../index.js';
+import type { DirectusPolicy } from './policy.js';
 
-export type DirectusPermission<Schema> = MergeCoreCollection<
+export type DirectusPermission<Schema = any> = MergeCoreCollection<
 	Schema,
 	'directus_permissions',
 	{
 		id: number;
-		role: DirectusRole<Schema> | string | null;
-		collection: string; // TODO keyof complete schema
-		action: string;
+		policy: DirectusPolicy<Schema> | string | null;
+		collection: CollectionName<Schema>;
+		action: StringLiteralUnion<'create' | 'read' | 'update' | 'delete' | 'share'>;
 		permissions: Record<string, any> | null;
 		validation: Record<string, any> | null;
 		presets: Record<string, any> | null;
 		fields: string[] | null;
+		system?: true;
 	}
 >;

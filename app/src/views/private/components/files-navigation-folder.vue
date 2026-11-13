@@ -1,35 +1,59 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n';
+import { getDateTimeFormatted } from '@directus/utils';
 import { ref } from 'vue';
-import { useFolders, Folder } from '@/composables/use-folders';
-import api from '@/api';
-import FolderPicker from '@/views/private/components/folder-picker.vue';
-import NavigationFolder from '@/views/private/components/files-navigation-folder.vue';
 import { useRouter } from 'vue-router';
-import { unexpectedError } from '@/utils/unexpected-error';
+import api from '@/api';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VInput from '@/components/v-input.vue';
+import VListGroup from '@/components/v-list-group.vue';
+import VListItemContent from '@/components/v-list-item-content.vue';
+import VListItemIcon from '@/components/v-list-item-icon.vue';
+import VListItem from '@/components/v-list-item.vue';
+import VList from '@/components/v-list.vue';
+import VMenu from '@/components/v-menu.vue';
+import VTextOverflow from '@/components/v-text-overflow.vue';
+import type { FolderType } from '@/composables/use-folders';
+import { Folder, useFolders } from '@/composables/use-folders';
 import { FolderTarget } from '@/types/folders';
+import { getFolderUrl } from '@/utils/get-asset-url';
+import { unexpectedError } from '@/utils/unexpected-error';
+import DeleteFolderDialog from '@/views/private/components/delete-folder-dialog.vue';
+import NavigationFolder from '@/views/private/components/files-navigation-folder.vue';
+import FolderPicker from '@/views/private/components/folder-picker.vue';
 
 const props = withDefaults(
 	defineProps<{
 		folder: Folder;
 		currentFolder?: string;
 		actionsDisabled?: boolean;
+		updateDisabled?: boolean;
+		deleteDisabled?: boolean;
 		clickHandler?: (target: FolderTarget) => void;
+		type?: FolderType;
+		showDownload?: boolean;
+		deletedHandler?: (parent: string | null) => void;
 	}>(),
 	{
 		clickHandler: () => () => undefined,
+		type: 'files',
+		showDownload: true,
 	},
 );
-
-const { t } = useI18n();
 
 const router = useRouter();
 
 const { renameActive, renameValue, renameSave, renameSaving } = useRenameFolder();
 const { moveActive, moveValue, moveSave, moveSaving } = useMoveFolder();
-const { deleteActive, deleteSave, deleteSaving } = useDeleteFolder();
 
-const { fetchFolders } = useFolders();
+const deleteActive = ref(false);
+
+const { fetchFolders, folders } = useFolders(props.type);
 
 function useRenameFolder() {
 	const renameActive = ref(false);
@@ -39,6 +63,8 @@ function useRenameFolder() {
 	return { renameActive, renameValue, renameSave, renameSaving };
 
 	async function renameSave() {
+		if (renameValue.value === null || renameSaving.value) return;
+
 		renameSaving.value = true;
 
 		try {
@@ -63,6 +89,8 @@ function useMoveFolder() {
 	return { moveActive, moveValue, moveSave, moveSaving };
 
 	async function moveSave() {
+		if (moveSaving.value) return;
+
 		moveSaving.value = true;
 
 		try {
@@ -79,96 +107,60 @@ function useMoveFolder() {
 	}
 }
 
-function useDeleteFolder() {
-	const deleteActive = ref(false);
-	const deleteSaving = ref(false);
+function onDeleted() {
+	const newParent = props.folder.parent;
 
-	return { deleteActive, deleteSave, deleteSaving };
-
-	async function deleteSave() {
-		deleteSaving.value = true;
-
-		try {
-			const foldersToUpdate = await api.get('/folders', {
-				params: {
-					filter: {
-						parent: {
-							_eq: props.folder.id,
-						},
-					},
-					fields: ['id'],
-				},
-			});
-
-			const filesToUpdate = await api.get('/files', {
-				params: {
-					filter: {
-						folder: {
-							_eq: props.folder.id,
-						},
-					},
-					fields: ['id'],
-				},
-			});
-
-			const newParent = props.folder.parent || null;
-
-			const folderKeys = foldersToUpdate.data.data.map((folder: { id: string }) => folder.id);
-			const fileKeys = filesToUpdate.data.data.map((file: { id: string }) => file.id);
-
-			await api.delete(`/folders/${props.folder.id}`);
-
-			if (folderKeys.length > 0) {
-				await api.patch(`/folders`, {
-					keys: folderKeys,
-					data: {
-						parent: newParent,
-					},
-				});
-			}
-
-			if (fileKeys.length > 0) {
-				await api.patch(`/files`, {
-					keys: fileKeys,
-					data: {
-						folder: newParent,
-					},
-				});
-			}
-
-			if (newParent) {
-				router.replace(`/files/folders/${newParent}`);
-			} else {
-				router.replace('/files');
-			}
-
-			deleteActive.value = false;
-		} catch (error) {
-			unexpectedError(error);
-		} finally {
-			await fetchFolders();
-			deleteSaving.value = false;
-		}
+	if (props.deletedHandler) {
+		props.deletedHandler(newParent);
+	} else if (newParent) {
+		router.replace({ name: 'folders-collection', params: { folder: newParent } });
+	} else {
+		router.replace({ name: 'files-collection' });
 	}
+
+	fetchFolders();
+}
+
+async function downloadFolder() {
+	const response = await fetch(getFolderUrl(props.folder.id), {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+		},
+	});
+
+	if (!response.ok) {
+		unexpectedError({ response: { data: await response.json() } });
+	}
+
+	const blob = await response.blob();
+	const filename = response.headers.get('Content-Disposition')?.match(/filename="(.*?)"/)?.[1];
+
+	const url = window.URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename ?? `folder-unknown-${getDateTimeFormatted()}.zip`;
+	a.click();
+	URL.revokeObjectURL(url);
 }
 </script>
 
 <template>
 	<div>
-		<v-list-item
+		<VListItem
 			v-if="folder.children === undefined"
 			v-context-menu="!actionsDisabled ? 'contextMenu' : null"
 			clickable
 			:active="currentFolder === folder.id"
 			@click="clickHandler({ folder: folder.id })"
 		>
-			<v-list-item-icon><v-icon name="folder" /></v-list-item-icon>
-			<v-list-item-content>
-				<v-text-overflow :text="folder.name" />
-			</v-list-item-content>
-		</v-list-item>
+			<VListItemIcon><VIcon name="folder" /></VListItemIcon>
+			<VListItemContent>
+				<VTextOverflow :text="folder.name" />
+			</VListItemContent>
+		</VListItem>
 
-		<v-list-group
+		<VListGroup
 			v-else
 			v-context-menu="!actionsDisabled ? 'contextMenu' : null"
 			clickable
@@ -179,95 +171,101 @@ function useDeleteFolder() {
 			@click="clickHandler({ folder: folder.id })"
 		>
 			<template #activator>
-				<v-list-item-icon>
-					<v-icon name="folder" />
-				</v-list-item-icon>
-				<v-list-item-content>
-					<v-text-overflow :text="folder.name" />
-				</v-list-item-content>
+				<VListItemIcon>
+					<VIcon name="folder" />
+				</VListItemIcon>
+				<VListItemContent>
+					<VTextOverflow :text="folder.name" />
+				</VListItemContent>
 			</template>
 
-			<navigation-folder
+			<NavigationFolder
 				v-for="childFolder in folder.children"
 				:key="childFolder.id"
 				:folder="childFolder"
 				:current-folder="currentFolder"
 				:click-handler="clickHandler"
 				:actions-disabled="actionsDisabled"
+				:update-disabled="updateDisabled"
+				:delete-disabled="deleteDisabled"
+				:type="type"
+				:show-download="showDownload"
+				:deleted-handler="deletedHandler"
 			/>
-		</v-list-group>
+		</VListGroup>
 
-		<v-menu ref="contextMenu" show-arrow placement="bottom-start">
-			<v-list>
-				<v-list-item clickable @click="renameActive = true">
-					<v-list-item-icon>
-						<v-icon name="edit" outline />
-					</v-list-item-icon>
-					<v-list-item-content>
-						<v-text-overflow :text="t('rename_folder')" />
-					</v-list-item-content>
-				</v-list-item>
-				<v-list-item clickable @click="moveActive = true">
-					<v-list-item-icon>
-						<v-icon name="folder_move" />
-					</v-list-item-icon>
-					<v-list-item-content>
-						<v-text-overflow :text="t('move_to_folder')" />
-					</v-list-item-content>
-				</v-list-item>
-				<v-list-item class="danger" clickable @click="deleteActive = true">
-					<v-list-item-icon>
-						<v-icon name="delete" outline />
-					</v-list-item-icon>
-					<v-list-item-content>
-						<v-text-overflow :text="t('delete_folder')" />
-					</v-list-item-content>
-				</v-list-item>
-			</v-list>
-		</v-menu>
+		<VMenu ref="contextMenu" show-arrow placement="bottom-start">
+			<VList>
+				<VListItem :disabled="updateDisabled" clickable @click="renameActive = true">
+					<VListItemIcon>
+						<VIcon name="edit" outline />
+					</VListItemIcon>
+					<VListItemContent>
+						<VTextOverflow :text="$t('rename_folder')" />
+					</VListItemContent>
+				</VListItem>
+				<VListItem :disabled="updateDisabled" clickable @click="moveActive = true">
+					<VListItemIcon>
+						<VIcon name="folder_move" />
+					</VListItemIcon>
+					<VListItemContent>
+						<VTextOverflow :text="$t('move_to_folder')" />
+					</VListItemContent>
+				</VListItem>
+				<VListItem v-if="showDownload" clickable @click="downloadFolder">
+					<VListItemIcon>
+						<VIcon name="download" />
+					</VListItemIcon>
+					<VListItemContent>
+						<VTextOverflow :text="$t('download_folder')" />
+					</VListItemContent>
+				</VListItem>
+				<VListItem class="danger" :disabled="deleteDisabled" clickable @click="deleteActive = true">
+					<VListItemIcon>
+						<VIcon name="delete" outline />
+					</VListItemIcon>
+					<VListItemContent>
+						<VTextOverflow :text="$t('delete_folder')" />
+					</VListItemContent>
+				</VListItem>
+			</VList>
+		</VMenu>
 
-		<v-dialog v-model="renameActive" persistent @esc="renameActive = false">
-			<v-card>
-				<v-card-title>{{ t('rename_folder') }}</v-card-title>
-				<v-card-text>
-					<v-input v-model="renameValue" autofocus @keyup.enter="renameSave" />
-				</v-card-text>
-				<v-card-actions>
-					<v-button secondary @click="renameActive = false">{{ t('cancel') }}</v-button>
-					<v-button :disabled="renameValue === null" :loading="renameSaving" @click="renameSave">
-						{{ t('save') }}
-					</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+		<VDialog v-model="renameActive" persistent apply-shortcut="meta+s" @esc="renameActive = false" @apply="renameSave">
+			<VCard>
+				<VCardTitle>{{ $t('rename_folder') }}</VCardTitle>
+				<VCardText>
+					<VInput v-model="renameValue" autofocus />
+				</VCardText>
+				<VCardActions>
+					<VButton secondary @click="renameActive = false">{{ $t('cancel') }}</VButton>
+					<VButton :disabled="renameValue === null" :loading="renameSaving" @click="renameSave">
+						{{ $t('save') }}
+					</VButton>
+				</VCardActions>
+			</VCard>
+		</VDialog>
 
-		<v-dialog v-model="moveActive" persistent @esc="moveActive = false">
-			<v-card>
-				<v-card-title>{{ t('move_to_folder') }}</v-card-title>
-				<v-card-text>
-					<folder-picker v-model="moveValue" :disabled-folders="[folder.id]" />
-				</v-card-text>
-				<v-card-actions>
-					<v-button secondary @click="moveActive = false">{{ t('cancel') }}</v-button>
-					<v-button :loading="moveSaving" @click="moveSave">{{ t('save') }}</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+		<VDialog v-model="moveActive" persistent apply-shortcut="meta+s" @esc="moveActive = false" @apply="moveSave">
+			<VCard>
+				<VCardTitle>{{ $t('move_to_folder') }}</VCardTitle>
+				<VCardText>
+					<FolderPicker v-model="moveValue" :disabled-folders="[folder.id]" :type="type" />
+				</VCardText>
+				<VCardActions>
+					<VButton secondary @click="moveActive = false">{{ $t('cancel') }}</VButton>
+					<VButton :loading="moveSaving" @click="moveSave">{{ $t('save') }}</VButton>
+				</VCardActions>
+			</VCard>
+		</VDialog>
 
-		<v-dialog v-model="deleteActive" persistent @esc="deleteActive = false">
-			<v-card>
-				<v-card-title>{{ t('delete_folder') }}</v-card-title>
-				<v-card-text>
-					<v-notice>
-						{{ t('nested_files_folders_will_be_moved') }}
-					</v-notice>
-				</v-card-text>
-				<v-card-actions>
-					<v-button secondary @click="deleteActive = false">{{ t('cancel') }}</v-button>
-					<v-button kind="danger" :loading="deleteSaving" @click="deleteSave">{{ t('delete_label') }}</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+		<DeleteFolderDialog
+			v-model="deleteActive"
+			:folders="[folder]"
+			:all-folders="folders ?? []"
+			:type="type"
+			@done="onDeleted"
+		/>
 	</div>
 </template>
 

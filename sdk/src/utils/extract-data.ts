@@ -3,7 +3,7 @@ import { isFetchResponse } from './is-response.js';
 /**
  * Tries to extract a fetch response
  */
-export async function extractData(response: unknown) {
+export async function extractData(response: unknown): Promise<any> {
 	if (typeof response !== 'object' || !response) return;
 
 	if (isFetchResponse(response)) {
@@ -11,8 +11,11 @@ export async function extractData(response: unknown) {
 
 		if (type?.startsWith('application/json') || type?.startsWith('application/health+json')) {
 			const result = await response.json();
-			if (!response.ok) throw result;
+
+			if (!response.ok || 'errors' in result) throw result;
+
 			if ('data' in result) return result.data;
+
 			return result;
 		}
 
@@ -22,10 +25,19 @@ export async function extractData(response: unknown) {
 			return result;
 		}
 
+		if (response.status === 204) {
+			return null;
+		}
+
 		// fallback for anything else
 		return response;
 	}
 
 	// exception for alternatives like ofetch that don't return the Response object
-	return 'data' in response ? response.data : response;
+
+	if ('errors' in response) throw response;
+
+	if ('data' in response) return response.data;
+
+	return response;
 }

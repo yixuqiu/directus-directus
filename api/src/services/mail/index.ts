@@ -1,17 +1,20 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { useEnv } from '@directus/env';
 import { InvalidPayloadError } from '@directus/errors';
-import type { Accountability, SchemaOverview } from '@directus/types';
+import type { AbstractServiceOptions, Accountability, SchemaOverview } from '@directus/types';
+import { isObject } from '@directus/utils';
 import fse from 'fs-extra';
 import type { Knex } from 'knex';
 import { Liquid } from 'liquidjs';
 import type { SendMailOptions, Transporter } from 'nodemailer';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import getDatabase from '../../database/index.js';
-import { useLogger } from '../../logger.js';
+import emitter from '../../emitter.js';
+import { useLogger } from '../../logger/index.js';
 import getMailer from '../../mailer.js';
-import type { AbstractServiceOptions } from '../../types/index.js';
+import { isWithinPath } from '../../utils/is-within-path.js';
 import { Url } from '../../utils/url.js';
+import { useEmailRateLimiterQueue } from './rate-limiter.js';
 
 const env = useEnv();
 const logger = useLogger();
@@ -19,7 +22,7 @@ const logger = useLogger();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const liquidEngine = new Liquid({
-	root: [path.resolve(env['EMAIL_TEMPLATES_PATH'] as string), path.resolve(__dirname, 'templates')],
+	root: [path.resolve(env.EMAIL_TEMPLATES_PATH), path.resolve(__dirname, 'templates')],
 	extname: '.liquid',
 });
 
@@ -28,6 +31,13 @@ export type EmailOptions = SendMailOptions & {
 		name: string;
 		data: Record<string, any>;
 	};
+};
+
+export type DefaultTemplateData = {
+	projectName: string;
+	projectColor: string;
+	projectLogo: string;
+	projectUrl: string;
 };
 
 export class MailService {
@@ -42,7 +52,7 @@ export class MailService {
 		this.knex = opts?.knex || getDatabase();
 		this.mailer = getMailer();
 
-		if (env['EMAIL_VERIFY_SETUP']) {
+		if (env.EMAIL_VERIFY_SETUP) {
 			this.mailer.verify((error) => {
 				if (error) {
 					logger.warn(`Email connection failed:`);
@@ -52,13 +62,30 @@ export class MailService {
 		}
 	}
 
-	async send<T>(options: EmailOptions): Promise<T> {
-		const { template, ...emailOptions } = options;
-		let { html } = options;
+	async send<T>(data: EmailOptions, options?: { defaultTemplateData: DefaultTemplateData }): Promise<T | null> {
+		await useEmailRateLimiterQueue();
 
-		const defaultTemplateData = await this.getDefaultTemplateData();
+		const payload = await emitter.emitFilter(`email.send`, data, {});
 
-		const from = `${defaultTemplateData.projectName} <${options.from || (env['EMAIL_FROM'] as string)}>`;
+		if (!payload) return null;
+
+		const { template, ...emailOptions } = payload;
+
+		let { html } = data;
+
+		// option for providing tempalate data was added to prevent transaction race conditions with preceding promises
+		const defaultTemplateData = options?.defaultTemplateData ?? (await this.getDefaultTemplateData());
+
+		if (isObject(emailOptions.from) && (!emailOptions.from.name || !emailOptions.from.address)) {
+			throw new InvalidPayloadError({ reason: 'A name and address property are required in the "from" object' });
+		}
+
+		const from: SendMailOptions['from'] = isObject(emailOptions.from)
+			? emailOptions.from
+			: {
+					name: defaultTemplateData.projectName,
+					address: (emailOptions.from as string) || env.EMAIL_FROM,
+				};
 
 		if (template) {
 			let templateData = template.data;
@@ -84,12 +111,22 @@ export class MailService {
 	}
 
 	private async renderTemplate(template: string, variables: Record<string, any>) {
-		const customTemplatePath = path.resolve(env['EMAIL_TEMPLATES_PATH'] as string, template + '.liquid');
-		const systemTemplatePath = path.join(__dirname, 'templates', template + '.liquid');
+		const customTemplatesDir = path.resolve(env['EMAIL_TEMPLATES_PATH'] as string);
+		const systemTemplatesDir = path.resolve(__dirname, 'templates');
 
-		const templatePath = (await fse.pathExists(customTemplatePath)) ? customTemplatePath : systemTemplatePath;
+		const customTemplatePath = path.resolve(customTemplatesDir, template + '.liquid');
+		const systemTemplatePath = path.resolve(systemTemplatesDir, template + '.liquid');
 
-		if ((await fse.pathExists(templatePath)) === false) {
+		// Prevent path traversal: only resolve templates that stay within their own templates directory.
+		let templatePath: string | null = null;
+
+		if (isWithinPath(customTemplatePath, customTemplatesDir) && (await fse.pathExists(customTemplatePath))) {
+			templatePath = customTemplatePath;
+		} else if (isWithinPath(systemTemplatePath, systemTemplatesDir) && (await fse.pathExists(systemTemplatePath))) {
+			templatePath = systemTemplatePath;
+		}
+
+		if (templatePath === null) {
 			throw new InvalidPayloadError({ reason: `Template "${template}" doesn't exist` });
 		}
 
@@ -99,7 +136,7 @@ export class MailService {
 		return html;
 	}
 
-	private async getDefaultTemplateData() {
+	async getDefaultTemplateData() {
 		const projectInfo = await this.knex
 			.select(['project_name', 'project_logo', 'project_color', 'project_url'])
 			.from('directus_settings')
@@ -113,7 +150,7 @@ export class MailService {
 		};
 
 		function getProjectLogoURL(logoID?: string) {
-			const projectLogoUrl = new Url(env['PUBLIC_URL'] as string);
+			const projectLogoUrl = new Url(env.PUBLIC_URL);
 
 			if (logoID) {
 				projectLogoUrl.addPath('assets', logoID);

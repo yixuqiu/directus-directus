@@ -1,4 +1,5 @@
 import type { FetchInterface } from '../index.js';
+import { RequestError } from './error.js';
 import { extractData } from './extract-data.js';
 
 /**
@@ -21,8 +22,25 @@ export const request = async <Output = any>(
 
 	return fetcher(url, options).then((response) => {
 		return extractData(response).catch((reason) => {
-			const errors = typeof reason === 'object' && 'errors' in reason ? reason.errors : reason;
-			return Promise.reject({ errors, response });
+			const result: { response: unknown; message: string; errors: any; data?: any } = {
+				message: '',
+				errors: reason && typeof reason === 'object' && 'errors' in reason ? reason.errors : reason,
+				response,
+			};
+
+			if (reason && typeof reason === 'object' && 'data' in reason) result.data = reason.data;
+
+			if (Array.isArray(result.errors) && result.errors[0]?.message) {
+				result.message = result.errors[0].message;
+			}
+
+			return Promise.reject(
+				new RequestError(result.message, {
+					response: result.response,
+					errors: result.errors,
+					data: result.data,
+				}),
+			);
 		});
 	});
 };

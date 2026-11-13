@@ -1,7 +1,7 @@
+import { isSystemCollection } from '@directus/system-data';
 import { type Knex } from 'knex';
 import { getSchema } from '../../utils/get-schema.js';
 import { getItemCount } from './get-item-count.js';
-import { isSystemCollection } from '@directus/system-data';
 
 export interface UserItemCount {
 	collections: number;
@@ -11,6 +11,7 @@ export interface UserItemCount {
 /**
  * Sum all passed values together. Meant to be used with .reduce()
  */
+// eslint-disable-next-line no-useless-assignment
 export const sum = (acc: number, val: number) => (acc += val);
 
 /**
@@ -19,9 +20,9 @@ export const sum = (acc: number, val: number) => (acc += val);
 export const getUserItemCount = async (db: Knex): Promise<UserItemCount> => {
 	const schema = await getSchema({ database: db });
 
-	const userCollections = Object.keys(schema.collections).filter(
-		(collection) => isSystemCollection(collection) === false,
-	);
+	const userCollections = Object.keys(schema.collections)
+		.filter((collection) => isSystemCollection(collection) === false)
+		.map((collection) => ({ collection }));
 
 	const counts = await getItemCount(db, userCollections);
 

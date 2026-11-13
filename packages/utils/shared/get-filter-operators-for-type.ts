@@ -46,7 +46,7 @@ export function getFilterOperatorsForType(
 			return ['eq', 'neq', 'null', 'nnull', 'in', 'nin'];
 
 		case 'json':
-			return ['null', 'nnull'];
+			return ['null', 'nnull', 'json'];
 
 		case 'boolean':
 			return ['eq', 'neq', 'null', 'nnull'];
@@ -65,6 +65,12 @@ export function getFilterOperatorsForType(
 			return ['eq', 'neq', 'lt', 'lte', 'gt', 'gte', 'between', 'nbetween', 'null', 'nnull', 'in', 'nin'];
 
 		case 'geometry':
+		case 'geometry.Point':
+		case 'geometry.LineString':
+		case 'geometry.Polygon':
+		case 'geometry.MultiPoint':
+		case 'geometry.MultiLineString':
+		case 'geometry.MultiPolygon':
 			return ['eq', 'neq', 'null', 'nnull', 'intersects', 'nintersects', 'intersects_bbox', 'nintersects_bbox'];
 
 		default:

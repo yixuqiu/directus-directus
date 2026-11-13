@@ -1,7 +1,7 @@
 import type { DirectusPermission } from '../../../schema/permission.js';
-import type { ApplyQueryFields, Query } from '../../../types/index.js';
-import { throwIfEmpty } from '../../utils/index.js';
+import type { ApplyQueryFields, NestedPartial, Query } from '../../../types/index.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfEmpty } from '../../utils/index.js';
 
 export type UpdatePermissionOutput<
 	Schema,
@@ -20,7 +20,7 @@ export type UpdatePermissionOutput<
 export const updatePermissions =
 	<Schema, const TQuery extends Query<Schema, DirectusPermission<Schema>>>(
 		keys: DirectusPermission<Schema>['id'][],
-		item: Partial<DirectusPermission<Schema>>,
+		item: NestedPartial<DirectusPermission<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdatePermissionOutput<Schema, TQuery>[], Schema> =>
 	() => {
@@ -35,6 +35,24 @@ export const updatePermissions =
 	};
 
 /**
+ * Update multiple permissions rules as batch.
+ * @param items
+ * @param query
+ * @returns Returns the permission object for the updated permissions.
+ */
+export const updatePermissionsBatch =
+	<Schema, const TQuery extends Query<Schema, DirectusPermission<Schema>>>(
+		items: NestedPartial<DirectusPermission<Schema>>[],
+		query?: TQuery,
+	): RestCommand<UpdatePermissionOutput<Schema, TQuery>[], Schema> =>
+	() => ({
+		path: `/permissions`,
+		params: query ?? {},
+		body: JSON.stringify(items),
+		method: 'PATCH',
+	});
+
+/**
  * Update an existing permissions rule.
  * @param key
  * @param item
@@ -45,11 +63,11 @@ export const updatePermissions =
 export const updatePermission =
 	<Schema, const TQuery extends Query<Schema, DirectusPermission<Schema>>>(
 		key: DirectusPermission<Schema>['id'],
-		item: Partial<DirectusPermission<Schema>>,
+		item: NestedPartial<DirectusPermission<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdatePermissionOutput<Schema, TQuery>, Schema> =>
 	() => {
-		throwIfEmpty(String(key), 'Key cannot be empty');
+		throwIfEmpty(key, 'Key cannot be empty');
 
 		return {
 			path: `/permissions/${key}`,

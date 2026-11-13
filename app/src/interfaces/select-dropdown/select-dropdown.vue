@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { i18n } from '@/lang';
-import { useI18n } from 'vue-i18n';
-import { isEmpty } from 'lodash';
+import { isEmpty, isEqual } from 'lodash-es';
+import { computed, watch } from 'vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VSelect from '@/components/v-select/v-select.vue';
 
 type Option = {
 	text: string;
@@ -12,42 +12,38 @@ type Option = {
 	children?: Option[];
 };
 
-const props = withDefaults(
-	defineProps<{
-		value: string | number | null;
-		disabled?: boolean;
-		choices?: Option[];
-		icon?: string;
-		allowNone?: boolean;
-		placeholder?: string;
-		allowOther?: boolean;
-	}>(),
-	{
-		placeholder: () => i18n.global.t('select_an_item'),
-	},
-);
+const props = defineProps<{
+	value: string | number | null;
+	disabled?: boolean;
+	nonEditable?: boolean;
+	choices?: Option[];
+	icon?: string;
+	allowNone?: boolean;
+	placeholder?: string;
+	allowOther?: boolean;
+}>();
 
-defineEmits(['input']);
-
-const { t } = useI18n();
+const emit = defineEmits(['input']);
 
 const applyGlobalIcon = computed(() => props.choices?.some((choice) => choice.icon));
 
 const items = computed(() => {
+	if (!props.choices) {
+		return [];
+	}
+
 	if (!applyGlobalIcon.value) {
 		return props.choices;
 	}
 
-	return props.choices?.map((choice) => {
-		if (choice.icon) {
-			return choice;
+	return props.choices.map((choice) => {
+		const choiceCopy = { ...choice };
+
+		if (!choiceCopy.icon && !choiceCopy.color) {
+			choiceCopy.icon = props.icon ?? null;
 		}
 
-		if (!choice.icon && !choice.color) {
-			choice.icon = props.icon ?? null;
-		}
-
-		return choice;
+		return choiceCopy;
 	});
 });
 
@@ -66,26 +62,37 @@ const showGlobalIcon = computed(() => {
 
 	return false;
 });
+
+watch(
+	() => props.choices,
+	(newChoices, oldChoices) => {
+		if (
+			props.value !== null &&
+			!isEqual(newChoices, oldChoices) &&
+			!newChoices?.some((choice) => choice.value === props.value)
+		) {
+			// Reset if the options have dynamically changed and the current value is not available anymore
+			emit('input', null);
+		}
+	},
+);
 </script>
 
 <template>
-	<v-notice v-if="!items" type="warning">
-		{{ t('choices_option_configured_incorrectly') }}
-	</v-notice>
-	<v-select
-		v-else
+	<VSelect
 		:model-value="value"
 		:items="items"
 		:disabled="disabled"
+		:non-editable="nonEditable"
 		:show-deselect="allowNone"
 		item-icon="icon"
 		item-color="color"
-		:placeholder="placeholder"
+		:placeholder="placeholder || $t('select_an_item')"
 		:allow-other="allowOther"
 		@update:model-value="$emit('input', $event)"
 	>
 		<template v-if="showGlobalIcon" #prepend>
-			<v-icon :name="icon" />
+			<VIcon :name="icon" />
 		</template>
-	</v-select>
+	</VSelect>
 </template>

@@ -1,19 +1,25 @@
 <script setup lang="ts">
-import { computed, ref, toRefs, unref } from 'vue';
-import { useI18n } from 'vue-i18n';
-
-import { useEditsGuard } from '@/composables/use-edits-guard';
-import { useItem } from '@/composables/use-item';
-import { useShortcut } from '@/composables/use-shortcut';
-import { refreshCurrentLanguage } from '@/lang/refresh-current-language';
-import CommentsSidebarDetail from '@/views/private/components/comments-sidebar-detail.vue';
-import FlowSidebarDetail from '@/views/private/components/flow-sidebar-detail.vue';
-import RevisionsDrawerDetail from '@/views/private/components/revisions-drawer-detail.vue';
-import SaveOptions from '@/views/private/components/save-options.vue';
 import { useCollection } from '@directus/composables';
+import { useShortcut } from '@directus/composables';
+import { computed, ref, toRefs, unref } from 'vue';
 import { useRouter } from 'vue-router';
 import SettingsNavigation from '../../components/navigation.vue';
 import ContentNotFound from '../not-found.vue';
+import VButton from '@/components/v-button.vue';
+import VCardActions from '@/components/v-card-actions.vue';
+import VCardText from '@/components/v-card-text.vue';
+import VCardTitle from '@/components/v-card-title.vue';
+import VCard from '@/components/v-card.vue';
+import VDialog from '@/components/v-dialog.vue';
+import VForm from '@/components/v-form/v-form.vue';
+import { useEditsGuard } from '@/composables/use-edits-guard';
+import { useItem } from '@/composables/use-item';
+import { refreshCurrentLanguage } from '@/lang/refresh-current-language';
+import { PrivateViewHeaderBarActionButton } from '@/views/private';
+import { PrivateView } from '@/views/private';
+import CommentsSidebarDetail from '@/views/private/components/comments-sidebar-detail.vue';
+import RevisionsSidebarDetail from '@/views/private/components/revisions-sidebar-detail.vue';
+import SaveOptions from '@/views/private/components/save-options.vue';
 
 interface Props {
 	primaryKey?: string | null;
@@ -23,16 +29,12 @@ const props = withDefaults(defineProps<Props>(), {
 	primaryKey: null,
 });
 
-const { t } = useI18n();
-
 const router = useRouter();
 
 const form = ref<HTMLElement>();
 
 const { primaryKey } = toRefs(props);
-const { breadcrumb } = useBreadcrumb();
-
-const revisionsDrawerDetailRef = ref<InstanceType<typeof RevisionsDrawerDetail> | null>(null);
+const revisionsSidebarDetailRef = ref<InstanceType<typeof RevisionsSidebarDetail> | null>(null);
 
 const {
 	info: collectionInfo,
@@ -96,31 +98,9 @@ const internalPrimaryKey = computed(() => {
 });
 
 const disabledOptions = computed(() => {
-	if (isNew.value) return ['save-as-copy'];
-	return [];
+	if (isNew.value) return ['save-and-quit', 'save-as-copy'];
+	return ['save-and-quit'];
 });
-
-function navigateBack() {
-	const backState = router.options.history.state.back;
-
-	if (typeof backState !== 'string' || !backState.startsWith('/login')) {
-		router.back();
-		return;
-	}
-
-	router.push(`/settings/translations`);
-}
-
-function useBreadcrumb() {
-	const breadcrumb = computed(() => [
-		{
-			name: collectionInfo.value?.name,
-			to: `/settings/translations`,
-		},
-	]);
-
-	return { breadcrumb };
-}
 
 async function saveAndQuit() {
 	if (isSavable.value === false) return;
@@ -128,7 +108,7 @@ async function saveAndQuit() {
 	try {
 		await save();
 		await refreshCurrentLanguage();
-		router.push(`/settings/translations`);
+		router.push({ name: 'settings-translations-collection' });
 	} catch {
 		// Save shows unexpected error dialog
 	}
@@ -141,11 +121,11 @@ async function saveAndStay() {
 		const savedItem: Record<string, any> = await save();
 		await refreshCurrentLanguage();
 
-		revisionsDrawerDetailRef.value?.refresh?.();
+		revisionsSidebarDetailRef.value?.refresh?.();
 
 		if (props.primaryKey === '+') {
 			const newPrimaryKey = savedItem[primaryKeyField.value!.field];
-			router.replace(`/settings/translations/${encodeURIComponent(newPrimaryKey)}`);
+			router.replace({ name: 'settings-translations-item', params: { primaryKey: encodeURIComponent(newPrimaryKey) } });
 		}
 	} catch {
 		// Save shows unexpected error dialog
@@ -162,7 +142,7 @@ async function saveAndAddNew() {
 		if (isNew.value === true) {
 			refresh();
 		} else {
-			router.push(`/settings/translations/+`);
+			router.push({ name: 'settings-translations-item', params: { primaryKey: '+' } });
 		}
 	} catch {
 		// Save shows unexpected error dialog
@@ -172,19 +152,22 @@ async function saveAndAddNew() {
 async function saveAsCopyAndNavigate() {
 	try {
 		const newPrimaryKey = await saveAsCopy();
-		if (newPrimaryKey) router.replace(`/settings/translations/${encodeURIComponent(newPrimaryKey)}`);
+		if (newPrimaryKey)
+			router.replace({ name: 'settings-translations-item', params: { primaryKey: encodeURIComponent(newPrimaryKey) } });
 	} catch {
 		// Save shows unexpected error dialog
 	}
 }
 
 async function deleteAndQuit() {
+	if (deleting.value) return;
+
 	try {
 		await remove();
 		await refreshCurrentLanguage();
 
 		edits.value = {};
-		router.replace(`/settings/translations`);
+		router.replace({ name: 'settings-translations-collection' });
 	} catch {
 		// `remove` will show the unexpected error dialog
 	}
@@ -213,79 +196,53 @@ async function revert(values: Record<string, any>) {
 </script>
 
 <template>
-	<content-not-found v-if="error" />
+	<ContentNotFound v-if="error" />
 
-	<private-view v-else :title="primaryKey === '+' ? t('create_custom_translation') : t('edit_custom_translation')">
-		<template #title-outer:prepend>
-			<v-button
-				v-if="collectionInfo?.meta && collectionInfo.meta.singleton === true"
-				class="header-icon"
-				rounded
-				icon
-				secondary
-				disabled
-			>
-				<v-icon :name="collectionInfo.icon" />
-			</v-button>
-
-			<v-button
-				v-else
-				v-tooltip.bottom="t('back')"
-				class="header-icon"
-				rounded
-				icon
-				secondary
-				exact
-				@click="navigateBack"
-			>
-				<v-icon name="arrow_back" />
-			</v-button>
-		</template>
-
-		<template #headline>
-			<v-breadcrumb
-				v-if="collectionInfo?.meta && collectionInfo.meta.singleton === true"
-				:items="[{ name: t('content'), to: '/content' }]"
-			/>
-			<v-breadcrumb v-else :items="breadcrumb" />
-		</template>
-
+	<PrivateView
+		v-else
+		:title="primaryKey === '+' ? $t('create_custom_translation') : $t('edit_custom_translation')"
+		show-back
+		back-to="/settings/translations"
+	>
 		<template #actions>
-			<v-dialog v-if="!isNew" v-model="confirmDelete" @esc="confirmDelete = false">
+			<VDialog v-if="!isNew" v-model="confirmDelete" @esc="confirmDelete = false" @apply="deleteAndQuit">
 				<template #activator="{ on }">
-					<v-button
+					<PrivateViewHeaderBarActionButton
 						v-if="collectionInfo!.meta && collectionInfo!.meta.singleton === false"
-						v-tooltip.bottom="t('delete_label')"
-						rounded
-						icon
-						class="action-delete"
-						secondary
+						v-tooltip.bottom="$t('delete_label')"
+						kind="danger"
+						variant="ghost"
 						:disabled="item === null"
+						icon="delete"
 						@click="on"
-					>
-						<v-icon name="delete" outline />
-					</v-button>
+					/>
 				</template>
 
-				<v-card>
-					<v-card-title>{{ t('delete_are_you_sure') }}</v-card-title>
+				<VCard>
+					<VCardTitle>{{ $t('delete_are_you_sure') }}</VCardTitle>
 
-					<v-card-actions>
-						<v-button secondary @click="confirmDelete = false">
-							{{ t('cancel') }}
-						</v-button>
-						<v-button kind="danger" :loading="deleting" @click="deleteAndQuit">
-							{{ t('delete_label') }}
-						</v-button>
-					</v-card-actions>
-				</v-card>
-			</v-dialog>
+					<VCardActions>
+						<VButton secondary @click="confirmDelete = false">
+							{{ $t('cancel') }}
+						</VButton>
+						<VButton kind="danger" :loading="deleting" @click="deleteAndQuit">
+							{{ $t('delete_label') }}
+						</VButton>
+					</VCardActions>
+				</VCard>
+			</VDialog>
+		</template>
 
-			<v-button v-tooltip.bottom="t('save')" rounded icon :loading="saving" :disabled="!isSavable" @click="saveAndQuit">
-				<v-icon name="check" />
-
-				<template #append-outer>
-					<save-options
+		<template #actions:primary>
+			<PrivateViewHeaderBarActionButton
+				:label="$t('save')"
+				:loading="saving"
+				:disabled="!isSavable"
+				icon="check"
+				@click="saveAndQuit"
+			>
+				<template #split-menu>
+					<SaveOptions
 						:disabled-options="disabledOptions"
 						@save-and-stay="saveAndStay"
 						@save-and-add-new="saveAndAddNew"
@@ -293,14 +250,14 @@ async function revert(values: Record<string, any>) {
 						@discard-and-stay="discardAndStay"
 					/>
 				</template>
-			</v-button>
+			</PrivateViewHeaderBarActionButton>
 		</template>
 
 		<template #navigation>
 			<SettingsNavigation current-collection="directus_translations" />
 		</template>
 
-		<v-form
+		<VForm
 			ref="form"
 			v-model="edits"
 			:autofocus="isNew"
@@ -311,50 +268,37 @@ async function revert(values: Record<string, any>) {
 			:validation-errors="validationErrors"
 		/>
 
-		<v-dialog v-model="confirmLeave" @esc="confirmLeave = false">
-			<v-card>
-				<v-card-title>{{ t('unsaved_changes') }}</v-card-title>
-				<v-card-text>{{ t('unsaved_changes_copy') }}</v-card-text>
-				<v-card-actions>
-					<v-button secondary @click="discardAndLeave">
-						{{ t('discard_changes') }}
-					</v-button>
-					<v-button @click="confirmLeave = false">{{ t('keep_editing') }}</v-button>
-				</v-card-actions>
-			</v-card>
-		</v-dialog>
+		<VDialog v-model="confirmLeave" @esc="confirmLeave = false" @apply="discardAndLeave">
+			<VCard>
+				<VCardTitle>{{ $t('unsaved_changes') }}</VCardTitle>
+				<VCardText>{{ $t('unsaved_changes_copy') }}</VCardText>
+				<VCardActions>
+					<VButton secondary @click="discardAndLeave">
+						{{ $t('discard_changes') }}
+					</VButton>
+					<VButton @click="confirmLeave = false">{{ $t('keep_editing') }}</VButton>
+				</VCardActions>
+			</VCard>
+		</VDialog>
 
 		<template #sidebar>
-			<sidebar-detail icon="info" :title="t('information')" close>
-				<div v-md="t('page_help_settings_translations_item')" class="page-description" />
-			</sidebar-detail>
 			<template v-if="isNew === false && loading === false && internalPrimaryKey">
-				<revisions-drawer-detail
+				<RevisionsSidebarDetail
 					v-if="accountabilityScope === 'all'"
-					ref="revisionsDrawerDetailRef"
+					ref="revisionsSidebarDetailRef"
 					collection="directus_translations"
 					:primary-key="internalPrimaryKey"
 					:scope="accountabilityScope"
 					@revert="revert"
 				/>
-				<comments-sidebar-detail collection="directus_translations" :primary-key="internalPrimaryKey" />
-				<flow-sidebar-detail
-					location="item"
-					collection="directus_translations"
-					:primary-key="internalPrimaryKey"
-					:has-edits="hasEdits"
-					@refresh="refresh"
-				/>
+				<CommentsSidebarDetail collection="directus_translations" :primary-key="internalPrimaryKey" />
 			</template>
 		</template>
-	</private-view>
+	</PrivateView>
 </template>
 
 <style lang="scss" scoped>
-.action-delete {
-	--v-button-background-color-hover: var(--theme--danger) !important;
-	--v-button-color-hover: var(--white) !important;
-}
+@use '@/styles/mixins';
 
 .header-icon.secondary {
 	--v-button-background-color: var(--theme--background-normal);
@@ -364,15 +308,15 @@ async function revert(values: Record<string, any>) {
 
 .v-form {
 	padding: calc(var(--content-padding) * 3) var(--content-padding) var(--content-padding);
-	padding-bottom: var(--content-padding-bottom);
+	padding-block-end: var(--content-padding-bottom);
 
-	@media (min-width: 600px) {
+	@include mixins.breakpoint-up('sm') {
 		padding: var(--content-padding);
-		padding-bottom: var(--content-padding-bottom);
+		padding-block-end: var(--content-padding-bottom);
 	}
 }
 
 .title-loader {
-	width: 260px;
+	inline-size: 14.625rem;
 }
 </style>

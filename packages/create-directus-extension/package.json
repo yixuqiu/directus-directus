@@ -1,12 +1,12 @@
 {
 	"name": "create-directus-extension",
-	"version": "10.1.9",
+	"version": "12.1.8",
 	"description": "A small util that will scaffold a Directus extension",
 	"keywords": [
 		"directus",
 		"extensions"
 	],
-	"homepage": "https://directus.io",
+	"homepage": "https://directus.com",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/directus/directus.git",
@@ -32,9 +32,18 @@
 	"files": [
 		"lib/index.js"
 	],
+	"scripts": {
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
+	},
 	"dependencies": {
 		"@directus/extensions": "workspace:*",
 		"@directus/extensions-sdk": "workspace:*",
-		"inquirer": "9.2.20"
+		"commander": "catalog:",
+		"inquirer": "catalog:"
+	},
+	"devDependencies": {
+		"@vitest/coverage-v8": "catalog:",
+		"vitest": "catalog:"
 	}
 }

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import VButton from './v-button.vue';
+import VIcon from './v-icon/v-icon.vue';
 
 const props = defineProps<{
 	/** Currently selected page */
@@ -59,11 +61,11 @@ function toPage(page: number) {
 
 <template>
 	<div class="v-pagination">
-		<v-button class="previous" :disabled="disabled || modelValue === 1" secondary icon small @click="toPrev">
-			<v-icon name="chevron_left" />
-		</v-button>
+		<VButton class="previous" :disabled="disabled || modelValue === 1" secondary icon small @click="toPrev">
+			<VIcon name="chevron_left" />
+		</VButton>
 
-		<v-button
+		<VButton
 			v-if="showFirstLast && totalVisible && modelValue > Math.ceil(totalVisible / 2) + 1 && length > totalVisible"
 			class="page"
 			secondary
@@ -72,7 +74,7 @@ function toPage(page: number) {
 			@click="toPage(1)"
 		>
 			1
-		</v-button>
+		</VButton>
 
 		<span
 			v-if="showFirstLast && totalVisible && modelValue > Math.ceil(totalVisible / 2) + 1 && length > totalVisible + 1"
@@ -81,10 +83,10 @@ function toPage(page: number) {
 			...
 		</span>
 
-		<v-button
+		<VButton
 			v-for="page in visiblePages"
 			:key="page"
-			:class="{ active: modelValue === page }"
+			:active="modelValue === page"
 			class="page"
 			secondary
 			small
@@ -92,7 +94,7 @@ function toPage(page: number) {
 			@click="toPage(page)"
 		>
 			{{ page }}
-		</v-button>
+		</VButton>
 
 		<span
 			v-if="
@@ -103,11 +105,11 @@ function toPage(page: number) {
 			...
 		</span>
 
-		<v-button
+		<VButton
 			v-if="
 				showFirstLast && totalVisible && modelValue <= length - Math.ceil(totalVisible / 2) && length > totalVisible
 			"
-			:class="{ active: modelValue === length }"
+			:active="modelValue === length"
 			class="page"
 			secondary
 			small
@@ -115,38 +117,36 @@ function toPage(page: number) {
 			@click="toPage(length)"
 		>
 			{{ length }}
-		</v-button>
+		</VButton>
 
-		<v-button class="next" :disabled="disabled || modelValue === length" secondary icon small @click="toNext">
-			<v-icon name="chevron_right" />
-		</v-button>
+		<VButton class="next" :disabled="disabled || modelValue === length" secondary icon small @click="toNext">
+			<VIcon name="chevron_right" />
+		</VButton>
 	</div>
 </template>
 
-<style scoped>
+<style lang="scss" scoped>
+@use '@/styles/mixins';
+
 .v-pagination {
 	display: flex;
+	align-items: center;
 }
 
 .gap {
 	display: none;
-	margin: 0 4px;
+	margin: 0 0.25rem;
 	color: var(--theme--foreground-subdued);
-	line-height: 2em;
 }
 
-@media (min-width: 600px) {
+@include mixins.breakpoint-up('sm') {
 	.gap {
 		display: inline;
 	}
 }
 
 .v-button {
-	--v-button-background-color-hover: var(--theme--background-normal);
-	--v-button-background-color: var(--theme--form--field--input--background-subdued);
-	--v-button-color: var(--theme--foreground);
-
-	margin: 0 2px;
+	margin: 0 0.125rem;
 	vertical-align: middle;
 }
 
@@ -154,28 +154,22 @@ function toPage(page: number) {
 	display: none;
 }
 
-@media (min-width: 600px) {
+@include mixins.breakpoint-up('sm') {
 	.v-button.page:not(.active) {
 		display: inline;
 	}
 }
 
 .v-button :deep(.small) {
-	--v-button-min-width: 32px;
+	--v-button-min-width: var(--v-button-height);
+	--v-button-padding: 0 0.375rem;
 }
 
 .v-button:first-child {
-	margin-left: 0;
+	margin-inline-start: 0;
 }
 
 .v-button:last-child {
-	margin-right: 0;
-}
-
-.v-button.active {
-	--v-button-background-color-hover: var(--theme--primary);
-	--v-button-color-hover: var(--foreground-inverted);
-	--v-button-background-color: var(--theme--primary);
-	--v-button-color: var(--foreground-inverted);
+	margin-inline-end: 0;
 }
 </style>

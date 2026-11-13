@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { useSizeClass } from '@directus/composables';
-import { IconName } from '@fortawesome/fontawesome-svg-core';
-import { camelCase, upperFirst } from 'lodash';
-
+import { isIn } from '@directus/utils';
+import type { IconName } from '@fortawesome/fontawesome-svg-core';
+import { camelCase, upperFirst } from 'lodash-es';
+import { computed, defineAsyncComponent } from 'vue';
+import { RTL_REVERSE_ICONS } from '../../constants/text-direction';
 import { components } from './custom-icons';
-
-import SocialIcon from './social-icon.vue';
+import { isKnownIcon } from './known-icons';
 import { socialIcons } from './social-icons';
+import { useUserStore } from '@/stores/user';
+
+const SocialIcon = defineAsyncComponent(() => import('./social-icon.vue'));
 
 const props = withDefaults(
 	defineProps<{
@@ -49,21 +52,30 @@ const props = withDefaults(
 
 const emit = defineEmits(['click']);
 
+const userStore = useUserStore();
+
 const sizeClass = computed<string | null>(() => {
 	if (props.sup) return 'sup';
 	return useSizeClass(props).value;
 });
 
 const customIconName = computed(() => {
+	if (!props.name) return null;
 	const name = `CustomIcon${upperFirst(camelCase(props.name.replace(/_/g, '-')))}`;
 	if (name in components) return components[name];
 	return null;
 });
 
 const socialIconName = computed<IconName | null>(() => {
+	if (!props.name) return null;
 	if (socialIcons.includes(props.name)) return props.name.replace(/_/g, '-') as IconName;
 	return null;
 });
+
+// the font draws a name it has no ligature for as plain text, so unknown names render nothing
+const materialIconName = computed(() => (props.name && isKnownIcon(props.name) ? props.name : null));
+
+const mirrored = computed(() => userStore.textDirection === 'rtl' && isIn(props.name, RTL_REVERSE_ICONS));
 
 function emitClick(event: MouseEvent) {
 	if (props.disabled) return;
@@ -72,18 +84,19 @@ function emitClick(event: MouseEvent) {
 </script>
 
 <template>
-	<span
+	<component
+		:is="clickable ? 'button' : 'span'"
+		:type="clickable ? 'button' : undefined"
 		class="v-icon"
-		:class="[sizeClass, { 'has-click': !disabled && clickable, left, right }]"
-		:role="clickable ? 'button' : undefined"
-		:tabindex="clickable ? 0 : undefined"
+		:class="[sizeClass, { 'has-click': !disabled && clickable, left, right, mirrored }]"
+		:disabled="clickable ? disabled : undefined"
 		:style="{ '--v-icon-color': color }"
 		@click="emitClick"
 	>
-		<component :is="customIconName" v-if="customIconName" />
+		<component :is="customIconName" v-if="customIconName" class="custom-icon-svg" />
 		<SocialIcon v-else-if="socialIconName" :name="socialIconName" />
-		<i v-else :class="{ filled }" :data-icon="name"></i>
-	</span>
+		<i v-else-if="materialIconName" :class="{ filled }" :data-icon="materialIconName"></i>
+	</component>
 </template>
 
 <style lang="scss" scoped>
@@ -93,16 +106,16 @@ function emitClick(event: MouseEvent) {
 
 		--v-icon-color        [currentColor]
 		--v-icon-color-hover  [currentColor]
-		--v-icon-size         [24px]
+		--v-icon-size         [var(--icon-size-default)]
 
 */
 
 .v-icon {
 	position: relative;
 	display: inline-block;
-	width: var(--v-icon-size, 24px);
-	min-width: var(--v-icon-size, 24px);
-	height: var(--v-icon-size, 24px);
+	inline-size: var(--v-icon-size, var(--icon-size-default));
+	min-inline-size: var(--v-icon-size, var(--icon-size-default));
+	block-size: var(--v-icon-size, var(--icon-size-default));
 	color: var(--v-icon-color, currentColor);
 	font-size: 0;
 	vertical-align: middle;
@@ -111,13 +124,13 @@ function emitClick(event: MouseEvent) {
 		display: block;
 		font-family: 'Material Symbols';
 		font-weight: normal;
-		font-size: var(--v-icon-size, 24px);
+		font-size: var(--v-icon-size, var(--icon-size-default));
 		font-style: normal;
 		line-height: 1;
 		letter-spacing: normal;
 		text-transform: none;
 		white-space: nowrap;
-		word-wrap: normal;
+		overflow-wrap: normal;
 		direction: ltr;
 		-webkit-font-smoothing: antialiased;
 		-moz-osx-font-smoothing: grayscale;
@@ -148,13 +161,12 @@ function emitClick(event: MouseEvent) {
 		fill: currentColor;
 
 		&.svg-inline--fa {
-			width: auto;
-			height: auto;
+			inline-size: 100%;
+			block-size: 100%;
 		}
 	}
 
 	&.has-click {
-		cursor: pointer;
 		transition: color var(--fast) var(--transition);
 
 		&:hover {
@@ -162,42 +174,55 @@ function emitClick(event: MouseEvent) {
 		}
 	}
 
-	&.sup {
-		--v-icon-size: 8px;
+	&[disabled] {
+		cursor: not-allowed;
+	}
 
-		vertical-align: 5px;
+	&.sup {
+		--v-icon-size: 0.4375rem;
+
+		vertical-align: 0.3125rem;
 	}
 
 	&.x-small {
-		--v-icon-size: 12px;
+		--v-icon-size: 0.6875rem;
 	}
 
 	&.small {
-		--v-icon-size: 18px;
+		--v-icon-size: 1rem;
 	}
 
 	&.large {
-		--v-icon-size: 36px;
+		--v-icon-size: 2rem;
 	}
 
 	&.x-large {
-		--v-icon-size: 48px;
+		--v-icon-size: 2.6875rem;
 	}
 
 	&.left {
-		margin-right: 8px;
+		margin-inline-end: 0.4375rem;
 
 		&.small {
-			margin-right: 4px;
+			margin-inline-end: 0.25rem;
 		}
 	}
 
 	&.right {
-		margin-left: 6px;
+		margin-inline-start: 0.3125rem;
 
 		&.small {
-			margin-left: 4px;
+			margin-inline-start: 0.25rem;
 		}
 	}
+
+	&.mirrored {
+		transform: scaleX(-1);
+	}
+}
+
+.custom-icon-svg {
+	inline-size: 100%;
+	block-size: 100%;
 }
 </style>

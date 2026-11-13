@@ -1,36 +1,49 @@
+import { useEnv } from '@directus/env';
 import { ForbiddenError, InvalidPayloadError } from '@directus/errors';
 import type { ForeignKey, SchemaInspector } from '@directus/schema';
 import { createInspector } from '@directus/schema';
 import { systemRelationRows } from '@directus/system-data';
-import type { Accountability, Query, Relation, RelationMeta, SchemaOverview } from '@directus/types';
+import type {
+	AbstractServiceOptions,
+	Accountability,
+	ActionEventParams,
+	MutationOptions,
+	Query,
+	QueryOptions,
+	Relation,
+	RelationMeta,
+	SchemaOverview,
+} from '@directus/types';
 import { toArray } from '@directus/utils';
 import type Keyv from 'keyv';
 import type { Knex } from 'knex';
-import { clearSystemCache, getCache } from '../cache.js';
+import { clearSystemCache, getCache, getCacheValue, setCacheValue } from '../cache.js';
 import type { Helpers } from '../database/helpers/index.js';
 import { getHelpers } from '../database/helpers/index.js';
 import getDatabase, { getSchemaInspector } from '../database/index.js';
 import emitter from '../emitter.js';
-import type { AbstractServiceOptions, ActionEventParams, MutationOptions } from '../types/index.js';
+import { fetchAllowedFieldMap } from '../permissions/modules/fetch-allowed-field-map/fetch-allowed-field-map.js';
+import { fetchAllowedFields } from '../permissions/modules/fetch-allowed-fields/fetch-allowed-fields.js';
+import { validateAccess } from '../permissions/modules/validate-access/validate-access.js';
 import { getDefaultIndexName } from '../utils/get-default-index-name.js';
 import { getSchema } from '../utils/get-schema.js';
 import { transaction } from '../utils/transaction.js';
-import { ItemsService, type QueryOptions } from './items.js';
-import { PermissionsService } from './permissions/index.js';
+import { ItemsService } from './items.js';
+
+const { CACHE_SCHEMA } = useEnv();
 
 export class RelationsService {
 	knex: Knex;
-	permissionsService: PermissionsService;
 	schemaInspector: SchemaInspector;
 	accountability: Accountability | null;
 	schema: SchemaOverview;
 	relationsItemService: ItemsService<RelationMeta>;
 	systemCache: Keyv<any>;
+	schemaCache: Keyv<any>;
 	helpers: Helpers;
 
 	constructor(options: AbstractServiceOptions) {
 		this.knex = options.knex || getDatabase();
-		this.permissionsService = new PermissionsService(options);
 		this.schemaInspector = options.knex ? createInspector(options.knex) : getSchemaInspector();
 		this.schema = options.schema;
 		this.accountability = options.accountability || null;
@@ -43,13 +56,49 @@ export class RelationsService {
 			// happens in `filterForbidden` down below
 		});
 
-		this.systemCache = getCache().systemCache;
+		const cache = getCache();
+		this.systemCache = cache.systemCache;
+		this.schemaCache = cache.localSchemaCache;
 		this.helpers = getHelpers(this.knex);
 	}
 
-	async readAll(collection?: string, opts?: QueryOptions): Promise<Relation[]> {
-		if (this.accountability && this.accountability.admin !== true && this.hasReadAccess === false) {
-			throw new ForbiddenError();
+	async foreignKeys(collection?: string) {
+		const schemaCacheIsEnabled = Boolean(CACHE_SCHEMA);
+
+		let foreignKeys: ForeignKey[] | null = null;
+
+		if (schemaCacheIsEnabled) {
+			foreignKeys = await getCacheValue(this.schemaCache, 'foreignKeys');
+		}
+
+		if (!foreignKeys) {
+			foreignKeys = await this.schemaInspector.foreignKeys();
+
+			if (schemaCacheIsEnabled) {
+				setCacheValue(this.schemaCache, 'foreignKeys', foreignKeys);
+			}
+		}
+
+		if (collection) {
+			return foreignKeys.filter((row) => row.table === collection);
+		}
+
+		return foreignKeys;
+	}
+
+	async readAll(collection?: string, opts?: QueryOptions, bypassCache?: boolean): Promise<Relation[]> {
+		if (this.accountability) {
+			await validateAccess(
+				{
+					accountability: this.accountability,
+					action: 'read',
+					collection: 'directus_relations',
+				},
+				{
+					knex: this.knex,
+					schema: this.schema,
+				},
+			);
 		}
 
 		const metaReadQuery: Query = {
@@ -72,26 +121,37 @@ export class RelationsService {
 			return metaRow.many_collection === collection;
 		});
 
-		const schemaRows = await this.schemaInspector.foreignKeys(collection);
+		let schemaRows = bypassCache ? await this.schemaInspector.foreignKeys() : await this.foreignKeys(collection);
+
+		if (collection && bypassCache) {
+			schemaRows = schemaRows.filter((row) => row.table === collection);
+		}
+
 		const results = this.stitchRelations(metaRows, schemaRows);
 		return await this.filterForbidden(results);
 	}
 
 	async readOne(collection: string, field: string): Promise<Relation> {
 		if (this.accountability && this.accountability.admin !== true) {
-			if (this.hasReadAccess === false) {
+			await validateAccess(
+				{
+					accountability: this.accountability,
+					action: 'read',
+					collection: 'directus_relations',
+				},
+				{
+					schema: this.schema,
+					knex: this.knex,
+				},
+			);
+
+			const allowedFields = await fetchAllowedFields(
+				{ collection, action: 'read', accountability: this.accountability },
+				{ schema: this.schema, knex: this.knex },
+			);
+
+			if (allowedFields.includes('*') === false && allowedFields.includes(field) === false) {
 				throw new ForbiddenError();
-			}
-
-			const permissions = this.accountability.permissions?.find((permission) => {
-				return permission.action === 'read' && permission.collection === collection;
-			});
-
-			if (!permissions || !permissions.fields) throw new ForbiddenError();
-
-			if (permissions.fields.includes('*') === false) {
-				const allowedFields = permissions.fields;
-				if (allowedFields.includes(field) === false) throw new ForbiddenError();
 			}
 		}
 
@@ -113,9 +173,7 @@ export class RelationsService {
 			},
 		});
 
-		const schemaRow = (await this.schemaInspector.foreignKeys(collection)).find(
-			(foreignKey) => foreignKey.column === field,
-		);
+		const schemaRow = (await this.foreignKeys(collection)).find((foreignKey) => foreignKey.column === field);
 
 		const stitched = this.stitchRelations(metaRow, schemaRow ? [schemaRow] : []);
 		const results = await this.filterForbidden(stitched);
@@ -194,7 +252,7 @@ export class RelationsService {
 
 			await transaction(this.knex, async (trx) => {
 				if (relation.related_collection) {
-					await trx.schema.alterTable(relation.collection!, async (table) => {
+					await trx.schema.alterTable(relation.collection!, (table) => {
 						this.alterType(table, relation, fieldSchema.nullable);
 
 						const constraintName: string = getDefaultIndexName('foreign', relation.collection!, relation.field!);
@@ -251,7 +309,8 @@ export class RelationsService {
 	/**
 	 * Update an existing foreign key constraint
 	 *
-	 * Note: You can update anything under meta, but only the `on_delete` trigger under schema
+	 * Note: You can update anything under meta, but only the `on_delete` and `on_update` triggers
+	 * under schema.
 	 */
 	async updateOne(
 		collection: string,
@@ -286,14 +345,25 @@ export class RelationsService {
 		}
 
 		const runPostColumnChange = await this.helpers.schema.preColumnChange();
-		this.helpers.schema.preRelationChange(relation);
+
+		const updatedSchema = relation.schema ? { ...existingRelation.schema, ...relation.schema } : null;
+
+		const updatedRelation: Partial<Relation> = {
+			...relation,
+			collection,
+			field,
+			related_collection: existingRelation.related_collection,
+			...(updatedSchema ? { schema: updatedSchema } : {}),
+		};
+
+		this.helpers.schema.preRelationChange(updatedRelation);
 
 		const nestedActionEvents: ActionEventParams[] = [];
 
 		try {
 			await transaction(this.knex, async (trx) => {
-				if (existingRelation.related_collection) {
-					await trx.schema.alterTable(collection, async (table) => {
+				if (updatedSchema && existingRelation.related_collection) {
+					await trx.schema.alterTable(collection, (table) => {
 						let constraintName: string = getDefaultIndexName('foreign', collection, field);
 
 						// If the FK already exists in the DB, drop it first
@@ -302,10 +372,9 @@ export class RelationsService {
 							table.dropForeign(field, constraintName);
 
 							constraintName = this.helpers.schema.constraintName(constraintName);
-							existingRelation.schema.constraint_name = constraintName;
 						}
 
-						this.alterType(table, relation, fieldSchema.nullable);
+						this.alterType(table, existingRelation, fieldSchema.nullable);
 
 						const builder = table
 							.foreign(field, constraintName || undefined)
@@ -315,12 +384,16 @@ export class RelationsService {
 								}`,
 							);
 
-						if (relation.schema?.on_delete) {
-							builder.onDelete(relation.schema.on_delete);
+						/**
+						 * Delete/update handlers must be set on every request when applicable, excluding them
+						 * from a partial update will cause them to revert to no action.
+						 */
+						if (updatedSchema.on_delete) {
+							builder.onDelete(updatedSchema.on_delete);
 						}
 
-						if (relation.schema?.on_update) {
-							builder.onUpdate(relation.schema.on_update);
+						if (updatedSchema.on_update) {
+							builder.onUpdate(updatedSchema.on_update);
 						}
 					});
 				}
@@ -343,8 +416,8 @@ export class RelationsService {
 						await relationsItemService.createOne(
 							{
 								...(relation.meta || {}),
-								many_collection: relation.collection,
-								many_field: relation.field,
+								many_collection: collection,
+								many_field: field,
 								one_collection: existingRelation.related_collection || null,
 							},
 							{
@@ -406,7 +479,7 @@ export class RelationsService {
 
 		try {
 			await transaction(this.knex, async (trx) => {
-				const existingConstraints = await this.schemaInspector.foreignKeys();
+				const existingConstraints = await this.foreignKeys();
 				const constraintNames = existingConstraints.map((key) => key.constraint_name);
 
 				if (
@@ -462,15 +535,6 @@ export class RelationsService {
 	}
 
 	/**
-	 * Whether or not the current user has read access to relations
-	 */
-	private get hasReadAccess() {
-		return !!this.accountability?.permissions?.find((permission) => {
-			return permission.collection === 'directus_relations' && permission.action === 'read';
-		});
-	}
-
-	/**
 	 * Combine raw schema foreign key information with Directus relations meta rows to form final
 	 * Relation objects
 	 */
@@ -520,14 +584,15 @@ export class RelationsService {
 	private async filterForbidden(relations: Relation[]): Promise<Relation[]> {
 		if (this.accountability === null || this.accountability?.admin === true) return relations;
 
-		const allowedCollections =
-			this.accountability.permissions
-				?.filter((permission) => {
-					return permission.action === 'read';
-				})
-				.map(({ collection }) => collection) ?? [];
+		const allowedFields = await fetchAllowedFieldMap(
+			{
+				accountability: this.accountability,
+				action: 'read',
+			},
+			{ schema: this.schema, knex: this.knex },
+		);
 
-		const allowedFields = this.permissionsService.getAllowedFields('read');
+		const allowedCollections = Object.keys(allowedFields);
 
 		relations = toArray(relations);
 

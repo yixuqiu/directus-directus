@@ -1,8 +1,9 @@
 {
 	"name": "@directus/release-notes-generator",
-	"version": "0.2.6",
+	"version": "3.0.2",
 	"description": "Directus tailored release notes generator for changesets",
-	"homepage": "https://directus.io",
+	"homepage": "https://directus.com",
+	"type": "module",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/directus/directus.git",
@@ -20,23 +21,28 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "tsc --project tsconfig.prod.json",
-		"dev": "tsc --watch",
-		"test": "vitest --watch=false"
+		"build": "tsdown --tsconfig tsconfig.prod.json",
+		"dev": "tsdown --watch",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
 	},
 	"dependencies": {
-		"@changesets/get-github-info": "0.6.0",
-		"@pnpm/find-workspace-packages": "6.0.9",
-		"@pnpm/workspace.pkgs-graph": "3.0.0",
-		"semver": "7.6.0"
+		"@changesets/get-github-info": "catalog:",
+		"@pnpm/logger": "catalog:",
+		"@pnpm/types": "catalog:",
+		"@pnpm/workspace.pkgs-graph": "catalog:",
+		"js-yaml": "catalog:",
+		"semver": "catalog:"
 	},
 	"devDependencies": {
-		"@changesets/types": "6.0.0",
-		"@directus/tsconfig": "workspace:*",
-		"@types/node": "18.19.31",
-		"@types/semver": "7.5.8",
-		"@vitest/coverage-v8": "1.5.3",
-		"typescript": "5.4.5",
-		"vitest": "1.5.3"
+		"@changesets/types": "catalog:",
+		"@directus/tsconfig": "catalog:",
+		"@types/js-yaml": "catalog:",
+		"@types/node": "catalog:",
+		"@types/semver": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"typescript": "catalog:",
+		"tsdown": "catalog:",
+		"vitest": "catalog:"
 	}
 }

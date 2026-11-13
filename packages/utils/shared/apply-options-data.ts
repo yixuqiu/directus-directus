@@ -6,10 +6,10 @@ import { parseJSON } from './parse-json.js';
 type Mustache<T> = T extends string
 	? JsonValue
 	: T extends Array<infer U>
-	  ? Array<Mustache<U>>
-	  : T extends Record<any, any>
-	    ? { [K in keyof T]: Mustache<T[K]> }
-	    : T;
+		? Array<Mustache<U>>
+		: T extends Record<any, any>
+			? { [K in keyof T]: Mustache<T[K]> }
+			: T;
 
 export function applyOptionsData(
 	options: Record<string, any>,
@@ -58,7 +58,7 @@ function renderMustache<T extends JsonValue>(item: T, scope: Scope, skipUndefine
 }
 
 export function optionToObject<T>(option: T): Exclude<T, string> {
-	return typeof option === 'string' ? parseJSON(option) : option;
+	return typeof option === 'string' ? parseJSON(option) : (option as Exclude<T, string>);
 }
 
 export function optionToString(option: unknown): string {

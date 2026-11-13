@@ -11,17 +11,20 @@ import {
 vi.mock('ky');
 vi.mock('../../utils/assert-version-compatibility.js');
 vi.mock('./lib/construct-url.js');
-vi.mock('./schemas/registry-list-response.js');
+
+vi.mock('./schemas/registry-list-response.js', () => ({
+	RegistryListResponse: { parseAsync: vi.fn() },
+}));
 
 afterEach(() => {
 	vi.resetAllMocks();
 });
 
-test('Throws if version compatibility assertion throws', () => {
+test('Throws if version compatibility assertion throws', async () => {
 	const error = new Error();
 	vi.mocked(assertVersionCompatibility).mockRejectedValue(error);
 
-	expect(() => list({})).rejects.toBe(error);
+	await expect(() => list({})).rejects.toBe(error);
 });
 
 test('Fetches constructed URL', async () => {

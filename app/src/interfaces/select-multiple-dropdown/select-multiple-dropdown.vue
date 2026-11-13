@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { sortBy } from 'lodash';
-import { useI18n } from 'vue-i18n';
+import { sortBy } from 'lodash-es';
+import { computed } from 'vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VSelect from '@/components/v-select/v-select.vue';
 
 type Option = {
 	text: string;
@@ -11,9 +13,9 @@ const props = withDefaults(
 	defineProps<{
 		value?: string[];
 		disabled?: boolean;
+		nonEditable?: boolean;
 		choices?: Option[];
 		icon?: string;
-
 		allowNone?: boolean;
 		placeholder?: string;
 		allowOther?: boolean;
@@ -26,11 +28,11 @@ const props = withDefaults(
 
 const emit = defineEmits(['input']);
 
-const { t } = useI18n();
+const items = computed(() => props.choices || []);
 
 function updateValue(value: string[]) {
 	const sortedValue = sortBy(value, (val) => {
-		const sortIndex = props.choices!.findIndex((choice) => val === choice.value);
+		const sortIndex = items.value!.findIndex((item) => val === item.value);
 		return sortIndex !== -1 ? sortIndex : value.length;
 	});
 
@@ -39,15 +41,12 @@ function updateValue(value: string[]) {
 </script>
 
 <template>
-	<v-notice v-if="!choices" type="warning">
-		{{ t('choices_option_configured_incorrectly') }}
-	</v-notice>
-	<v-select
-		v-else
+	<VSelect
 		multiple
 		:model-value="value"
-		:items="choices"
+		:items="items"
 		:disabled="disabled"
+		:non-editable="nonEditable"
 		:show-deselect="allowNone"
 		:placeholder="placeholder"
 		:allow-other="allowOther"
@@ -56,7 +55,7 @@ function updateValue(value: string[]) {
 		@update:model-value="updateValue($event)"
 	>
 		<template v-if="icon" #prepend>
-			<v-icon :name="icon" />
+			<VIcon :name="icon" />
 		</template>
-	</v-select>
+	</VSelect>
 </template>

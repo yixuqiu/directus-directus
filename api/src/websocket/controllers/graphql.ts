@@ -1,49 +1,91 @@
-import { useEnv } from '@directus/env';
-import type { Server } from 'graphql-ws';
-import { CloseCode, MessageType, makeServer } from 'graphql-ws';
 import type { Server as httpServer } from 'http';
+import { useEnv } from '@directus/env';
+import type { WebSocketMessage } from '@directus/types';
+import { GraphQLError, parse, validate } from 'graphql';
+import type { Context, Server, SubscribePayload } from 'graphql-ws';
+import { CloseCode, makeServer, MessageType } from 'graphql-ws';
 import type { WebSocket } from 'ws';
-import { useLogger } from '../../logger.js';
+import { useLogger } from '../../logger/index.js';
+import { createDefaultAccountability } from '../../permissions/utils/create-default-accountability.js';
+import { getValidationRules } from '../../services/graphql/rules/index.js';
 import { bindPubSub } from '../../services/graphql/subscription.js';
 import { GraphQLService } from '../../services/index.js';
+import { getAddress } from '../../utils/get-address.js';
 import { getSchema } from '../../utils/get-schema.js';
-import { authenticateConnection, refreshAccountability } from '../authenticate.js';
+import { authenticateConnection } from '../authenticate.js';
 import { handleWebSocketError } from '../errors.js';
-import { ConnectionParams, WebSocketMessage } from '../messages.js';
+import { ConnectionParams } from '../messages.js';
 import type { AuthenticationState, GraphQLSocket, UpgradeContext, WebSocketClient } from '../types.js';
 import { getMessageType } from '../utils/message.js';
 import SocketController from './base.js';
+import { registerWebSocketEvents } from './hooks.js';
 
 const logger = useLogger();
+
+/**
+ * Handle the `onSubscribe` phase of the GraphQL WebSocket protocol.
+ * The document is validated against the shared `getValidationRules`, so the WebSocket transport
+ *   enforces the same protections as the HTTP GraphQL endpoint.
+ *
+ * @see https://github.com/directus/directus/security/advisories/GHSA-ff8w-8crv-9rcf
+ */
+export async function onSubscribe(
+	ctx: Context<ConnectionParams, GraphQLSocket>,
+	_id: string,
+	payload: SubscribePayload,
+) {
+	const env = useEnv();
+
+	let document;
+
+	try {
+		document = parse(payload.query, { maxTokens: env.GRAPHQL_QUERY_TOKEN_LIMIT });
+	} catch {
+		return [new GraphQLError('Failed to parse GraphQL document.')];
+	}
+
+	const accountability = ctx.extra.client.accountability;
+
+	// for now only the items will be watched, system events tbd
+	const service = new GraphQLService({
+		schema: await getSchema(),
+		scope: 'items',
+		accountability,
+	});
+
+	const schema = await service.getSchema();
+
+	const errors = validate(schema, document, getValidationRules({ operationName: payload.operationName }));
+
+	if (errors.length > 0) {
+		return errors;
+	}
+
+	return {
+		schema,
+		document,
+		variableValues: payload.variables ?? undefined,
+		operationName: payload.operationName ?? undefined,
+	};
+}
 
 export class GraphQLSubscriptionController extends SocketController {
 	gql: Server<GraphQLSocket>;
 	constructor(httpServer: httpServer) {
 		super(httpServer, 'WEBSOCKETS_GRAPHQL');
-
-		const env = useEnv();
+		registerWebSocketEvents();
 
 		this.server.on('connection', (ws: WebSocket, auth: AuthenticationState) => {
 			this.bindEvents(this.createClient(ws, auth));
 		});
 
 		this.gql = makeServer<ConnectionParams, GraphQLSocket>({
-			schema: async (ctx) => {
-				const accountability = ctx.extra.client.accountability;
-
-				// for now only the items will be watched, system events tbd
-				const service = new GraphQLService({
-					schema: await getSchema(),
-					scope: 'items',
-					accountability,
-				});
-
-				return service.getSchema();
-			},
+			onSubscribe,
 		});
 
 		bindPubSub();
-		logger.info(`GraphQL Subscriptions started at ws://${env['HOST']}:${env['PORT']}${this.endpoint}`);
+
+		logger.info(`GraphQL Subscriptions started at ${getAddress(httpServer)}${this.endpoint}`);
 	}
 
 	private bindEvents(client: WebSocketClient) {
@@ -63,9 +105,16 @@ export class GraphQLSubscriptionController extends SocketController {
 
 								if (this.authentication.mode === 'handshake') {
 									if (typeof params.access_token === 'string') {
-										const { accountability, expires_at } = await authenticateConnection({
-											access_token: params.access_token,
-										});
+										const { accountability, expires_at } = await authenticateConnection(
+											{
+												access_token: params.access_token,
+											},
+											{
+												ip: client.accountability?.ip ?? null,
+												userAgent: client.accountability?.userAgent,
+												origin: client.accountability?.origin,
+											},
+										);
 
 										client.accountability = accountability;
 										client.expires_at = expires_at;
@@ -78,13 +127,11 @@ export class GraphQLSubscriptionController extends SocketController {
 								// the first message should authenticate successfully in this mode
 								client.close(CloseCode.Forbidden, 'Forbidden');
 								return;
-							} else {
-								client.accountability = await refreshAccountability(client.accountability);
 							}
 
 							await cb(JSON.stringify(message));
 						} catch (error) {
-							handleWebSocketError(client, error, MessageType.Error);
+							handleWebSocketError(client, error, { type: MessageType.Error });
 						}
 					});
 				},
@@ -116,9 +163,12 @@ export class GraphQLSubscriptionController extends SocketController {
 		}, this.authentication.timeout);
 	}
 
-	protected override async handleHandshakeUpgrade({ request, socket, head }: UpgradeContext) {
+	protected override async handleHandshakeUpgrade({ request, socket, head, accountabilityOverrides }: UpgradeContext) {
 		this.server.handleUpgrade(request, socket, head, async (ws) => {
-			this.server.emit('connection', ws, { accountability: null, expires_at: null });
+			this.server.emit('connection', ws, {
+				accountability: createDefaultAccountability(accountabilityOverrides),
+				expires_at: null,
+			});
 			// actual enforcement is handled by the setTokenExpireTimer function
 		});
 	}

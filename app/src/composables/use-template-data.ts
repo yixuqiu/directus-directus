@@ -1,76 +1,116 @@
-import api from '@/api';
-import { Collection } from '@/types/collections';
-import { adjustFieldsForDisplays } from '@/utils/adjust-fields-for-displays';
-import { isSystemCollection } from '@directus/system-data';
+import { Collection, Item, PrimaryKey } from '@directus/types';
 import { getEndpoint, getFieldsFromTemplate } from '@directus/utils';
-import { Ref, computed, ref, watch } from 'vue';
+import { has, merge, pick } from 'lodash-es';
+import { computed, ComputedRef, ref, Ref, watch } from 'vue';
+import sdk, { requestEndpoint } from '@/sdk';
+import { adjustFieldsForDisplays } from '@/utils/adjust-fields-for-displays';
 
 type UsableTemplateData = {
-	templateData: Ref<Record<string, any> | undefined>;
+	template: ComputedRef<string | null>;
+	templateData: ComputedRef<Item | null>;
 	loading: Ref<boolean>;
-	fetchTemplateValues: () => Promise<void>;
 	error: Ref<any>;
+	fetchTemplateValues: () => Promise<void>;
 };
 
 export function useTemplateData(
 	collection: Ref<Collection | null>,
-	primaryKey: Ref<string>,
-	template?: Ref<string>,
+	primaryKey: Ref<PrimaryKey | null>,
+	options?: {
+		template?: Ref<string>;
+		injectData?: Ref<Item>;
+	},
 ): UsableTemplateData {
-	const templateData = ref<Record<string, any>>();
+	const itemData = ref<Item | null>(null);
 	const loading = ref(false);
 	const error = ref<any>(null);
 
+	const template = computed(() => options?.template?.value ?? collection.value?.meta?.display_template ?? null);
+
+	const templateFields = computed(() => {
+		if (!template.value || !collection.value) return null;
+
+		return getFieldsFromTemplate(template.value);
+	});
+
 	const fields = computed(() => {
-		const _template = template?.value || collection.value?.meta?.display_template;
+		if (!templateFields.value || !collection.value) return null;
 
-		if (!_template || !collection.value) return null;
+		const injectData = options?.injectData?.value;
 
-		return adjustFieldsForDisplays(getFieldsFromTemplate(_template), collection.value?.collection);
+		const fieldsToFetch = injectData
+			? templateFields.value.filter((field) => !has(injectData, field))
+			: templateFields.value;
+
+		return adjustFieldsForDisplays(fieldsToFetch.map(stripFieldIndex), collection.value.collection);
+	});
+
+	const templateData = computed<Item | null>(() => {
+		if (!itemData.value) return null;
+
+		const injectData = options?.injectData?.value;
+
+		if (!injectData || !templateFields.value) return itemData.value;
+
+		return merge({}, itemData.value, pick(injectData, templateFields.value));
 	});
 
 	const isSingleton = computed(() => !!collection.value?.meta?.singleton);
 
-	watch([collection, primaryKey], fetchTemplateValues, { immediate: true });
+	watch([collection, primaryKey, fields], fetchTemplateValues, { immediate: true });
 
-	return { templateData, loading, error, fetchTemplateValues };
+	return { template, templateData, loading, error, fetchTemplateValues };
 
 	async function fetchTemplateValues() {
 		if (
 			(!primaryKey.value && !isSingleton.value) ||
 			primaryKey.value === '+' ||
-			fields.value === null ||
-			!collection.value
+			!collection.value ||
+			fields.value === null
 		) {
+			itemData.value = null;
+			return;
+		}
+
+		if (fields.value.length === 0) {
+			itemData.value = {};
 			return;
 		}
 
 		loading.value = true;
 
 		const baseEndpoint = getEndpoint(collection.value.collection);
-
-		let endpoint: string;
-
-		if (isSingleton.value) {
-			endpoint = baseEndpoint;
-		} else {
-			endpoint = isSystemCollection(collection.value.collection)
-				? `${baseEndpoint}/${primaryKey.value}`
-				: `${baseEndpoint}/${encodeURIComponent(primaryKey.value)}`;
-		}
+		const endpoint = primaryKey.value ? `${baseEndpoint}/${encodeURIComponent(primaryKey.value)}` : baseEndpoint;
 
 		try {
-			const result = await api.get(endpoint, {
-				params: {
-					fields: fields.value,
-				},
-			});
+			const item = await sdk.request<Item>(
+				requestEndpoint(endpoint, {
+					params: {
+						fields: fields.value,
+					},
+				}),
+			);
 
-			templateData.value = result.data.data;
-		} catch (err: any) {
+			itemData.value = item;
+		} catch (err) {
 			error.value = err;
 		} finally {
 			loading.value = false;
 		}
 	}
+}
+
+/**
+ * Strip array index access (e.g. `locale[0]` or `locale.0`) from a template field path.
+ *
+ * The index is only meaningful when the template is rendered against the fetched data. The API
+ * `fields` query parameter cannot parse index segments, so they have to be removed to request the
+ * full relation; the renderer then indexes into the result.
+ */
+function stripFieldIndex(field: string): string {
+	return field
+		.replace(/\[\d+\]/g, '')
+		.split('.')
+		.filter((part) => part !== '' && !/^\d+$/.test(part))
+		.join('.');
 }

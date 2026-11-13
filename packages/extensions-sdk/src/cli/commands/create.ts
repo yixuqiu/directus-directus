@@ -1,29 +1,25 @@
+import path from 'path';
+import { BUNDLE_EXTENSION_TYPES, EXTENSION_TYPES, HYBRID_EXTENSION_TYPES } from '@directus/constants';
+import type { ExtensionOptions } from '@directus/extensions';
+import { EXTENSION_LANGUAGES, EXTENSION_PKG_KEY } from '@directus/extensions';
 import type {
 	ApiExtensionType,
 	AppExtensionType,
 	BundleExtensionType,
-	ExtensionOptions,
 	ExtensionType,
 	HybridExtensionType,
-} from '@directus/extensions';
-import {
-	BUNDLE_EXTENSION_TYPES,
-	EXTENSION_LANGUAGES,
-	EXTENSION_PKG_KEY,
-	EXTENSION_TYPES,
-	HYBRID_EXTENSION_TYPES,
-} from '@directus/extensions';
+} from '@directus/types';
 import { isIn } from '@directus/utils';
 import chalk from 'chalk';
 import { execa } from 'execa';
 import fse from 'fs-extra';
 import ora from 'ora';
-import path from 'path';
 import { LAST_BREAKING_RELEASE } from '../../constants/last-breaking.js';
 import getPackageManager from '../utils/get-package-manager.js';
 import { isLanguage, languageToShort } from '../utils/languages.js';
 import { log } from '../utils/logger.js';
 import copyTemplate from './helpers/copy-template.js';
+import getDefaultHost from './helpers/get-default-host.js';
 import getExtensionDevDeps from './helpers/get-extension-dev-deps.js';
 
 type CreateOptions = {
@@ -143,7 +139,7 @@ async function createExtension({
 	await fse.ensureDir(targetPath);
 	await copyTemplate(type, targetPath, 'src', language);
 
-	const host = `^${LAST_BREAKING_RELEASE}`;
+	const host = getDefaultHost(type);
 
 	const options: ExtensionOptions = isIn(type, HYBRID_EXTENSION_TYPES)
 		? {
@@ -151,13 +147,13 @@ async function createExtension({
 				path: { app: 'dist/app.js', api: 'dist/api.js' },
 				source: { app: `src/app.${languageToShort(language)}`, api: `src/api.${languageToShort(language)}` },
 				host,
-		  }
+			}
 		: {
 				type,
 				path: 'dist/index.js',
 				source: `src/index.${languageToShort(language)}`,
 				host,
-		  };
+			};
 
 	const packageManifest = getPackageManifest(name, options, await getExtensionDevDeps(type, language));
 
@@ -188,6 +184,7 @@ function getPackageManifest(name: string, options: ExtensionOptions, deps: Recor
 			build: 'directus-extension build',
 			dev: 'directus-extension build -w --no-minify',
 			link: 'directus-extension link',
+			validate: 'directus-extension validate',
 		},
 		devDependencies: deps,
 	};

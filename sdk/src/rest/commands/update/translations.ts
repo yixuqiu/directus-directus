@@ -1,7 +1,7 @@
 import type { DirectusTranslation } from '../../../schema/translation.js';
-import type { ApplyQueryFields, Query } from '../../../types/index.js';
-import { throwIfEmpty } from '../../utils/index.js';
+import type { ApplyQueryFields, NestedPartial, Query } from '../../../types/index.js';
 import type { RestCommand } from '../../types.js';
+import { throwIfEmpty } from '../../utils/index.js';
 
 export type UpdateTranslationOutput<
 	Schema,
@@ -20,7 +20,7 @@ export type UpdateTranslationOutput<
 export const updateTranslations =
 	<Schema, const TQuery extends Query<Schema, DirectusTranslation<Schema>>>(
 		keys: DirectusTranslation<Schema>['id'][],
-		item: Partial<DirectusTranslation<Schema>>,
+		item: NestedPartial<DirectusTranslation<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateTranslationOutput<Schema, TQuery>[], Schema> =>
 	() => {
@@ -35,6 +35,24 @@ export const updateTranslations =
 	};
 
 /**
+ * Update multiple translations as batch.
+ * @param items
+ * @param query
+ * @returns Returns the translation objects for the updated translations.
+ */
+export const updateTranslationsBatch =
+	<Schema, const TQuery extends Query<Schema, DirectusTranslation<Schema>>>(
+		items: NestedPartial<DirectusTranslation<Schema>>[],
+		query?: TQuery,
+	): RestCommand<UpdateTranslationOutput<Schema, TQuery>[], Schema> =>
+	() => ({
+		path: `/translations`,
+		params: query ?? {},
+		body: JSON.stringify(items),
+		method: 'PATCH',
+	});
+
+/**
  * Update an existing translation.
  * @param key
  * @param item
@@ -45,7 +63,7 @@ export const updateTranslations =
 export const updateTranslation =
 	<Schema, const TQuery extends Query<Schema, DirectusTranslation<Schema>>>(
 		key: DirectusTranslation<Schema>['id'],
-		item: Partial<DirectusTranslation<Schema>>,
+		item: NestedPartial<DirectusTranslation<Schema>>,
 		query?: TQuery,
 	): RestCommand<UpdateTranslationOutput<Schema, TQuery>, Schema> =>
 	() => {

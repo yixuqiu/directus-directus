@@ -1,34 +1,36 @@
-import api from '@/api';
-import { useCollectionsStore } from '@/stores/collections';
-import { useFieldsStore } from '@/stores/fields';
-import { useFlowsStore } from '@/stores/flows';
-import RouterPass from '@/utils/router-passthrough';
 import { defineModule } from '@directus/extensions';
+import AiOverview from './routes/ai/overview.vue';
 import Appearance from './routes/appearance/item.vue';
 import Collections from './routes/data-model/collections/collections.vue';
 import FieldDetail from './routes/data-model/field-detail/field-detail.vue';
 import Fields from './routes/data-model/fields/fields.vue';
 import NewCollection from './routes/data-model/new-collection.vue';
 import Extensions from './routes/extensions/extensions.vue';
-import FlowOperationDetail from './routes/flows/components/operation-detail.vue';
-import FlowsDetail from './routes/flows/flow.vue';
-import FlowsOverview from './routes/flows/overview.vue';
+import License from './routes/license/license.vue';
 import MarketplaceAccount from './routes/marketplace/routes/account/account.vue';
 import MarketplaceExtension from './routes/marketplace/routes/extension/extension.vue';
 import MarketplaceRegistry from './routes/marketplace/routes/registry/registry.vue';
 import NotFound from './routes/not-found.vue';
+import NewPolicy from './routes/policies/add-new.vue';
+import PoliciesCollection from './routes/policies/collection.vue';
+import PoliciesItem from './routes/policies/item.vue';
 import PresetsCollection from './routes/presets/collection/collection.vue';
 import PresetsItem from './routes/presets/item.vue';
 import Project from './routes/project/project.vue';
 import NewRole from './routes/roles/add-new.vue';
 import RolesCollection from './routes/roles/collection.vue';
-import RolesItem from './routes/roles/item/item.vue';
-import RolesPermissionsDetail from './routes/roles/permissions-detail/permissions-detail.vue';
+import RolesItem from './routes/roles/item.vue';
 import RolesPublicItem from './routes/roles/public-item.vue';
+import SystemLogs from './routes/system-logs/logs.vue';
 import TranslationsCollection from './routes/translations/collection.vue';
 import TranslationsItem from './routes/translations/item.vue';
-import WebhooksCollection from './routes/webhooks/collection.vue';
-import WebhooksItem from './routes/webhooks/item.vue';
+import api from '@/api';
+import { useCollectionsStore } from '@/stores/collections';
+import { useFieldsStore } from '@/stores/fields';
+import RouterPass from '@/utils/router-passthrough';
+
+const McpOAuthClientsCollection = () => import('./routes/mcp-oauth-clients/collection.vue');
+const McpOAuthClientsItem = () => import('./routes/mcp-oauth-clients/item.vue');
 
 export default defineModule({
 	id: 'settings',
@@ -44,6 +46,11 @@ export default defineModule({
 			name: 'settings-project',
 			path: 'project',
 			component: Project,
+		},
+		{
+			name: 'settings-license',
+			path: 'license',
+			component: License,
 		},
 		{
 			name: 'settings-appearance',
@@ -66,6 +73,9 @@ export default defineModule({
 						{
 							path: '+',
 							name: 'settings-add-new',
+							meta: {
+								isFloatingView: true,
+							},
 							components: {
 								add: NewCollection,
 							},
@@ -103,11 +113,43 @@ export default defineModule({
 						{
 							path: ':field',
 							name: 'settings-fields-field',
+							meta: {
+								isFloatingView: true,
+							},
 							components: {
 								field: FieldDetail,
 							},
 						},
 					],
+				},
+			],
+		},
+		{
+			path: 'policies',
+			component: RouterPass,
+			children: [
+				{
+					name: 'settings-policies-collection',
+					path: '',
+					component: PoliciesCollection,
+					children: [
+						{
+							path: '+',
+							name: 'settings-add-new-policy',
+							meta: {
+								isFloatingView: true,
+							},
+							components: {
+								add: NewPolicy,
+							},
+						},
+					],
+				},
+				{
+					name: 'settings-policies-item',
+					path: ':primaryKey',
+					component: PoliciesItem,
+					props: true,
 				},
 			],
 		},
@@ -126,35 +168,22 @@ export default defineModule({
 							components: {
 								add: NewRole,
 							},
+							meta: {
+								isFloatingView: true,
+							},
 						},
 					],
 				},
 				{
+					name: 'settings-roles-public-item',
 					path: 'public',
 					component: RolesPublicItem,
-					props: true,
-					children: [
-						{
-							path: ':permissionKey',
-							components: {
-								permissionsDetail: RolesPermissionsDetail,
-							},
-						},
-					],
 				},
 				{
 					name: 'settings-roles-item',
 					path: ':primaryKey',
 					component: RolesItem,
 					props: true,
-					children: [
-						{
-							path: ':permissionKey',
-							components: {
-								permissionsDetail: RolesPermissionsDetail,
-							},
-						},
-					],
 				},
 			],
 		},
@@ -176,59 +205,30 @@ export default defineModule({
 			],
 		},
 		{
-			path: 'webhooks',
-			component: RouterPass,
-			children: [
-				{
-					name: 'settings-webhooks-collection',
-					path: '',
-					component: WebhooksCollection,
-				},
-				{
-					name: 'settings-webhooks-item',
-					path: ':primaryKey',
-					component: WebhooksItem,
-					props: true,
-				},
-			],
+			name: 'settings-license',
+			path: 'license',
+			component: License,
 		},
 		{
-			path: 'flows',
-			component: RouterPass,
-			children: [
-				{
-					name: 'settings-flows-collection',
-					path: '',
-					component: FlowsOverview,
-				},
-				{
-					name: 'settings-flows-item',
-					path: ':primaryKey',
-					component: FlowsDetail,
-					props: true,
-					async beforeEnter(to) {
-						const { flows } = useFlowsStore();
-						const existingFlow = flows.find((flow) => flow.id === to.params.primaryKey);
-
-						if (!existingFlow) {
-							return {
-								name: 'settings-not-found',
-								params: { _: to.path.split('/').slice(1) },
-							};
-						}
-					},
-					children: [
-						{
-							name: 'settings-flows-operation',
-							path: ':operationId',
-							component: FlowOperationDetail,
-							props: true,
-						},
-					],
-				},
-			],
+			name: 'settings-ai',
+			path: 'ai',
+			component: AiOverview,
+		},
+		// Flows moved to their own module; keep old links working
+		{
+			path: 'flows/folder/:folder',
+			redirect: (to) => ({ path: `/flows/folders/${to.params.folder}`, query: to.query, hash: to.hash }),
 		},
 		{
+			path: 'flows/:pathMatch(.*)*',
+			redirect: (to) => ({
+				path: ['/flows', ...[to.params.pathMatch].flat().filter(Boolean)].join('/'),
+				query: to.query,
+				hash: to.hash,
+			}),
+		},
+		{
+			name: 'settings-extensions',
 			path: 'extensions',
 			component: Extensions,
 		},
@@ -274,12 +274,34 @@ export default defineModule({
 			],
 		},
 		{
+			name: 'settings-system-logs',
+			path: 'system-logs',
+			component: SystemLogs,
+		},
+		{
+			path: 'mcp-oauth-clients',
+			component: RouterPass,
+			children: [
+				{
+					name: 'settings-mcp-oauth-clients-collection',
+					path: '',
+					component: McpOAuthClientsCollection,
+				},
+				{
+					name: 'settings-mcp-oauth-clients-item',
+					path: ':primaryKey',
+					component: McpOAuthClientsItem,
+					props: true,
+				},
+			],
+		},
+		{
 			name: 'settings-not-found',
 			path: ':_(.+)+',
 			component: NotFound,
 		},
 	],
 	preRegisterCheck: (user) => {
-		return user.role.admin_access === true;
+		return user.admin_access === true;
 	},
 });

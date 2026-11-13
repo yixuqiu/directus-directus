@@ -1,9 +1,8 @@
 import { mount } from '@vue/test-utils';
-import { GlobalMountOptions } from '@/__utils__/types';
 import { beforeAll, expect, test, vi } from 'vitest';
 import { createI18n, I18n } from 'vue-i18n';
-
 import Options from './options.vue';
+import { GlobalMountOptions } from '@/__utils__/types';
 
 let i18n: I18n;
 let global: GlobalMountOptions;
@@ -36,6 +35,7 @@ test('should have days array in firstDayOptions variable', async () => {
 					meta: null,
 				},
 			],
+			colorFields: [],
 		},
 		shallow: true,
 		global,
@@ -43,5 +43,7 @@ test('should have days array in firstDayOptions variable', async () => {
 
 	const expected = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-	expect(wrapper.vm.firstDayOptions.map((option: { text: string; value: number }) => option.text)).toEqual(expected);
+	expect((wrapper.vm as any).firstDayOptions.map((option: { text: string; value: number }) => option.text)).toEqual(
+		expected,
+	);
 });

@@ -1,16 +1,17 @@
+import { mkdir, readFile, rm } from 'node:fs/promises';
+import { Readable } from 'node:stream';
+import { join } from 'path';
+import type { ReadableStream } from 'stream/web';
 import { useEnv } from '@directus/env';
-import { ServiceUnavailableError } from '@directus/errors';
+import { ErrorCode, isDirectusError, ServiceUnavailableError } from '@directus/errors';
 import { EXTENSION_PKG_KEY, ExtensionManifest } from '@directus/extensions';
 import { download, type DownloadOptions } from '@directus/extensions-registry';
 import DriverLocal from '@directus/storage-driver-local';
 import { move, remove } from 'fs-extra';
-import { mkdir, readFile, rm } from 'node:fs/promises';
-import { Readable } from 'node:stream';
 import Queue from 'p-queue';
-import { join } from 'path';
-import type { ReadableStream } from 'stream/web';
 import { extract } from 'tar';
-import { useLogger } from '../../../logger.js';
+import { EXTENSIONS } from '../../../constants.js';
+import { useLogger } from '../../../logger/index.js';
 import { getStorage } from '../../../storage/index.js';
 import { getExtensionsPath } from '../get-extensions-path.js';
 
@@ -21,7 +22,7 @@ export class InstallationManager {
 
 	async install(versionId: string) {
 		const logger = useLogger();
-		const tempDir = join(env['TEMP_PATH'] as string, 'marketplace', versionId);
+		const tempDir = join(env.TEMP_PATH, 'marketplace', versionId);
 		const tmpStorage = new DriverLocal({ root: tempDir });
 
 		try {
@@ -29,11 +30,20 @@ export class InstallationManager {
 
 			const options: DownloadOptions = {};
 
-			if (env['MARKETPLACE_REGISTRY'] && typeof env['MARKETPLACE_REGISTRY'] === 'string') {
-				options.registry = env['MARKETPLACE_REGISTRY'];
+			if (env.MARKETPLACE_REGISTRY) {
+				options.registry = env.MARKETPLACE_REGISTRY;
 			}
 
-			const tarReadableStream = await download(versionId, env['MARKETPLACE_TRUST'] === 'sandbox', options);
+			let tarReadableStream;
+
+			try {
+				tarReadableStream = await download(versionId, env.MARKETPLACE_TRUST === 'sandbox', options);
+			} catch (error) {
+				throw new ServiceUnavailableError(
+					{ service: 'marketplace', reason: 'Could not download the extension' },
+					{ cause: error },
+				);
+			}
 
 			if (!tarReadableStream) {
 				throw new Error(`No readable stream returned from download`);
@@ -63,18 +73,18 @@ export class InstallationManager {
 				throw new Error(`Extension type not found in package.json`);
 			}
 
-			if (env['EXTENSIONS_LOCATION']) {
+			if (env.EXTENSIONS_LOCATION) {
 				// Upload the extension into the configured extensions location
 				const storage = await getStorage();
-				const remoteDisk = storage.location(env['EXTENSIONS_LOCATION'] as string);
+				const remoteDisk = storage.location(env.EXTENSIONS_LOCATION);
 
-				const queue = new Queue({ concurrency: 1000 });
+				const queue = new Queue({ concurrency: EXTENSIONS.STORAGE_MAX_CONCURRENCY });
 
 				for await (const filepath of tmpStorage.list(extractedPath)) {
 					const readStream = await tmpStorage.read(filepath);
 
 					const remotePath = join(
-						env['EXTENSIONS_PATH'] as string,
+						env.EXTENSIONS_PATH,
 						'.registry',
 						versionId,
 						filepath.substring(extractedPath.length),
@@ -84,16 +94,21 @@ export class InstallationManager {
 				}
 
 				await queue.onIdle();
-			} else {
-				// No custom location, so save to regular local extensions folder
-				const dest = join(this.extensionPath, '.registry', versionId);
-				await move(join(tempDir, extractedPath), dest, { overwrite: true });
 			}
+
+			// move to regular local extensions folder
+			const dest = join(this.extensionPath, '.registry', versionId);
+			await move(join(tempDir, extractedPath), dest, { overwrite: true });
 		} catch (err) {
 			logger.warn(err);
 
+			// rethrow marketplace servic unavailable
+			if (isDirectusError(err, ErrorCode.ServiceUnavailable)) {
+				throw err;
+			}
+
 			throw new ServiceUnavailableError(
-				{ service: 'marketplace', reason: 'Could not download and extract the extension' },
+				{ service: 'extensions', reason: 'Failed to extract the extension or write it to storage' },
 				{ cause: err },
 			);
 		} finally {
@@ -102,22 +117,22 @@ export class InstallationManager {
 	}
 
 	async uninstall(folder: string) {
-		if (env['EXTENSIONS_LOCATION']) {
+		if (env.EXTENSIONS_LOCATION) {
 			const storage = await getStorage();
-			const remoteDisk = storage.location(env['EXTENSIONS_LOCATION'] as string);
+			const remoteDisk = storage.location(env.EXTENSIONS_LOCATION);
 
-			const queue = new Queue({ concurrency: 1000 });
+			const queue = new Queue({ concurrency: EXTENSIONS.STORAGE_MAX_CONCURRENCY });
 
-			const prefix = join(env['EXTENSIONS_PATH'] as string, '.registry', folder);
+			const prefix = join(env.EXTENSIONS_PATH, '.registry', folder);
 
 			for await (const filepath of remoteDisk.list(prefix)) {
 				queue.add(() => remoteDisk.delete(filepath));
 			}
 
 			await queue.onIdle();
-		} else {
-			const path = join(this.extensionPath, '.registry', folder);
-			await remove(path);
 		}
+
+		const path = join(this.extensionPath, '.registry', folder);
+		await remove(path);
 	}
 }

@@ -3,6 +3,7 @@ import { version } from 'directus/version';
 import emitter from '../emitter.js';
 import { startServer } from '../server.js';
 import bootstrap from './commands/bootstrap/index.js';
+import cacheClear from './commands/cache/clear.js';
 import count from './commands/count/index.js';
 import dbInstall from './commands/database/install.js';
 import dbMigrate from './commands/database/migrate.js';
@@ -18,6 +19,7 @@ import { loadExtensions } from './load-extensions.js';
 
 export async function createCli(): Promise<Command> {
 	const program = new Command();
+	program.allowExcessArguments();
 
 	await loadExtensions();
 
@@ -76,7 +78,16 @@ export async function createCli(): Promise<Command> {
 		.description('Create a new role')
 		.option('--role <value>', `name for the role`)
 		.option('--admin', `whether or not the role has admin access`)
+		.option('--app', `whether or not the role has app access`)
 		.action(rolesCreate);
+
+	program
+		.command('cache')
+		.command('clear')
+		.description('Clear the data and system caches')
+		.option('--system', 'Clear the system cache only (schema, permissions)')
+		.option('--data', 'Clear the data cache only')
+		.action(cacheClear);
 
 	program.command('count <collection>').description('Count the amount of items in a given collection').action(count);
 
@@ -101,6 +112,10 @@ export async function createCli(): Promise<Command> {
 		.description('Apply a snapshot file to the current database')
 		.option('-y, --yes', `Assume "yes" as answer to all prompts and run non-interactively`)
 		.option('-d, --dry-run', 'Plan and log changes to be applied', false)
+		.option(
+			'--ignoreRules <value>',
+			`Comma-separated list of collections and or fields to ignore. Format: "products.title,reviews" this will ignore applying changes to the title field in the products collection and the entire reviews collection`,
+		)
 		.argument('<path>', 'Path to snapshot file')
 		.action(apply);
 

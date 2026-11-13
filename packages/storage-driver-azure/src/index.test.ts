@@ -1,4 +1,6 @@
-import { BlobServiceClient, StorageSharedKeyCredential, type ContainerClient } from '@azure/storage-blob';
+import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
+import { BlobServiceClient, type ContainerClient, StorageSharedKeyCredential } from '@azure/storage-blob';
 import { normalizePath } from '@directus/utils';
 import { isReadableStream } from '@directus/utils/node';
 import {
@@ -15,9 +17,7 @@ import {
 	randUrl,
 	randWord,
 } from '@ngneat/falso';
-import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
-import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 import { DriverAzure, type DriverAzureConfig } from './index.js';
 
 vi.mock('@directus/utils/node');
@@ -107,7 +107,10 @@ describe('#constructor', () => {
 
 	test('Creates blob service client and sets containerClient', () => {
 		const mockSignedCredentials = {} as StorageSharedKeyCredential;
-		vi.mocked(StorageSharedKeyCredential).mockReturnValueOnce(mockSignedCredentials);
+
+		vi.mocked(StorageSharedKeyCredential).mockImplementationOnce(function () {
+			return mockSignedCredentials;
+		} as unknown as typeof StorageSharedKeyCredential);
 
 		const mockContainerClient = {} as ContainerClient;
 
@@ -115,7 +118,9 @@ describe('#constructor', () => {
 			getContainerClient: vi.fn().mockReturnValue(mockContainerClient),
 		} as unknown as BlobServiceClient;
 
-		vi.mocked(BlobServiceClient).mockReturnValue(mockBlobServiceClient);
+		vi.mocked(BlobServiceClient).mockImplementation(function () {
+			return mockBlobServiceClient;
+		} as unknown as typeof BlobServiceClient);
 
 		const driver = new DriverAzure({
 			containerName: sample.config.containerName,
@@ -135,7 +140,10 @@ describe('#constructor', () => {
 	describe('Allows overriding endpoint with optional setting', () => {
 		test('Creates blob service client and sets containerClient', () => {
 			const mockSignedCredentials = {} as StorageSharedKeyCredential;
-			vi.mocked(StorageSharedKeyCredential).mockReturnValueOnce(mockSignedCredentials);
+
+			vi.mocked(StorageSharedKeyCredential).mockImplementationOnce(function () {
+				return mockSignedCredentials;
+			} as unknown as typeof StorageSharedKeyCredential);
 
 			const mockContainerClient = {} as ContainerClient;
 
@@ -143,7 +151,9 @@ describe('#constructor', () => {
 				getContainerClient: vi.fn().mockReturnValue(mockContainerClient),
 			} as unknown as BlobServiceClient;
 
-			vi.mocked(BlobServiceClient).mockReturnValue(mockBlobServiceClient);
+			vi.mocked(BlobServiceClient).mockImplementation(function () {
+				return mockBlobServiceClient;
+			} as unknown as typeof BlobServiceClient);
 
 			const driver = new DriverAzure({
 				containerName: sample.config.containerName,
@@ -227,19 +237,19 @@ describe('#read', () => {
 	});
 
 	test('Calls download with offset if start range is provided', async () => {
-		await driver.read(sample.path.input, { start: sample.range.start });
+		await driver.read(sample.path.input, { range: { start: sample.range.start } });
 
 		expect(mockDownload).toHaveBeenCalledWith(sample.range.start, undefined);
 	});
 
 	test('Calls download with count if end range is provided', async () => {
-		await driver.read(sample.path.input, { end: sample.range.end });
+		await driver.read(sample.path.input, { range: { end: sample.range.end } });
 
 		expect(mockDownload).toHaveBeenCalledWith(undefined, sample.range.end + 1);
 	});
 
 	test('Calls download with offset and count if start and end ranges are provided', async () => {
-		await driver.read(sample.path.input, sample.range);
+		await driver.read(sample.path.input, { range: sample.range });
 
 		expect(mockDownload).toHaveBeenCalledWith(sample.range.start, sample.range.end - sample.range.start + 1);
 	});
@@ -386,6 +396,17 @@ describe('#exists', () => {
 
 		expect(mockExists).toHaveBeenCalled();
 		expect(result).toBe(true);
+	});
+
+	/**
+	 * The SDK only answers false for a missing blob, so a failed lookup has to keep travelling. Reporting
+	 * it as a missing file makes callers act on a wrong answer.
+	 */
+	test('Throws if the lookup failed', async () => {
+		const error = new Error('Service unavailable');
+		mockExists.mockRejectedValue(error);
+
+		await expect(driver.exists(sample.path.input)).rejects.toThrowError(error);
 	});
 });
 

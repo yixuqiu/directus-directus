@@ -1,4 +1,75 @@
 ---
+## Be aware:
+#Due to the way this is imported, JavaScript reserved words, including "delete", "private",
+#"void", etc are stripped out. See
+#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/pluginutils/src/makeLegalIdentifier.ts#L4
+#and
+#https://github.com/rollup/plugins/blob/8748b8cd3bbab3c5ac6190556930219f19060e63/packages/yaml/src/index.js#L45
+#Illegal words:
+#'break', 'case', 'class', 'catch', 'const', 'continue', 'debugger', 'default', 'delete', 'do',
+#'else', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof',
+#'let', 'new', 'return', 'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void',
+#'while', 'with', 'yield', 'enum', 'await', 'implements', 'package', 'protected', 'static',
+#'interface', 'private', 'public', 'arguments', 'Infinity', 'NaN', 'undefined', 'null', 'true',
+#'false', 'eval', 'uneval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt', 'decodeURI',
+#'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'escape', 'unescape', 'Object',
+#'Function', 'Boolean', 'Symbol', 'Error', 'EvalError', 'InternalError', 'RangeError',
+#'ReferenceError', 'SyntaxError', 'TypeError', 'URIError', 'Number', 'Math', 'Date', 'String',
+#'RegExp', 'Array', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array',
+#'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'Map', 'Set', 'WeakMap', 'WeakSet',
+#'SIMD', 'ArrayBuffer', 'DataView', 'JSON', 'Promise', 'Generator', 'GeneratorFunction', 'Reflect',
+#'Proxy', 'Intl'
+about: Tietoja
+directus_mscl: Directus MSCL-1.0-GPL
+data_processing_agreement: Tiedon Käsittely Sopimus
+contact_support: ota yhteyttä tukeen
+setup_welcome: Tervetuloa Directukseen
+setup_info: Luodaan järjestelmänvalvojatilisi ja saat projektisi valmiiksi ja käyntiin.
+setup_license_key_notice: >
+  Jos sinulla on lisenssiavain syötä se alla avataksesi koko tilauksesi. Vaatimukset täyttäviä yrityksiä alle $5M vuosittaiset tulot voivat olla oikeutettuja meidän {oig}.
+setup_save_accept_license: >
+  Tallentamalla, hyväksyt {directusMscl} ja {privacyPolicy} ehdot.
+setup_license_invalid: >
+  Lisenssi ei kelpaa. {contactSupport} Ratkaistaksesi tämän ongelman.
+setup_license_invalid_format: Virheellinen lisenssiavaimen muoto.
+setup_accept_license: Hyväksyn ehdot {directusMscl} ja {privacyPolicy}
+setup_marketing_emails: Lähetä minulle tuotepäivitykset ja julkaisutiedot
+setup_launch: Käynnistä Directus
+setup_license_title: Määritä lisenssi
+license_onboarding_title: Onko sinulla lisenssiavain?
+license_onboarding_desc: >
+  Syötä se alle avataksesi koko suunnitelmasi. Yritykset, joiden vuotuinen liikevaihto on alle 5 miljoonaa dollaria, voivat olla oikeutettuja {oig}.
+project_usage: Mihin käytät Directusta?
+project_usage_personal: Henkilökohtainen / sivuprojekti
+project_usage_commercial: Yritys / kaupallinen
+project_usage_community: Avoin lähdekoodi / yhteisö
+org_name: Organisaation Nimi
+org_name_placeholder: Acme Inc.
+license_key_option: Minulla on lisenssiavain
+license_key_option_desc: 'OIG, Tiimi tai Enterprise palvelupaketti'
+core_option: Käytän Core-tilausta
+core_option_desc: Ilmainen, avainta ei tarvita
+remind_later: Muistuta myöhemmin
+remind_next_login: Muistutamme sinua seuraavalla kerralla, kun kirjaudut sisään
+open_innovation_grant: Avoimen innovaation apuraha
+setup_project: Määritä projekti
+enter_license_key: Syötä lisenssiavaimesi
+license_valid: Lisenssi voimassa
+plan_prefix: 'Tilaus: {plan}'
+license_key: Lisenssiavain
+no_license_key: Eikö sinulla ole lisenssiavainta?
+get_license_key: Hanki lisenssiavain
+expires_on: Erääntyy
+environment: Ympäristö
+production: Tuotanto
+non_production: Ei-tuotanto
+skip: Ohita
+continue: Jatka
+first_name: Etunimi
+last_name: Sukunimi
+admin_email: Ylläpitäjän sähköposti
+owner_email: Omistajan sähköposti
+email_address: Sähköpostiosoite
 identifier: Tunniste
 avatar: Avatari
 application: Sovellus
@@ -7,25 +78,53 @@ method: Metodi
 published: Julkaistu
 draft: Luonnos
 archived: Arkistoitu
+not_archived: Ei arkistoitu
+marketplace: Kauppapaikka
+extensions: Laajennukset
+skip_link_nav: Siirry navigaatioon
+skip_link_module_nav: Siirry moduulin navigointiin
+skip_link_main: Siirry pääsisältöön
+skip_link_sidebar: Siirry sivupalkkiin
 modules: Moduulit
 module_bar: Moduulipalkki
 logs: Lokit
+unknown: Tuntematon
 reset_width: Palauta leveys
 tile_size: Neliön koko
 edit_field: Muokkaa kenttää
 conditions: Ehdot
 location: Sijainti
+collection_names_are_case_sensitive: Kokoelmien nimissä kirjainkoko on merkitsevä
 condition_rules: Ehdot
 input: Syöte
+invalid_input: Virheellinen syöte
+invalid_file_type: Virheellinen tiedostotyyppi
+invalid_files_selected: 'Ei virheellisiä tietoja | Virheellinen tiedosto valittu | {count} virheellisiä tiedostoja valittu'
+files_wrong_type: 'Tiedostoissa {files} on virheellinen tyyppi, oletetaan {expected} tyyppiä.'
+files_are_empty: 'Seuraavat tiedostot ovat tyhjiä eikä niity voida ladata: {files}'
+not_a_number: Ei ole numero
+invalid_range_min: Arvo on alle minimin {value}
+invalid_range_max: Arvo ylittää maksimin {value}
 maps: Kartat
 switch_user: Vaihda käyttäjää
+item_deleted: Muokkaamasi kohde on poistettu.
 item_creation: Kohteen luonti
 item_revision: Kohteen versio
+previous_revision: Edellinen versio
+latest_revision: Viimeisin versio
+comparing_to: Vertaillaan
+compare_to_latest_to_restore: Vertaa viimeisimpään harkitaksesi tämän version palauttamista
+select_earlier_revision_to_restore: Valitse aikaisempi versio harkitaksesi sen palauttamista
 enter_a_name: Syötä nimi...
 duplicate_field: Monista kenttä
 half_width: Puolileveä
 full_width: Täysleveä
 group: Ryhmä
+popular: Suosittu
+recent: Äskettäinen
+previous: Edellinen
+latest: Viimeisin
+updated: Päivitetty
 export_items: Vie kohteet
 and: Ja
 or: Tai
@@ -43,8 +142,10 @@ hook: Koukku
 fill_width: Täysleveä
 field_name_translations: Kentän nimen käännökset
 enter_password_to_enable_tfa: Anna salasanasi ottaaksesi käyttöön kaksivaiheisen todennuksen
+cancel_setup: Peruuta asennus
 add_field: Lisää kenttä
 role_name: Roolin nimi
+policy_name: Käytännön nimi
 branch: Haara
 leaf: Lehti
 indeterminate: Määrittelemätön
@@ -62,10 +163,14 @@ requires_value: Vaatii arvon
 create_preset: Luo esiasetus
 create_panel: Luo paneeli
 create_role: Luo rooli
+create_policy: Luo käytäntö
 create_user: Luo käyttäjä
 message: Viesti
 delete_panel: Poista paneeli
-create_webhook: Luo webhook
+create_custom_translation: Luo mukautettu käännös
+edit_custom_translation: Muokkaa mukautettua käännöstä
+no_custom_translations: Ei mukautettuja käännöksiä
+no_custom_translations_copy: Mukautettuja käännöksiä ei vielä ole.
 invite_users: Kutsu käyttäjiä
 invite: Kutsu
 email_already_invited: Sähköposti "{email}" on jo kutsuttu
@@ -77,11 +182,29 @@ connection_good: Hyvä yhteys
 connection_fair: Hyvä yhteys
 connection_poor: Huono yhteys
 primary: Ensisijainen
+download_folder: Lataa kansio
 rename_folder: Nimeä kansio uudelleen
 delete_folder: Poista kansio
 prefix: Etuliite
 suffix: Jälkiliite
-promote_version_preview: Esikatselu
+keep: Säilytä
+version: Versio
+version_key: Version avain
+version_name: Version nimi
+your_version: Sinun versiosi
+switch_version: Vaihda versiota
+switch_version_copy: Oletko varma että haluat vaihtaa "{version}" versioon? Tallentamattomat muutokset menetetään.
+create_version: Luo versio
+rename_version: Nimeä versio uudelleen
+reserved_version_key: 'Versioavain "{key}" on varattu, eikä sitä voi käyttää.'
+compare_version: Vertaa versiota
+save_version: Tallenna versio
+publish: Julkaise
+version_create_item_less: Versiot voidaan luoda vain kerran, kun luonnosversio on julkaistu
+apply: Käytä
+discard: Hylkää
+select_all_differences: Valitse kaikki erot
+show_differences_only: Näytä vain erot
 reset_bookmark: Nollaa kirjanmerkki
 update_bookmark: Päivitä kirjanmerkki
 delete_bookmark: Poista kirjanmerkki
@@ -200,7 +323,6 @@ field_in_collection: '{field} ({collection})'
 reset_page_preferences: Nollaa sivun asetukset
 hidden_field: Piilotettu kenttä
 hidden_on_detail: Piilotettu yksityiskohdista
-disabled_editing_value: Poista arvon muokkaus käytöstä
 key: Avain
 alias: Alias
 bigInteger: Suuri kokonaisluku
@@ -306,6 +428,7 @@ confirm_revert_body: Tämä palauttaa kohteen valittuun tilaan.
 display: Näyttö
 settings_update_success: Asetukset päivitetty
 title: Otsikko
+subtitle: Alaotsikko
 revision_delta_created: Luotu
 revision_delta_created_externally: Luotu ulkoisesti
 revision_delta_updated: 'Päivitetty 1 kenttä | Päivitetty {count} kenttää'
@@ -331,6 +454,7 @@ related_collection: Liittyvät kokoelmat
 related_collections: Liittyvät kokoelmat
 translations_collection: Käännöskokoelma
 languages_collection: Kielten kokoelma
+translations_preview_collections: Kokoelmat
 import_data_input_placeholder: CSV tai JSON...
 import_data_button: Aloita tuonti
 import_data_indeterminate: Tuodaan tietoja...
@@ -367,6 +491,7 @@ functions:
   minute: Minuutti
   second: Sekunti
   count: Määrä
+  json: JSON
 date-fns_date: PPP
 date-fns_time: 'h:mm:ss a'
 date-fns_time_no_seconds: 'HH:mm'
@@ -467,8 +592,6 @@ file_count: 'Ei tiedostoja | Yksi tiedosto | {count} tiedostoa'
 no_files_copy: Täällä ei ole tiedostoja.
 user_count: 'Ei käyttäjiä | Yksi käyttäjä | {count} käyttäjää'
 no_users_copy: Tässä roolissa ei ole vielä käyttäjiä.
-webhooks_count: 'Ei webhookkeja | Yksi webhookki | {count} webhookkia'
-no_webhooks_copy: Webhookeja ei ole vielä määritelty. Aloita luomalla sellainen alapuolella.
 no_notifications: Ei ilmoituksia
 no_notifications_copy: Olet perillä kaikesta!
 activity_log: Tapahtumaloki
@@ -479,7 +602,6 @@ no_collections: Ei kokoelmia
 create_collection: Luo kokoelma
 no_collections_copy_admin: Sinulla ei ole vielä kokoelmia. Aloita painamalla alla olevaa painiketta.
 no_collections_copy: Sinulla ei ole vielä kokoelmia. Ota yhteyttä järjestelmänvalvojaan.
-relationship_not_setup: Suhdetta ei ole määritetty oikein
 display_template_not_setup: Näyttöpohjan asetus on konfiguroitu väärin
 collection_field_not_setup: Kokoelmakentän asetus on konfiguroitu virheellisesti
 select_a_collection: Valitse kokoelma
@@ -497,7 +619,6 @@ action: Toiminto
 ip_address: IP-osoite
 user_agent: Asiakasohjelma
 origin: Alkuperä
-webhooks: Webhookit
 decimals: Desimaalit
 value_decimals: Arvon desimaalit
 min_value: Minimiarvo
@@ -571,7 +692,6 @@ errors:
   VALUE_OUT_OF_RANGE: Arvo on alueen ulkopuolella
   VALUE_TOO_LONG: Arvo on liian pitkä
 security: Turvallisuus
-value_hashed: Arvo tiivistetty turvallisesti
 bookmark_name: Kirjanmerkin nimi...
 create_bookmark: Luo kirjanmerkki
 edit_bookmark: Muokkaa kirjanmerkkiä
@@ -581,11 +701,9 @@ cannot_edit_global_bookmarks: Yleisten kirjanmerkkien muokkaus epäonnistui
 bookmarks: Kirjainmerkit
 presets: Esiasetukset
 unexpected_error: Odottamaton virhe
-unexpected_error_copy: Tapahtui odottamaton virhe. Yritä myöhemmin uudelleen.
 copy_details: Kopioi tiedot
 no_app_access: Ei sovelluspääsyä
 no_app_access_copy: Tällä käyttäjällä ei ole oikeutta käyttää järjestelmänvalvojasovellusta.
-password_reset_sent: Olemme lähettäneet salasanan palautuslinkin, mikäli omaat tilin
 password_reset_successful: Salasanan palauttaminen onnistui
 back: Takaisin
 filter: Suodatin
@@ -606,10 +724,6 @@ make_collection_hidden: Tee kokoelma piilotettu
 make_folder_visible: Näytä kansio
 make_folder_hidden: Piilota kansio
 goto_collection_content: Näytä sisältö
-start_end_of_count_items: '{start}-{end} / {count} kohdetta'
-start_end_of_count_filtered_items: '{start}-{end} / {count} suodatettua kohdetta'
-one_item: '1 kohde'
-one_filtered_item: '1 suodatettu kohde'
 delete_collection_are_you_sure: >-
   Haluatko poistaa kokoelman "{collection}"? Kokoelma ja kaikki siihen kuuluvat kohteet poistetaan pysyvästi.
 delete_folder_are_you_sure: Haluatko poistaa kansion "{folder}"? Kansion kansiot ja kokoelmat siirretään ylimmälle tasolle.
@@ -668,6 +782,7 @@ operators:
   nintersects: Ei leikkaa
   intersects_bbox: Leikkaa rajaavaa laatikkoa
   nintersects_bbox: Ei leikkaa rajaavaa laatikkoa
+  json: JSON
 loading: Ladataan...
 drop_to_upload: Pudota ladataksesi
 item: Kohde
@@ -691,7 +806,6 @@ create_item: Luo kohde
 display_template: Esitysmalli
 language_display_template: Kielen näyttömalli
 translations_display_template: Käännösten näyttömalli
-n_items_selected: 'Ei valittuja kohteita | 1 valittu kohde | {n} valittua kohdetta'
 per_page: Per sivu
 all_files: Kaikki Tiedostot
 my_files: Omat tiedostot
@@ -735,8 +849,6 @@ label: Tunniste
 flows: Toiminnot
 flow: Vuo
 select_a_flow: Valitse Vuo
-run_flow_on_current_edited_confirm: Tämä kohde voidaan päivittää tällä Vuolla, oletko varma, että haluat suorittaa Vuon?
-run_flow_success: Vuon "{flow}" suoritus onnistui
 trigger: Laukaisija
 trigger_options: Liipaisun asetukset
 view_trigger: Näytä liipaisin
@@ -761,6 +873,14 @@ create_operation: Luo toiminto
 edit_operation: Muokkaa toimintoa
 code: Koodi
 insights: Yleiskatsaus
+deployment:
+  provider:
+    settings:
+      delete_confirm: Tämä toiminto on pysyvä eikä sitä voi peruuttaa. Oletko varma, että haluat jatkaa?
+    run:
+      cancel_confirm: Tämä toiminto on pysyvä eikä sitä voi peruuttaa. Oletko varma, että haluat jatkaa?
+  target_value:
+    preview: Esikatselu
 dashboard: Kojelauta
 panel: Paneeli
 panel_options: Paneelin asetukset
@@ -810,8 +930,6 @@ tooltip: Työkaluvihje
 tooltip_placeholder: Syötä työkaluvihje...
 unlimited: Rajoittamaton
 open_link_in: Avaa linkki
-new_tab: Uusi välilehti
-current_tab: Nykyinen välilehti
 save_image: Tallenna kuva
 save_media: Tallenna media
 wysiwyg_options:
@@ -833,12 +951,15 @@ wysiwyg_options:
   bullist: Merkitty lista
   numlist: Numeroitu luettelo
   hr: Vaakaviivain
+  insertdatetime_date: Päivämäärä
+  insertdatetime_time: Aika
   link: Lisää/Muokkaa Linkki
   unlink: Poista linkki
   media: Lisää/Muokkaa Mediaa
   image: Lisää/Muokkaa kuva
   copy: Kopioi
   cut: Leikkaa
+  default: Oletus
   paste: Liitä
   heading: Otsake
   h1: Otsake 1
@@ -861,6 +982,8 @@ wysiwyg_options:
   source_code: Muokkaa lähdekoodia
   fullscreen: Koko näyttö
   directionality: Suuntaus
+  ltr: Vasemmalta oikealle
+  rtl: Oikealta vasemmalle
 dropdown: Pudotusvalikko
 choices: Valinnat
 choices_option_configured_incorrectly: Valinnat määritetty väärin
@@ -877,8 +1000,21 @@ editing_in_batch: 'Muokataan {count} kohdetta erässä'
 no_options_available: Ei valintoja saatavilla
 settings_data_model: Tietorakenne
 settings_project: Asetukset
-settings_webhooks: Webhookit
-settings_flows: Toiminnot
+licensing:
+  unlimited: Rajoittamaton
+  addon_update: Päivitä
+  resolve_continue: Jatka
+  resolve_show_n_more: 'Näytä {count} lisää'
+  resolve_section_flows: Toiminnot
+  resolve_sso_admin_email: Sähköpostiosoite
+  resolve_sso_admin_password: Salasana
+  key: Lisenssiavain
+  entitlements:
+    collections: Kokoelmat
+    flows: Toiminnot
+  badge:
+    oig: Avoimen innovaation apuraha
+    non_prod: Ei-tuotanto
 settings_presets: Kirjainmerkit
 settings_translations: Käännökset
 one_or_more_options_are_missing: Yksi tai useampi vaihtoehto puuttuu
@@ -902,36 +1038,6 @@ discard_changes_copy: Oletko varma, että haluat hylätä kaikki tehdyt muutokse
 show_x_axis: Näytä X-akseli
 show_y_axis: Näytä Y-akseli
 keep_editing: Jatka muokkausta
-page_help_collections_overview: '**Kokoelmien yleiskatsaus** — Luettelo kaikista kokoelmista, joihin sinulla on pääsy.'
-page_help_collections_collection: >-
-  **Selaa kohteita** — Listaa kaikki {collection} kohdetta, joihin sinulla on pääsy. Mukauta asettelua, suodattimia ja lajittelua muokkaamaan näkymääsi ja jopa tallenna näiden eri kokoonpanojen kirjanmerkkejä nopeaa käyttöä varten.
-page_help_collections_item: >-
-  **Kohteen yksityiskohdat** — Lomake tämän kohteen katselua ja hallintaa varten. Tämä sivupalkki sisältää myös täyden historian uudistuksia ja upotettuja kommentteja.
-page_help_activity_collection: >-
-  **Selaa aktiviteettejä** — Kattava luettelo kaikesta käyttäjän järjestelmästä ja sisällöstä.
-page_help_docs_global: >-
-  **Dokumentaation yleiskatsaus** — Dokumentit on räätälöity erityisesti tämän projektin versioon ja kaavioon.
-page_help_files_collection: >-
-  **Tiedostokirjasto** — Listaa kaikki tiedostoassetit, jotka on ladattu tähän projektiin. Mukauta asettelua, suodattimia ja lajittelua muokkaamaan näkymääsi ja jopa tallenna näiden eri kokoonpanojen kirjanmerkkejä nopeaa käyttöä varten.
-page_help_files_item: >-
-  **Tiedoston yksityiskohdat** — Lomake tiedostojen metatietojen hallintaan, alkuperäisen assettin muokkaamiseen ja käyttöoikeuksien päivittämiseen.
-page_help_settings_datamodel_collections: >-
-  **Tietomalli: kokoelmat** — Luettelee kaikki saatavilla olevat kokoelmat. Tämä sisältää näkyvät, piilotetut ja järjestelmäkokoelmat sekä hallitsemattomat tietokantataulut, jotka voidaan lisätä.
-page_help_settings_datamodel_fields: >-
-  **Tietomalli: kokoelma** — Lomake tämän kokoelman ja sen kenttien hallintaa varten.
-page_help_settings_roles_collection: '**Selaa rooleja** — Listaa Admin, Julkiset ja mukautetut käyttäjäroolit.'
-page_help_settings_roles_item: "**Roolin yksityiskohdat** — Hallitse roolin käyttöoikeuksia ja muita asetuksia."
-page_help_settings_presets_collection: >-
-  **Selaa esiasetuksia** — Listaa kaikki projektin esiasetukset, mukaan lukien käyttäjät, roolit ja maailmanlaajuiset kirjanmerkit sekä oletusnäkymät.
-page_help_settings_presets_item: >-
-  **Esiasetuksen yksityiskohdat** — Lomake kirjanmerkkien ja oletuskokoelmien esiasetusten hallintaan.
-page_help_settings_webhooks_collection: '**Selaa webhookkeja** — Listaa kaikki projektin webhookit.'
-page_help_settings_webhooks_item: '**Webhookkien yksityiskohdat** — Lomake projektin webhookkien luomiseen ja hallintaan.'
-page_help_users_collection: '**Käyttäjähakemisto** — Listaa kaikki järjestelmän käyttäjät tässä projektissa.'
-page_help_users_item: >-
-  **Käyttäjätieto** — Hallitse tilitietojasi tai tarkastele muiden käyttäjien tietoja.
-page_help_insights_overview: '**Yleiskatsaus** — Luettelo kojelaudoista, joihin sinulla on pääsy.'
-page_help_insights_dashboard: '**Kojelauta** — Työtila yhden tai useamman paneelin hallintaan'
 activity_feed: Aktiviteettisyöte
 add_new: Lisää uusi
 create_new: Luo uusi
@@ -942,6 +1048,7 @@ batch_delete_confirm: >-
   Kohteita ei ole valittu | Oletko varma, että haluat poistaa tämän kohteen? Tätä toimintoa ei voi perua. | Oletko varma, että haluat poistaa nämä {count} kohteet? Tätä toimintoa ei voi perua.
 cancel: Peruuta
 no_upscale: Älä skaalaa kuvia isommaksi
+source_registry: Kauppapaikka
 collection: Kokoelma
 collections: Kokoelmat
 content: Sisältö
@@ -959,7 +1066,6 @@ directus_collection:
   directus_sessions: Käyttäjän istunnon tiedot
   directus_settings: Projektin konfiguraation asetukset
   directus_users: Alustan järjestelmäkäyttäjät
-  directus_webhooks: Konfiguraatio tapahtumapohjaisille HTTP-pyynnöille
 fields:
   directus_activity:
     item: Kohteen ensisijainen avain
@@ -976,6 +1082,7 @@ fields:
     collection: Kokoelma
     icon: Kuvake
     note: Muistiinpano
+    status: Tila
     color: Väri
     display_template: Esitysmalli
     hidden: Piilotettu
@@ -1067,6 +1174,7 @@ fields:
     transformations_all: Salli kaikki muutokset
     transformations_none: Poista muunnokset käytöstä
     transformations_presets: Rajoita muunnoksia allaoleviin esiasetuksiin
+    ai_header_name: Ylätunniste
   directus_shares:
     name: Nimi
     role: Rooli
@@ -1083,23 +1191,10 @@ fields:
     name: Roolin nimi
     icon: Roolin kuvake
     description: Kuvaus
-    app_access: Sovelluspääsy
-    admin_access: Ylläpitäjän pääsy
-    ip_access: IP-pääsy
-    enforce_tfa: Vaadi 2FA
     users: Käyttäjät roolissa
-    module_list: Moduulien navigointi
-  directus_webhooks:
-    name: Nimi
-    method: Metodi
-    status: Tila
-    data: Tiedot
-    header: Ylätunniste
-    value: Arvo
-    headers: Pyynnön otsikkotiedot
-    triggers: Laukaisijat
-    actions: Toiminnot
-    collections: Kokoelmat
+  directus_policies:
+    name: Käytännön nimi
+    description: Kuvaus
 field_options:
   directus_settings:
     project_name_placeholder: Oma projekti...
@@ -1182,19 +1277,6 @@ field_options:
     status_dropdown_suspended: Keskeytetty
     status_dropdown_archived: Arkistoitu
     token: Syötä suojatun pääsyn tunniste...
-  directus_webhooks:
-    status_options_active: Aktiivinen
-    status_options_inactive: Ei käytössä
-    data_label: Lähetä tapahtuman tiedot
-    triggers_divider: Laukaisijat
-    actions_create: Luo
-    actions_update: Päivitä
-    actions_delete: Poista
-    actions_login: Kirjaudu
-    headers:
-      header: Otsikko
-      value: Arvo
-      add: Lisää otsikko
 no_fields_in_collection: 'Kokoelmassa "{collection}" ei ole vielä kenttiä'
 no_value: Ei arvoa
 do_nothing: Älä tee mitään
@@ -1210,14 +1292,32 @@ inline: Rivitetty
 comment: Kommentti
 live_preview:
   new_window: Avaa uudessa ikkunassa
+ai:
+  input: Syöte
+  unknown: Tuntematon
+  items: Kohteet
+  content: Sisältö
+  settings: Asetukset
+  tool_approval:
+    disabled: Pois käytöstä
+  ask_user_submit: Lähetä
+  ask_user_next: Seuraava
+ai_tools:
+  items: Kohteet
+  files: Tiedostot
+  flows: Toiminnot
+  schema: Rakenne
+  collections: Kokoelmat
+mcp_prompts_collection_schema:
+  messages_role_user: Käyttäjänimi
 relational_triggers: Relatiiviset käynnistimet
 referential_action_no_action: Estä poisto
 choose_action: Valitse toiminto
 continue_label: Jatka
 editing_role: '{role} rooli'
-creating_webhook: Luodaan webhook
 default_label: Oletus
 delete_label: Poista
+discard_label: Hylkää
 delete_are_you_sure: >-
   Tämä toiminto on pysyvä eikä sitä voi peruuttaa. Oletko varma, että haluat jatkaa?
 delete_field_are_you_sure: >-
@@ -1275,7 +1375,6 @@ translation_placeholder: Syötä käännös...
 value: Arvo
 view_project: Näytä projekti
 report_error: Raportoi virhe
-start: Aloita
 table: Taulukko
 list: Lista
 interfaces:
@@ -1299,10 +1398,10 @@ interfaces:
     first_opened: Ensimmäinen avattuna
     all_opened: Kaikki avattuna
     accordion_mode: Haitarin tila
+  group-tabs:
+    fill_width: Täysleveä
   presentation-links:
-    presentation-links: Painikelinkit
-    links: Linkit
-    description: Muokattavissa olevat linkkipainikkeet dynaamisten URL:ien avaamiseen
+    presentation-links: Painikkeet
     style: Tyyli
     primary: Ensisijainen
     link: Linkit
@@ -1415,6 +1514,8 @@ interfaces:
     description: Syötä ja esikatsele markdownia
     edit: Muokkaa
     preview: Esikatselu
+    default_view: Oletusnäkymä
+    default_view_preview: Esikatselu
     customSyntax: Mukautetut lohkot
     customSyntax_label: Lisää mukautettuja syntaksityyppejä
     customSyntax_add: Lisää mukautettu syntaksi
@@ -1459,6 +1560,7 @@ interfaces:
     sort: Järjestä
     field_note_placeholder: Syötä kentän muistiinpano...
     interface_group: Liittymän asetukset
+    edit_mode_inline: Rivitetty
   slider:
     slider: Liukusäädin
     description: Valitse numero käyttäen liukusäädintä
@@ -1523,8 +1625,8 @@ interfaces:
     wysiwyg: WYSIWYG
     description: Rikastekstieditori HTML-sisällön kirjoitukseen
     toolbar: Työkalupalkki
+    extensions: Laajennukset
     custom_formats: Mukautetut muodot
-    options_override: Valintojen ohitus
     folder_note: Ladattujen tiedostojen kansio. Ei vaikuta olemassa oleviin tiedostoihin.
   input-block-editor:
     tools: Työkalupalkki
@@ -1555,6 +1657,9 @@ interfaces:
     start_closed: Aloita suljettuna
   system-token:
     system-token: Token
+  header:
+    header: Ylätunniste
+    links: Linkit
 displays:
   translations:
     translations: Käännökset
@@ -1697,6 +1802,7 @@ layouts:
     crop: Rajaa
     advanced: Lisäasetukset
 both: Molemmat
+start: Aloita
 panels:
   metric:
     name: Metrinen
@@ -1755,3 +1861,6 @@ fonts:
   bold: Lihavoitu
   italic: Kursiivi
   auto: Automaattinen
+license_banner:
+  remind_later: Muistuta myöhemmin
+set_to_now: Aseta olemaan nyt

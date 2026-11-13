@@ -1,15 +1,8 @@
 import type { Item, Query } from '@directus/types';
+import { WebSocketMessage } from '@directus/types';
 import { z } from 'zod';
 
 const zodStringOrNumber = z.union([z.string(), z.number()]);
-
-export const WebSocketMessage = z
-	.object({
-		type: z.string(),
-		uid: zodStringOrNumber.optional(),
-	})
-	.passthrough();
-export type WebSocketMessage = z.infer<typeof WebSocketMessage>;
 
 export const WebSocketResponse = z.discriminatedUnion('status', [
 	WebSocketMessage.extend({
@@ -48,13 +41,24 @@ export const WebSocketSubscribeMessage = z.discriminatedUnion('type', [
 		collection: z.string(),
 		event: z.union([z.literal('create'), z.literal('update'), z.literal('delete')]).optional(),
 		item: zodStringOrNumber.optional(),
-		query: z.custom<Query>().optional(),
+		query: z.record(z.string(), z.any()).optional(),
 	}),
 	WebSocketMessage.extend({
 		type: z.literal('unsubscribe'),
 	}),
 ]);
 export type WebSocketSubscribeMessage = z.infer<typeof WebSocketSubscribeMessage>;
+
+export const WebSocketLogsMessage = z.union([
+	z.object({
+		type: z.literal('subscribe'),
+		log_level: z.string(),
+	}),
+	WebSocketMessage.extend({
+		type: z.literal('unsubscribe'),
+	}),
+]);
+export type WebSocketLogsMessage = z.infer<typeof WebSocketLogsMessage>;
 
 const ZodItem = z.custom<Partial<Item>>();
 
@@ -96,19 +100,19 @@ export const WebSocketEvent = z.discriminatedUnion('action', [
 	z.object({
 		action: z.literal('create'),
 		collection: z.string(),
-		payload: z.record(z.any()).optional(),
+		payload: z.record(z.string(), z.any()).optional(),
 		key: zodStringOrNumber,
 	}),
 	z.object({
 		action: z.literal('update'),
 		collection: z.string(),
-		payload: z.record(z.any()).optional(),
+		payload: z.record(z.string(), z.any()).optional(),
 		keys: z.array(zodStringOrNumber),
 	}),
 	z.object({
 		action: z.literal('delete'),
 		collection: z.string(),
-		payload: z.record(z.any()).optional(),
+		payload: z.record(z.string(), z.any()).optional(),
 		keys: z.array(zodStringOrNumber),
 	}),
 ]);

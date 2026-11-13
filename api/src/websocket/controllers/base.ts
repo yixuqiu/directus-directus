@@ -1,39 +1,40 @@
+import type { Server as httpServer, IncomingMessage } from 'http';
+import { randomUUID } from 'node:crypto';
+import type internal from 'stream';
+import { parse } from 'url';
 import { useEnv } from '@directus/env';
 import { InvalidProviderConfigError, TokenExpiredError } from '@directus/errors';
 import type { Accountability } from '@directus/types';
-import { parseJSON, toBoolean } from '@directus/utils';
-import type { IncomingMessage, Server as httpServer } from 'http';
-import { randomUUID } from 'node:crypto';
+import { WebSocketMessage } from '@directus/types';
+import { parseJSON } from '@directus/utils';
+import cookie from 'cookie';
 import type { RateLimiterAbstract } from 'rate-limiter-flexible';
-import type internal from 'stream';
-import { parse } from 'url';
-import WebSocket, { WebSocketServer } from 'ws';
+import WebSocket, { type Server, WebSocketServer } from 'ws';
 import { fromZodError } from 'zod-validation-error';
 import emitter from '../../emitter.js';
-import { useLogger } from '../../logger.js';
+import { getLicenseManager } from '../../license/manager.js';
+import { useLogger } from '../../logger/index.js';
+import { createDefaultAccountability } from '../../permissions/utils/create-default-accountability.js';
 import { createRateLimiter } from '../../rate-limiter.js';
-import { getAccountabilityForToken } from '../../utils/get-accountability-for-token.js';
+import { getConfigFromEnv } from '../../utils/get-config-from-env.js';
+import { getIPFromReq } from '../../utils/get-ip-from-req.js';
+import { isUnauthenticated } from '../../utils/is-unauthenticated.js';
 import { authenticateConnection, authenticationSuccess } from '../authenticate.js';
-import { WebSocketError, handleWebSocketError } from '../errors.js';
-import { AuthMode, WebSocketAuthMessage, WebSocketMessage } from '../messages.js';
-import type { AuthenticationState, UpgradeContext, WebSocketClient } from '../types.js';
-import { getExpiresAtForToken } from '../utils/get-expires-at-for-token.js';
+import { handleWebSocketError, WebSocketError } from '../errors.js';
+import { AuthMode, WebSocketAuthMessage } from '../messages.js';
+import type { AuthenticationState, UpgradeContext, WebSocketAuthentication, WebSocketClient } from '../types.js';
+import { isOriginAllowed } from '../utils/is-origin-allowed.js';
 import { getMessageType } from '../utils/message.js';
 import { waitForAnyMessage, waitForMessageType } from '../utils/wait-for-message.js';
-import { registerWebSocketEvents } from './hooks.js';
-import cookie from 'cookie';
 
 const TOKEN_CHECK_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
 const logger = useLogger();
 
 export default abstract class SocketController {
-	server: WebSocket.Server;
+	server: Server;
 	clients: Set<WebSocketClient>;
-	authentication: {
-		mode: AuthMode;
-		timeout: number;
-	};
+	authentication: WebSocketAuthentication;
 
 	endpoint: string;
 	maxConnections: number;
@@ -43,7 +44,6 @@ export default abstract class SocketController {
 	constructor(httpServer: httpServer, configPrefix: string) {
 		this.server = new WebSocketServer({
 			noServer: true,
-			// @ts-ignore TODO Remove once @types/ws has been updated
 			autoPong: false,
 		});
 
@@ -58,15 +58,11 @@ export default abstract class SocketController {
 
 		httpServer.on('upgrade', this.handleUpgrade.bind(this));
 		this.checkClientTokens();
-		registerWebSocketEvents();
 	}
 
 	protected getEnvironmentConfig(configPrefix: string): {
 		endpoint: string;
-		authentication: {
-			mode: AuthMode;
-			timeout: number;
-		};
+		authentication: WebSocketAuthentication;
 		maxConnections: number;
 	} {
 		const env = useEnv();
@@ -98,9 +94,10 @@ export default abstract class SocketController {
 	protected getRateLimiter() {
 		const env = useEnv();
 
-		if (toBoolean(env['RATE_LIMITER_ENABLED']) === true) {
+		if (env.RATE_LIMITER_ENABLED) {
 			return createRateLimiter('RATE_LIMITER', {
 				keyPrefix: 'websocket',
+				...getConfigFromEnv('RATE_LIMITER_WEBSOCKETS_'),
 			});
 		}
 
@@ -125,6 +122,13 @@ export default abstract class SocketController {
 		const { pathname, query } = parse(request.url!, true);
 		if (pathname !== this.endpoint) return;
 
+		if (await getLicenseManager().isLocked()) {
+			logger.debug('WebSocket upgrade denied - License is in a locked state and must be resolved');
+			socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+			socket.destroy();
+			return;
+		}
+
 		if (this.clients.size >= this.maxConnections) {
 			logger.debug('WebSocket upgrade denied - max connections reached');
 			socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
@@ -132,19 +136,37 @@ export default abstract class SocketController {
 			return;
 		}
 
-		const env = useEnv();
-		const cookies = request.headers.cookie ? cookie.parse(request.headers.cookie) : {};
-		const context: UpgradeContext = { request, socket, head };
-		const sessionCookieName = env['SESSION_COOKIE_NAME'] as string;
-
-		if (cookies[sessionCookieName]) {
-			const token = cookies[sessionCookieName] as string;
-			await this.handleTokenUpgrade(context, token);
+		if (!isOriginAllowed(request)) {
+			logger.debug(`WebSocket upgrade denied - disallowed Origin: ${request.headers['origin']}`);
+			socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+			socket.destroy();
 			return;
 		}
 
-		if (this.authentication.mode === 'strict') {
-			const token = query['access_token'] as string;
+		const env = useEnv();
+		const origin = request.headers['origin'];
+		const cookies = request.headers.cookie ? cookie.parse(request.headers.cookie) : {};
+		const sessionCookieName = env.SESSION_COOKIE_NAME;
+
+		const accountabilityOverrides: UpgradeContext['accountabilityOverrides'] = {
+			ip: getIPFromReq(request) ?? null,
+		};
+
+		const userAgent = request.headers['user-agent']?.substring(0, 1024);
+		if (userAgent) accountabilityOverrides.userAgent = userAgent;
+
+		if (origin) accountabilityOverrides.origin = origin;
+		const context: UpgradeContext = { request, socket, head, accountabilityOverrides };
+
+		if (this.authentication.mode === 'strict' || query['access_token'] || cookies[sessionCookieName]) {
+			let token: string | null = null;
+
+			if (typeof query['access_token'] === 'string') {
+				token = query['access_token'];
+			} else if (typeof cookies[sessionCookieName] === 'string') {
+				token = cookies[sessionCookieName] ?? null;
+			}
+
 			await this.handleTokenUpgrade(context, token);
 			return;
 		}
@@ -156,24 +178,39 @@ export default abstract class SocketController {
 
 		this.server.handleUpgrade(request, socket, head, async (ws) => {
 			this.catchInvalidMessages(ws);
-			const state = { accountability: null, expires_at: null } as AuthenticationState;
+
+			const state = {
+				accountability: createDefaultAccountability(accountabilityOverrides),
+				expires_at: null,
+			} as AuthenticationState;
+
 			this.server.emit('connection', ws, state);
 		});
 	}
 
-	protected async handleTokenUpgrade({ request, socket, head }: UpgradeContext, token: string) {
-		let accountability: Accountability | null, expires_at: number | null;
+	protected async handleTokenUpgrade(
+		{ request, socket, head, accountabilityOverrides }: UpgradeContext,
+		token: string | null,
+	) {
+		let accountability: Accountability = createDefaultAccountability(accountabilityOverrides);
+		let expires_at: number | null = null;
 
-		try {
-			accountability = await getAccountabilityForToken(token);
-			expires_at = getExpiresAtForToken(token);
-		} catch {
-			accountability = null;
-			expires_at = null;
+		if (token) {
+			try {
+				const state = await authenticateConnection({ access_token: token }, accountabilityOverrides);
+				this.checkUserRequirements(state.accountability);
+				accountability = state.accountability;
+				expires_at = state.expires_at;
+			} catch {
+				logger.debug('WebSocket upgrade denied - ' + JSON.stringify(accountability));
+				socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+				socket.destroy();
+				return;
+			}
 		}
 
-		if (!accountability || !accountability.user) {
-			logger.debug('WebSocket upgrade denied - ' + JSON.stringify(accountability || 'invalid'));
+		if (!token || isUnauthenticated(accountability)) {
+			logger.debug('WebSocket upgrade denied - ' + JSON.stringify(accountability));
 			socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
 			socket.destroy();
 			return;
@@ -186,7 +223,7 @@ export default abstract class SocketController {
 		});
 	}
 
-	protected async handleHandshakeUpgrade({ request, socket, head }: UpgradeContext) {
+	protected async handleHandshakeUpgrade({ request, socket, head, accountabilityOverrides }: UpgradeContext) {
 		this.server.handleUpgrade(request, socket, head, async (ws) => {
 			this.catchInvalidMessages(ws);
 
@@ -194,13 +231,17 @@ export default abstract class SocketController {
 				const payload = await waitForAnyMessage(ws, this.authentication.timeout);
 				if (getMessageType(payload) !== 'auth') throw new Error();
 
-				const state = await authenticateConnection(WebSocketAuthMessage.parse(payload));
+				const state = await authenticateConnection(WebSocketAuthMessage.parse(payload), accountabilityOverrides);
+
+				this.checkUserRequirements(state.accountability);
+
 				ws.send(authenticationSuccess(payload['uid'], state.refresh_token));
+
 				this.server.emit('connection', ws, state);
 			} catch {
 				logger.debug('WebSocket authentication handshake failed');
 				const error = new WebSocketError('auth', 'AUTH_FAILED', 'Authentication handshake failed.');
-				handleWebSocketError(ws, error, 'auth');
+				handleWebSocketError(ws, error, { type: 'auth' });
 				ws.close();
 			}
 		});
@@ -226,10 +267,22 @@ export default abstract class SocketController {
 						`Too many messages, retry after ${timeout}ms.`,
 					);
 
-					handleWebSocketError(client, error, 'server');
+					handleWebSocketError(client, error, { type: 'server' });
 					logger.debug(`WebSocket#${client.uid} is rate limited`);
 					return;
 				}
+			}
+
+			if (await getLicenseManager().isLocked()) {
+				const error = new WebSocketError(
+					'license',
+					'SERVICE_UNAVAILABLE',
+					`License is in a locked state and must be resolved`,
+				);
+
+				handleWebSocketError(client, error, { type: 'server' });
+				logger.debug(`WebSocket#${client.uid} closed due to license in locked state`);
+				return;
 			}
 
 			let message: WebSocketMessage;
@@ -237,7 +290,7 @@ export default abstract class SocketController {
 			try {
 				message = this.parseMessage(data.toString());
 			} catch (err: any) {
-				handleWebSocketError(client, err, 'server');
+				handleWebSocketError(client, err, { type: 'server' });
 				return;
 			}
 
@@ -294,7 +347,7 @@ export default abstract class SocketController {
 
 		try {
 			message = WebSocketMessage.parse(parseJSON(data));
-		} catch (err: any) {
+		} catch {
 			throw new WebSocketError('server', 'INVALID_PAYLOAD', 'Unable to parse the incoming message.');
 		}
 
@@ -302,8 +355,20 @@ export default abstract class SocketController {
 	}
 
 	protected async handleAuthRequest(client: WebSocketClient, message: WebSocketAuthMessage) {
+		/**
+		 * Re-use the existing ip, userAgent and origin accountability properties.
+		 * They are only sent in the original connection request
+		 */
+		const accountabilityOverrides = this.getAccountabilityOverrides(client);
+
 		try {
-			const { accountability, expires_at, refresh_token } = await authenticateConnection(message);
+			const { accountability, expires_at, refresh_token } = await authenticateConnection(
+				message,
+				accountabilityOverrides,
+			);
+
+			this.checkUserRequirements(accountability);
+
 			client.accountability = accountability;
 			client.expires_at = expires_at;
 			this.setTokenExpireTimer(client);
@@ -314,7 +379,7 @@ export default abstract class SocketController {
 			logger.trace(`WebSocket#${client.uid} failed authentication`);
 			emitter.emitAction('websocket.auth.failure', { client });
 
-			client.accountability = null;
+			client.accountability = createDefaultAccountability(accountabilityOverrides);
 			client.expires_at = null;
 
 			const _error =
@@ -322,12 +387,39 @@ export default abstract class SocketController {
 					? error
 					: new WebSocketError('auth', 'AUTH_FAILED', 'Authentication failed.', message.uid);
 
-			handleWebSocketError(client, _error, 'auth');
+			handleWebSocketError(client, _error, { type: 'auth' });
 
 			if (this.authentication.mode !== 'public') {
 				client.close();
 			}
 		}
+	}
+
+	/**
+	 * Build the accountability overrides (ip, userAgent, origin) from an existing client connection.
+	 * These properties are only available on the original connection request.
+	 */
+	private getAccountabilityOverrides(client: WebSocketClient): Partial<Accountability> {
+		if (!client.accountability) return {};
+
+		const result: Partial<Accountability> = {
+			ip: client.accountability.ip,
+		};
+
+		if (client.accountability.userAgent) {
+			result.userAgent = client.accountability.userAgent;
+		}
+
+		if (client.accountability.origin) {
+			result.origin = client.accountability.origin;
+		}
+
+		return result;
+	}
+
+	protected checkUserRequirements(_accountability: Accountability | null) {
+		// there are no requirements in the abstract class
+		return;
 	}
 
 	setTokenExpireTimer(client: WebSocketClient) {
@@ -343,13 +435,13 @@ export default abstract class SocketController {
 		if (expiresIn > TOKEN_CHECK_INTERVAL) return;
 
 		client.auth_timer = setTimeout(() => {
-			client.accountability = null;
+			client.accountability = createDefaultAccountability(this.getAccountabilityOverrides(client));
 			client.expires_at = null;
-			handleWebSocketError(client, new TokenExpiredError(), 'auth');
+			handleWebSocketError(client, new TokenExpiredError(), { type: 'auth' });
 
 			waitForMessageType(client, 'auth', this.authentication.timeout).catch((msg: WebSocketMessage) => {
 				const error = new WebSocketError('auth', 'AUTH_TIMEOUT', 'Authentication timed out.', msg?.uid);
-				handleWebSocketError(client, error, 'auth');
+				handleWebSocketError(client, error, { type: 'auth' });
 
 				if (this.authentication.mode !== 'public') {
 					client.close();

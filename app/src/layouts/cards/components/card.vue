@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue';
+import VIcon from '@/components/v-icon/v-icon.vue';
+import VIconFile from '@/components/v-icon-file.vue';
+import VImage from '@/components/v-image.vue';
+import VSkeletonLoader from '@/components/v-skeleton-loader.vue';
 import { getAssetUrl } from '@/utils/get-asset-url';
 import { readableMimeType } from '@/utils/readable-mime-type';
-import { computed, ref } from 'vue';
-import { useRouter } from 'vue-router';
 
 type File = {
 	[key: string]: any;
@@ -21,19 +24,18 @@ const props = withDefaults(
 		item?: Record<string, any>;
 		modelValue?: (string | number)[];
 		selectMode?: boolean;
-		to?: string;
 		readonly?: boolean;
 	}>(),
 	{
 		icon: 'box',
 		modelValue: () => [],
-		to: '',
 	},
 );
 
-const emit = defineEmits(['update:modelValue']);
-
-const router = useRouter();
+const emit = defineEmits<{
+	'update:modelValue': [value: (string | number)[]];
+	click: [payload: { item: Record<string, any>; event: MouseEvent | KeyboardEvent }];
+}>();
 
 const imgError = ref(false);
 
@@ -58,7 +60,10 @@ const imageInfo = computed(() => {
 		key = 'system-medium-contain';
 	}
 
-	const source = getAssetUrl(`${props.file.id}?key=${key}&modified=${props.file.modified_on}`);
+	const source = getAssetUrl(props.file.id, {
+		imageKey: key,
+		cacheBuster: props.file.modified_on,
+	});
 
 	return { source, fileType };
 });
@@ -86,12 +91,9 @@ function toggleSelection() {
 	}
 }
 
-function handleClick() {
-	if (props.selectMode === true) {
-		toggleSelection();
-	} else {
-		router.push(props.to);
-	}
+function handleClick(event: MouseEvent | KeyboardEvent) {
+	if (!props.item) return;
+	emit('click', { item: props.item, event });
 }
 </script>
 
@@ -99,16 +101,19 @@ function handleClick() {
 	<div
 		class="card"
 		:class="{ loading, readonly, selected: item && modelValue.includes(item[itemKey]), 'select-mode': selectMode }"
-		@click="handleClick"
+		:tabindex="readonly || loading || modelValue.length > 0 ? -1 : 0"
+		@click="handleClick($event)"
+		@keydown.self.enter.prevent="handleClick($event)"
+		@keydown.self.space.prevent="handleClick($event)"
 	>
-		<v-icon class="selector" :name="selectionIcon" @click.stop="toggleSelection" />
+		<VIcon class="selector" :name="selectionIcon" clickable @click.stop="toggleSelection" />
 		<div class="header">
 			<div class="selection-fade"></div>
-			<v-skeleton-loader v-if="loading" />
+			<VSkeletonLoader v-if="loading" />
 			<template v-else>
-				<v-icon-file v-if="type || imgError" :ext="type" />
+				<VIconFile v-if="type || imgError" :ext="type ?? ''" />
 				<template v-else>
-					<v-image
+					<VImage
 						v-if="showThumbnail"
 						:class="imageInfo?.fileType"
 						:src="imageInfo?.source"
@@ -116,11 +121,11 @@ function handleClick() {
 						role="presentation"
 						@error="imgError = true"
 					/>
-					<v-icon v-else large :name="icon" />
+					<VIcon v-else large :name="icon" />
 				</template>
 			</template>
 		</div>
-		<v-skeleton-loader v-if="loading" type="text" />
+		<VSkeletonLoader v-if="loading" type="text" />
 		<template v-else>
 			<div v-if="$slots.title" class="title"><slot name="title" /></div>
 			<div v-if="$slots.subtitle" class="subtitle"><slot name="subtitle" /></div>
@@ -131,7 +136,7 @@ function handleClick() {
 <style lang="scss" scoped>
 .loading {
 	.header {
-		margin-bottom: 8px;
+		margin-block-end: 0.4375rem;
 	}
 }
 
@@ -139,40 +144,58 @@ function handleClick() {
 	position: relative;
 	cursor: pointer;
 
+	&:focus-visible {
+		outline: none;
+
+		&::after {
+			position: absolute;
+			inset-block-start: 0;
+			inset-inline-start: 0;
+			z-index: 2;
+			inline-size: 100%;
+			aspect-ratio: 1 / 1;
+			border-radius: var(--theme--border-radius);
+			outline: var(--focus-ring-width) solid var(--focus-ring-color);
+			outline-offset: var(--focus-ring-offset);
+			content: '';
+			pointer-events: none;
+		}
+	}
+
 	.header {
 		position: relative;
 		z-index: 1;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 100%;
+		inline-size: 100%;
 		overflow: hidden;
 		background-color: var(--theme--background-normal);
 		border-color: var(--theme--primary-subdued);
 		border-style: solid;
-		border-width: 0px;
+		border-width: 0;
 		border-radius: var(--theme--border-radius);
 		transition: border-width var(--fast) var(--transition);
 
 		&::after {
 			display: block;
-			padding-bottom: 100%;
+			padding-block-end: 100%;
 			content: '';
 		}
 
 		.image {
 			position: absolute;
-			top: 0;
-			left: 0;
-			width: 100%;
-			height: 100%;
+			inset-block-start: 0;
+			inset-inline-start: 0;
+			inline-size: 100%;
+			block-size: 100%;
 			object-fit: contain;
 		}
 
 		.svg {
 			position: absolute;
-			width: 75%;
-			height: 75%;
+			inline-size: 75%;
+			block-size: 75%;
 			object-fit: contain;
 		}
 
@@ -187,28 +210,28 @@ function handleClick() {
 
 		.v-skeleton-loader {
 			position: absolute;
-			top: 0;
-			left: 0;
-			width: 100%;
-			height: 100%;
+			inset-block-start: 0;
+			inset-inline-start: 0;
+			inline-size: 100%;
+			block-size: 100%;
 		}
 
 		.selection-fade {
 			position: absolute;
-			top: 0;
-			left: 0;
+			inset-block-start: 0;
+			inset-inline-start: 0;
 			z-index: 1;
-			width: 100%;
-			height: 48px;
+			inline-size: 100%;
+			block-size: 2.6875rem;
 			opacity: 0;
 			transition: opacity var(--fast) var(--transition);
 
 			&::before {
 				position: absolute;
-				top: 0;
-				left: 0;
-				width: 100%;
-				height: 100%;
+				inset-block-start: 0;
+				inset-inline-start: 0;
+				inline-size: 100%;
+				block-size: 100%;
 				background-image: linear-gradient(-180deg, rgb(38 50 56 / 0.1) 10%, rgb(38 50 56 / 0));
 				content: '';
 			}
@@ -217,13 +240,13 @@ function handleClick() {
 
 	&::before {
 		position: absolute;
-		top: 7px;
-		left: 7px;
+		inset-block-start: 0.375rem;
+		inset-inline-start: 0.375rem;
 		z-index: 2;
-		width: 18px;
-		height: 18px;
+		inline-size: 1rem;
+		block-size: 1rem;
 		background-color: var(--theme--background);
-		border-radius: 24px;
+		border-radius: 1.375rem;
 		opacity: 0;
 		transition: opacity var(--fast) var(--transition);
 		content: '';
@@ -232,19 +255,25 @@ function handleClick() {
 	.selector {
 		--v-icon-color: var(--white);
 		--v-icon-color-hover: var(--white);
+		--focus-ring-offset: 0;
 
 		position: absolute;
-		top: 0px;
-		left: 0px;
+		inset-block-start: 0;
+		inset-inline-start: 0;
 		z-index: 3;
-		margin: 4px;
+		margin: 0.25rem;
 		opacity: 0;
 		transition:
 			opacity var(--fast) var(--transition),
 			color var(--fast) var(--transition);
 
+		&:focus-visible,
 		&:hover {
 			opacity: 1 !important;
+		}
+
+		&:focus-visible {
+			border-radius: 50%;
 		}
 	}
 
@@ -303,21 +332,21 @@ function handleClick() {
 	position: relative;
 	display: flex;
 	align-items: center;
-	width: 100%;
-	height: 26px;
-	margin-top: 2px;
+	inline-size: 100%;
+	block-size: 1.4375rem;
+	margin-block-start: 0.125rem;
 	overflow: hidden;
-	line-height: 1.3em;
+	line-height: 1.3;
 	white-space: nowrap;
 	text-overflow: ellipsis;
 
 	:deep(.render-template) {
-		height: 100%;
+		block-size: 100%;
 	}
 }
 
 .subtitle {
-	margin-top: 0px;
+	margin-block-start: 0;
 	color: var(--theme--foreground-subdued);
 }
 </style>

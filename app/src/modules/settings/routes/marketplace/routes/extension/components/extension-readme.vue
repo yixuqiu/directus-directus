@@ -1,30 +1,26 @@
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n';
+import VNotice from '@/components/v-notice.vue';
 
 defineProps<{
 	readme: string | null;
 }>();
-
-const { t } = useI18n();
 </script>
 
 <template>
-	<v-notice v-if="!readme" class="notice">{{ t('extension_readme_missing') }}</v-notice>
+	<VNotice v-if="!readme" class="notice">{{ $t('extension_readme_missing') }}</VNotice>
 	<div v-else v-md="{ value: readme, target: '_blank' }" class="readme" />
 </template>
 
 <style scoped lang="scss">
-.readme {
-	:deep(*) {
-		user-select: text;
-	}
+@use '@/styles/mixins';
 
+.readme {
 	:deep() {
-		@import '@/styles/markdown';
+		@include mixins.markdown;
 	}
 
 	:deep(* + *) {
-		margin-top: 1rem;
+		margin-block-start: 0.8125rem;
 	}
 
 	:deep(img) {
@@ -34,6 +30,6 @@ const { t } = useI18n();
 
 .notice {
 	align-self: flex-start;
-	margin-top: 4px;
+	margin-block-start: 0.25rem;
 }
 </style>
